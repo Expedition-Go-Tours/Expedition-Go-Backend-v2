@@ -1282,9 +1282,17 @@ function registerWorkers() {
           break;
         }
         case 'check-ga4-delivery': {
-          const { reportUnreportedPurchases, reportUnreportedRefunds } = require('./ga4DeliveryCheck');
+          const {
+            reportUnreportedPurchases,
+            reportUnreportedRefunds,
+            reportBookingsGaNeverReceived,
+          } = require('./ga4DeliveryCheck');
           await reportUnreportedPurchases();
           await reportUnreportedRefunds();
+          // Asks GA what it actually holds, rather than trusting the 2xx we
+          // recorded. Skips silently (returns skipped) when the read side is
+          // not configured, so this can never fail the sweep.
+          await reportBookingsGaNeverReceived().catch(() => {});
           break;
         }
       case 'cleanup-notifications': {

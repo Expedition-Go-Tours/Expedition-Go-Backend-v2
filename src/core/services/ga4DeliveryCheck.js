@@ -19,6 +19,11 @@
  * The same sweep covers refunds (see findUnderreportedRefunds): a purchase that
  * reached GA but whose refund did not is equally wrong, just in the other
  * direction.
+ *
+ * Neither alarm can see a *wrong* stamp: `ga4ReportedAt` is written on any 2xx,
+ * and GA answers 204 to an unusable API secret as readily as to a good one.
+ * When the read side is configured, reportBookingsGaNeverReceived asks GA's own
+ * reports instead — see the note on that function.
  */
 
 const prisma = require('./prismaClient');
@@ -150,11 +155,92 @@ async function reportUnreportedRefunds(opts = {}) {
   return { count: refunds.length, revenue, bookings: refunds.map((b) => b.bookingNumber) };
 }
 
+/**
+ * ── The independent check ──────────────────────────────────────────────────
+
+const ga4Reporting = require('./ga4Reporting');
+
+/** GA's standard reports need time; alarm only on events old enough to have landed. */
+const DEFAULT_MIN_AGE_MS = 48 * 60 * 60 * 1000;
+
+function isoDay(ms) {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+/**
+ * Consent-granted, settled purchases GA does not list.
+ *
+ * @param {{ now?: number, lookbackMs?: number, minAgeMs?: number, fetchImpl?: Function }} [opts]
+ * @returns {Promise<{skipped: string|null, bookings: Array}>}
+ */
+async function findBookingsGaNeverReceived({
+  now = Date.now(),
+  lookbackMs = 7 * 24 * 60 * 60 * 1000,
+  minAgeMs = DEFAULT_MIN_AGE_MS,
+  fetchImpl = fetch,
+} = {}) {
+  // Required lazily: the DB-side alarms must work with no read side configured,
+  // and this module should not drag in the reporting service when it cannot be
+  // used anyway.
+  const ga4Reporting = require('./ga4Reporting');
+  if (!ga4Reporting.isConfigured()) return { skipped: 'read-side-not-configured', bookings: [] };
+
+  const bookings = await prisma.booking.findMany({
+    where: {
+      paidAt: { gte: new Date(now - lookbackMs), lte: new Date(now - minAgeMs) },
+      analyticsConsent: true,
+      gaClientId: { not: null },
+      paymentStatus: { in: SETTLED },
+    },
+    select: { bookingNumber: true, paidAt: true, grossAmount: true, currency: true },
+    orderBy: { paidAt: 'asc' },
+  });
+  if (bookings.length === 0) return { skipped: null, bookings: [] };
+
+  const ledger = await ga4Reporting.fetchPurchaseLedger(
+    { from: isoDay(now - lookbackMs), to: isoDay(now - minAgeMs) },
+    { fetchImpl }
+  );
+  const inGa = new Set(ledger.map((row) => row.transactionId));
+
+  return { skipped: null, bookings: bookings.filter((b) => !inGa.has(b.bookingNumber)) };
+}
+
+/**
+ * Alarm on purchases GA's own reports do not contain.
+ *
+ * Returns `{ skipped }` when the read side is unavailable, so a caller can
+ * distinguish "checked and clean" from "nobody looked" — a silent zero here
+ * would be the same class of lie this whole module was built to prevent.
+ *
+ * @returns {Promise<{skipped: string|null, count: number, revenue: number, bookings: string[]}>}
+ */
+async function reportBookingsGaNeverReceived(opts = {}) {
+  const { skipped, bookings } = await findBookingsGaNeverReceived(opts);
+  if (skipped) return { skipped, count: 0, revenue: 0, bookings: [] };
+
+  const revenue = bookings.reduce((sum, b) => sum + Number(b.grossAmount), 0);
+  if (bookings.length > 0) {
+    const refs = bookings.map((b) => b.bookingNumber).join(', ');
+    console.error(
+      `[ga4Health] ${bookings.length} consented purchase(s) worth $${revenue.toFixed(2)} are marked delivered in ` +
+        `the database but GA4's own reports do not contain them: ${refs}. The delivery ledger is a 2xx, not ` +
+        'proof of receipt — GA4 answers 204 to an unusable API secret. Check GA4_API_SECRET, then run ' +
+        '`node scripts/ga4-reconcile.js --backfill`.'
+    );
+  }
+
+  return { skipped: null, count: bookings.length, revenue, bookings: bookings.map((b) => b.bookingNumber) };
+}
+
 module.exports = {
   findUnreportedPurchases,
   reportUnreportedPurchases,
   findUnderreportedRefunds,
   reportUnreportedRefunds,
+  findBookingsGaNeverReceived,
+  reportBookingsGaNeverReceived,
   DEFAULT_GRACE_MS,
   DEFAULT_LOOKBACK_MS,
+  DEFAULT_MIN_AGE_MS,
 };

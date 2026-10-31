@@ -17,13 +17,18 @@ const {
   reportUnreportedPurchases,
   findUnderreportedRefunds,
   reportUnreportedRefunds,
+  findBookingsGaNeverReceived,
+  reportBookingsGaNeverReceived,
 } = require('../../src/core/services/ga4DeliveryCheck');
+const ga4Reporting = require('../../src/core/services/ga4Reporting');
 
 const NOW = new Date('2026-10-31T12:00:00.000Z').getTime();
 
 beforeEach(() => {
   prisma.booking.findMany.mockReset();
   prisma.booking.findMany.mockResolvedValue([]);
+  jest.spyOn(ga4Reporting, 'isConfigured').mockReturnValue(true);
+  jest.spyOn(ga4Reporting, 'fetchPurchaseLedger').mockResolvedValue([]);
   jest.spyOn(console, 'error').mockImplementation(() => {});
 });
 
@@ -140,5 +145,79 @@ describe('reportUnreportedRefunds', () => {
     expect(message).toContain('TRG-9, TRG-10');
     expect(message).toContain('still counting this money as revenue');
     expect(message).toContain('ga4-reconcile.js --backfill');
+  });
+});
+
+/**
+ * The distinction these tests exist for: `ga4ReportedAt` records a 2xx, and GA
+ * answers 204 to an unusable API secret. Only consulting GA's own reports
+ * catches a booking the database believes is delivered and GA never kept.
+ */
+describe('reportBookingsGaNeverReceived — asks GA, not our own ledger', () => {
+  it('flags a purchase GA does not contain even though the database says delivered', async () => {
+    // ga4ReportedAt is deliberately not selected or filtered: the point is that
+    // this check does not consult it.
+    prisma.booking.findMany.mockResolvedValue([
+      { bookingNumber: 'TRG-1', paidAt: new Date('2026-10-25T10:00:00Z'), grossAmount: 160 },
+      { bookingNumber: 'TRG-2', paidAt: new Date('2026-10-25T11:00:00Z'), grossAmount: 90 },
+    ]);
+    ga4Reporting.fetchPurchaseLedger.mockResolvedValue([
+      { transactionId: 'TRG-1', revenue: 160, transactions: 1, itemsPurchased: 1 },
+    ]);
+
+    const result = await reportBookingsGaNeverReceived({ now: NOW });
+
+    expect(result).toEqual({ skipped: null, count: 1, revenue: 90, bookings: ['TRG-2'] });
+    const message = console.error.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(message).toContain('marked delivered in');
+    expect(message).toContain('GA4');
+    expect(message).toContain('204 to an unusable API secret');
+    expect(message).toContain('ga4-reconcile.js --backfill');
+  });
+
+  it('is silent when GA holds every consented purchase', async () => {
+    prisma.booking.findMany.mockResolvedValue([
+      { bookingNumber: 'TRG-1', paidAt: new Date('2026-10-25T10:00:00Z'), grossAmount: 160 },
+    ]);
+    ga4Reporting.fetchPurchaseLedger.mockResolvedValue([
+      { transactionId: 'TRG-1', revenue: 160, transactions: 1, itemsPurchased: 1 },
+    ]);
+
+    const result = await reportBookingsGaNeverReceived({ now: NOW });
+
+    expect(result).toEqual({ skipped: null, count: 0, revenue: 0, bookings: [] });
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it('reports "not configured" rather than a clean zero nobody checked', async () => {
+    jest.spyOn(ga4Reporting, 'isConfigured').mockReturnValue(false);
+
+    const result = await reportBookingsGaNeverReceived({ now: NOW });
+
+    expect(result.skipped).toBe('read-side-not-configured');
+    expect(result.count).toBe(0);
+    expect(console.error).not.toHaveBeenCalled();
+    expect(ga4Reporting.fetchPurchaseLedger).not.toHaveBeenCalled();
+  });
+
+  it('never alarms on an event young enough that GA may still be processing it', async () => {
+    prisma.booking.findMany.mockResolvedValue([]);
+
+    await findBookingsGaNeverReceived({ now: NOW, minAgeMs: 48 * 60 * 60 * 1000 });
+
+    const { gte, lte } = prisma.booking.findMany.mock.calls[0][0].where.paidAt;
+    expect(lte.getTime()).toBe(NOW - 48 * 60 * 60 * 1000);
+    expect(gte.getTime()).toBe(NOW - 7 * 24 * 60 * 60 * 1000);
+  });
+
+  it('asks GA only for consented bookings with a client_id', async () => {
+    prisma.booking.findMany.mockResolvedValue([]);
+
+    await findBookingsGaNeverReceived({ now: NOW });
+
+    const where = prisma.booking.findMany.mock.calls[0][0].where;
+    expect(where.analyticsConsent).toBe(true);
+    expect(where.gaClientId).toEqual({ not: null });
+    expect(where.paymentStatus.in).toEqual(['SUCCEEDED', 'REFUNDED']);
   });
 });
