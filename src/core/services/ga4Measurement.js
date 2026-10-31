@@ -214,15 +214,23 @@ function buildPurchaseEvent(booking) {
   };
 }
 
+/**
+ * How much money this refund event represents. The triggering refund's own
+ * amount (from the charge) wins; otherwise the booking's stored refundAmount,
+ * then the original total. Shared by the builder and the delivery ledger so the
+ * amount GA is told about is exactly the amount recorded as confirmed.
+ */
+function resolveRefundValue(booking, valueOverride) {
+  const raw = valueOverride != null
+    ? valueOverride
+    : (booking && booking.refundAmount != null ? booking.refundAmount : booking && booking.grossAmount);
+  return toAmount(raw);
+}
+
 function buildRefundEvent(booking, valueOverride) {
   const clientId = resolveClientId(booking);
   if (!clientId) return null;
-  // The triggering refund's own amount (from the charge) wins; otherwise fall
-  // back to the booking's stored refundAmount, then the original total.
-  const raw = valueOverride != null
-    ? valueOverride
-    : (booking.refundAmount != null ? booking.refundAmount : booking.grossAmount);
-  const value = toAmount(raw);
+  const value = resolveRefundValue(booking, valueOverride);
   if (value === null || value <= 0) return null;
 
   return {
@@ -333,6 +341,42 @@ async function markReported(booking) {
   }
 }
 
+/**
+ * Record that GA accepted a refund, and how much of it.
+ *
+ * Partial refunds arrive one charge.refunded at a time, so the column is a
+ * running total rather than a boolean: "GA has been told about $60 of the $100
+ * refunded" is a state the purchase ledger cannot express, and it is exactly
+ * the state that leaves residual revenue in GA when the second event is lost.
+ * Best-effort, same as the purchase stamp.
+ */
+async function markRefundReported(booking, amount) {
+  if (!booking || !booking.id) return;
+  const value = toAmount(amount);
+  if (value === null || value <= 0) return;
+  try {
+    const prisma = require('./prismaClient');
+    const row = await prisma.booking.findUnique({
+      where: { id: booking.id },
+      select: { ga4RefundReportedAmount: true },
+    });
+    const already = row && row.ga4RefundReportedAmount != null
+      ? Number(row.ga4RefundReportedAmount)
+      : 0;
+    await prisma.booking.update({
+      where: { id: booking.id },
+      data: {
+        ga4RefundReportedAt: new Date(),
+        ga4RefundReportedAmount: Number((already + value).toFixed(2)),
+      },
+    });
+  } catch (err) {
+    console.warn(
+      `[ga4Measurement] could not record refund delivery booking=${booking.bookingNumber || booking.id}: ${err.message}`
+    );
+  }
+}
+
 
 /**
  * Report a settled booking as a purchase. Fire-and-forget. Exactly one log line
@@ -370,12 +414,15 @@ function sendPurchase(booking, { timestampMicros, extraParams } = {}) {
 
 /**
  * Report a refund against the original purchase (matched by transaction_id).
- * Fire-and-forget.
+ * Fire-and-forget. A delivered refund is stamped on the booking
+ * (`ga4RefundReportedAmount`), which is what makes a lost refund visible.
  * @param {object} booking a booking with gaClientId + analyticsConsent + tour included
- * @param {{ value?: number }} [opts] explicit refund amount (major units) when the
- *   booking row does not yet carry it (e.g. reported straight from the charge)
+ * @param {{ value?: number, timestampMicros?: number, extraParams?: object }} [opts]
+ *   `value` is an explicit refund amount (major units) when the booking row does
+ *   not yet carry it (e.g. reported straight from the charge) or when only the
+ *   unreported shortfall is being re-sent. `extraParams` mirrors sendPurchase.
  */
-function sendRefund(booking, { value, timestampMicros } = {}) {
+function sendRefund(booking, { value, timestampMicros, extraParams } = {}) {
   const ref = (booking && booking.bookingNumber) || 'unknown';
   if (!isEnabled()) {
     logSkip('refund', booking, 'not-configured');
@@ -389,7 +436,12 @@ function sendRefund(booking, { value, timestampMicros } = {}) {
     return Promise.resolve({ ok: false, reason });
   }
   if (timestampMicros) body.events[0].params.timestamp_micros = timestampMicros;
-  return deliver(body, { kind: 'refund', ref });
+  if (extraParams) Object.assign(body.events[0].params, extraParams);
+  const amount = resolveRefundValue(booking, value);
+  return deliver(body, { kind: 'refund', ref }).then(async (outcome) => {
+    if (outcome.ok) await markRefundReported(booking, amount);
+    return outcome;
+  });
 }
 
 module.exports = {

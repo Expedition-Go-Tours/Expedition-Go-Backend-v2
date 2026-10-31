@@ -25,6 +25,11 @@
  * such event carries `reconciled=true`, `original_paid_at` and `days_late` so
  * the distortion is visible inside GA instead of living in someone's memory.
  *
+ * It also repairs refunds, in both directions: a refunded booking whose purchase
+ * is missing gets its refund in the same pass (otherwise backfilling the
+ * purchase would invent revenue the customer already had returned), and a
+ * confirmed purchase whose refund event never landed gets the shortfall sent.
+ *
  * When the read side is configured (GA4_PROPERTY_ID + a service account) the
  * script also fetches GA's own transaction ledger and diffs it against the
  * database, which is how a phantom item like `credential check` gets named.
@@ -33,7 +38,7 @@
 require('dotenv').config();
 
 const prisma = require('../src/core/services/prismaClient');
-const { sendPurchase, isEnabled } = require('../src/core/services/ga4Measurement');
+const { sendPurchase, sendRefund, isEnabled } = require('../src/core/services/ga4Measurement');
 const ga4Reporting = require('../src/core/services/ga4Reporting');
 
 const SETTLED = new Set(['SUCCEEDED', 'REFUNDED']);
@@ -114,6 +119,7 @@ async function main() {
       ga4ReportedAt: true,
       refundedAt: true,
       refundAmount: true,
+      ga4RefundReportedAmount: true,
       tour: { select: { title: true } },
     },
     orderBy: { paidAt: 'asc' },
@@ -128,6 +134,16 @@ async function main() {
   const missing = bucket.consented.filter((b) => !b.ga4ReportedAt);
 
   const sum = (rows) => rows.reduce((acc, b) => acc + Number(b.grossAmount), 0);
+  const refunded = (b) => (b.refundAmount != null ? Number(b.refundAmount) : 0);
+  const refundConfirmed = (b) => (b.ga4RefundReportedAmount != null ? Number(b.ga4RefundReportedAmount) : 0);
+
+  // A refund only has a GA purchase to reverse when the purchase itself was
+  // confirmed; otherwise backfilling the purchase carries the refund with it.
+  const refundDue = (b) => {
+    if (!b.ga4ReportedAt) return 0;
+    return Number((refunded(b) - refundConfirmed(b)).toFixed(2));
+  };
+  const underreportedRefunds = reported.filter((b) => refundDue(b) > 0.005);
 
   const report = {
     window,
@@ -149,6 +165,25 @@ async function main() {
     excluded: {
       declined: { count: bucket.declined.length, revenue: sum(bucket.declined) },
       notCaptured: { count: bucket['not-captured'].length, revenue: sum(bucket['not-captured']) },
+    },
+    // Money coming back out. GA subtracts refund events from purchase revenue,
+    // so an undelivered refund leaves revenue overstated by exactly this much.
+    refunds: {
+      count: reported.filter((b) => refunded(b) > 0).length,
+      expected: reported.reduce((acc, b) => acc + refunded(b), 0),
+      confirmed: reported.reduce((acc, b) => acc + Math.min(refundConfirmed(b), refunded(b)), 0),
+      missing: {
+        count: underreportedRefunds.length,
+        revenue: underreportedRefunds.reduce((acc, b) => acc + refundDue(b), 0),
+        bookings: underreportedRefunds.map((b) => ({
+          bookingNumber: b.bookingNumber,
+          refundedAt: b.refundedAt ? b.refundedAt.toISOString() : null,
+          refundAmount: refunded(b),
+          confirmedInGa: refundConfirmed(b),
+          shortfall: refundDue(b),
+          currency: b.currency,
+        })),
+      },
     },
     errors: [],
   };
@@ -183,18 +218,33 @@ async function main() {
       report.errors.push('GA4 write side not configured (GA4_MEASUREMENT_ID + GA4_API_SECRET) — nothing sent');
     } else {
       const delivered = [];
+      const reconciledParams = (b) => ({
+        reconciled: true,
+        original_paid_at: b.paidAt.toISOString(),
+        days_late: Math.floor((Date.now() - b.paidAt.getTime()) / (24 * 60 * 60 * 1000)),
+      });
+
+      // Missing purchases first. A refunded booking must carry its refund in the
+      // same pass, or backfilling the purchase would add revenue GA never had.
       for (const b of missing) {
-        const daysLate = Math.floor((Date.now() - b.paidAt.getTime()) / (24 * 60 * 60 * 1000));
         // Sequential on purpose: keeps the log readable and GA calm.
-        const outcome = await sendPurchase(b, {
-          extraParams: {
-            reconciled: true,
-            original_paid_at: b.paidAt.toISOString(),
-            days_late: daysLate,
-          },
-        });
-        delivered.push({ bookingNumber: b.bookingNumber, amount: Number(b.grossAmount), ...outcome });
+        const outcome = await sendPurchase(b, { extraParams: reconciledParams(b) });
+        delivered.push({ kind: 'purchase', bookingNumber: b.bookingNumber, amount: Number(b.grossAmount), ...outcome });
+
+        const due = refunded(b);
+        if (outcome.ok && due > 0) {
+          const refund = await sendRefund(b, { value: due, extraParams: reconciledParams(b) });
+          delivered.push({ kind: 'refund', bookingNumber: b.bookingNumber, amount: due, ...refund });
+        }
       }
+
+      // Confirmed purchases with a refund GA never received (or only partly).
+      for (const b of underreportedRefunds) {
+        const due = refundDue(b);
+        const refund = await sendRefund(b, { value: due, extraParams: reconciledParams(b) });
+        delivered.push({ kind: 'refund', bookingNumber: b.bookingNumber, amount: due, ...refund });
+      }
+
       report.backfill = delivered;
     }
   }
@@ -212,11 +262,20 @@ async function main() {
   console.log(`    missing           ${String(report.missing.count).padStart(3)}  ${money(report.missing.revenue)}`);
   console.log(`  declined            ${String(report.excluded.declined.count).padStart(3)}  ${money(report.excluded.declined.revenue)}  (correctly excluded)`);
   console.log(`  consent not captured${String(report.excluded.notCaptured.count).padStart(3)}  ${money(report.excluded.notCaptured.revenue)}  (correctly excluded)`);
+  console.log(`  refunds expected    ${String(report.refunds.count).padStart(3)}  ${money(report.refunds.expected)}  (${money(report.refunds.confirmed)} confirmed in GA)`);
+  console.log(`    refunds missing   ${String(report.refunds.missing.count).padStart(3)}  ${money(report.refunds.missing.revenue)}`);
 
   if (report.missing.bookings.length) {
     console.log('\nmissing from GA:');
     for (const b of report.missing.bookings) {
       console.log(`  ${b.bookingNumber}  ${b.paidAt.slice(0, 16).replace('T', ' ')}  ${money(b.amount)}  ${b.tour || ''}${b.hasClientId ? '' : '  [no client_id]'}`);
+    }
+  }
+
+  if (report.refunds.missing.bookings.length) {
+    console.log('\nrefunds GA has not been told about:');
+    for (const b of report.refunds.missing.bookings) {
+      console.log(`  ${b.bookingNumber}  ${money(b.shortfall)} of ${money(b.refundAmount)}  (${money(b.confirmedInGa)} confirmed)`);
     }
   }
 
@@ -234,9 +293,16 @@ async function main() {
   }
 
   if (report.backfill) {
-    const ok = report.backfill.filter((r) => r.ok);
-    console.log(`\nbackfill: ${ok.length}/${report.backfill.length} accepted, ${money(ok.reduce((a, r) => a + r.amount, 0))} reported with the current timestamp`);
-    for (const r of report.backfill.filter((x) => !x.ok)) console.log(`  ${r.bookingNumber} failed: ${r.reason}`);
+    const purchases = report.backfill.filter((r) => r.kind === 'purchase');
+    const refunds = report.backfill.filter((r) => r.kind === 'refund');
+    const okSum = (rows) => rows.filter((r) => r.ok).reduce((a, r) => a + r.amount, 0);
+    console.log(
+      `\nbackfill: ${purchases.filter((r) => r.ok).length}/${purchases.length} purchase(s) accepted (${money(okSum(purchases))}), ` +
+        `${refunds.filter((r) => r.ok).length}/${refunds.length} refund(s) accepted (${money(okSum(refunds))}) — dated now`
+    );
+    for (const r of report.backfill.filter((x) => !x.ok)) {
+      console.log(`  ${r.kind} ${r.bookingNumber} failed: ${r.reason}`);
+    }
   }
 
   for (const e of report.errors) console.log(`\n! ${e}`);

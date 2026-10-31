@@ -15,6 +15,10 @@
  *
  * Deliberately not auto-repairing: a silent re-send loop could double-count
  * revenue. The message names the script that fixes it.
+ *
+ * The same sweep covers refunds (see findUnderreportedRefunds): a purchase that
+ * reached GA but whose refund did not is equally wrong, just in the other
+ * direction.
  */
 
 const prisma = require('./prismaClient');
@@ -79,9 +83,78 @@ async function reportUnreportedPurchases(opts = {}) {
   return { count: bookings.length, revenue, bookings: bookings.map((b) => b.bookingNumber) };
 }
 
+/**
+ * The same alarm for money coming back out.
+ *
+ * A refund whose event never reached GA leaves the purchase standing: the
+ * booking is stamped as reported, revenue looks fine, and GA keeps counting
+ * money the customer has had returned. `ga4RefundReportedAmount` is a running
+ * total, so a partial refund that failed after an earlier one succeeded shows
+ * up as a shortfall rather than a boolean that is already true.
+ *
+ * Only bookings whose *purchase* was confirmed are considered: if the purchase
+ * never landed, the purchase alarm already names it, and backfilling that
+ * booking sends its refund in the same pass.
+ */
+async function findUnderreportedRefunds({
+  now = Date.now(),
+  lookbackMs = DEFAULT_LOOKBACK_MS,
+  graceMs = DEFAULT_GRACE_MS,
+} = {}) {
+  const rows = await prisma.booking.findMany({
+    where: {
+      refundedAt: { gte: new Date(now - lookbackMs), lte: new Date(now - graceMs) },
+      analyticsConsent: true,
+      gaClientId: { not: null },
+      ga4ReportedAt: { not: null },
+      refundAmount: { gt: 0 },
+    },
+    select: {
+      bookingNumber: true,
+      refundedAt: true,
+      refundAmount: true,
+      ga4RefundReportedAmount: true,
+      currency: true,
+    },
+    orderBy: { refundedAt: 'asc' },
+  });
+
+  return rows
+    .map((b) => ({
+      ...b,
+      shortfall: Number((Number(b.refundAmount) - Number(b.ga4RefundReportedAmount || 0)).toFixed(2)),
+    }))
+    // Floating point: anything under a cent is noise, not a missing event.
+    .filter((b) => b.shortfall > 0.005);
+}
+
+/**
+ * Log one line naming every refund GA should have but does not, and how much
+ * revenue it is still counting for money that was returned.
+ *
+ * @returns {Promise<{count: number, revenue: number, bookings: string[]}>}
+ */
+async function reportUnreportedRefunds(opts = {}) {
+  const refunds = await findUnderreportedRefunds(opts);
+  const revenue = refunds.reduce((sum, b) => sum + b.shortfall, 0);
+
+  if (refunds.length > 0) {
+    const refs = refunds.map((b) => b.bookingNumber).join(', ');
+    console.error(
+      `[ga4Health] ${refunds.length} consented refund(s) worth $${revenue.toFixed(2)} were never confirmed by GA4: ` +
+        `${refs}. GA4 is still counting this money as revenue. ` +
+        'Check GA4_API_SECRET, then run `node scripts/ga4-reconcile.js --backfill`.'
+    );
+  }
+
+  return { count: refunds.length, revenue, bookings: refunds.map((b) => b.bookingNumber) };
+}
+
 module.exports = {
   findUnreportedPurchases,
   reportUnreportedPurchases,
+  findUnderreportedRefunds,
+  reportUnreportedRefunds,
   DEFAULT_GRACE_MS,
   DEFAULT_LOOKBACK_MS,
 };

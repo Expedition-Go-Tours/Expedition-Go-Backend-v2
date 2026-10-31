@@ -1282,8 +1282,9 @@ function registerWorkers() {
           break;
         }
         case 'check-ga4-delivery': {
-          const { reportUnreportedPurchases } = require('./ga4DeliveryCheck');
+          const { reportUnreportedPurchases, reportUnreportedRefunds } = require('./ga4DeliveryCheck');
           await reportUnreportedPurchases();
+          await reportUnreportedRefunds();
           break;
         }
       case 'cleanup-notifications': {

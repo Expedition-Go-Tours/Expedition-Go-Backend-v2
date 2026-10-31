@@ -9,7 +9,7 @@
  */
 
 jest.mock('../../src/core/services/prismaClient', () => ({
-  booking: { update: jest.fn() },
+  booking: { update: jest.fn(), findUnique: jest.fn() },
 }));
 
 const prisma = require('../../src/core/services/prismaClient');
@@ -46,6 +46,8 @@ describe('ga4Measurement', () => {
 
   beforeEach(() => {
     prisma.booking.update.mockReset();
+    prisma.booking.findUnique.mockReset();
+    prisma.booking.findUnique.mockResolvedValue(null);
     delete process.env.GA4_MEASUREMENT_ID;
     delete process.env.GA4_API_SECRET;
     // Every outcome now logs one line; silence it unless a test re-arms the
@@ -430,6 +432,55 @@ describe('ga4Measurement', () => {
       prisma.booking.update.mockRejectedValue(new Error('db down'));
 
       await expect(sendPurchase({ ...baseBooking, id: 'bk_3' })).resolves.toEqual({ ok: true });
+    });
+
+    it('records how much of a refund GA accepted, not just that one was sent', async () => {
+      global.fetch = jest.fn().mockResolvedValue({ ok: true, text: async () => '' });
+
+      await sendRefund({ ...baseBooking, id: 'bk_4', refundAmount: 60 }, { value: 60 });
+
+      const call = prisma.booking.update.mock.calls[0][0];
+      expect(call.where).toEqual({ id: 'bk_4' });
+      expect(call.data.ga4RefundReportedAt).toBeInstanceOf(Date);
+      expect(call.data.ga4RefundReportedAmount).toBe(60);
+    });
+
+    it('accumulates partial refunds so the shortfall stays measurable', async () => {
+      global.fetch = jest.fn().mockResolvedValue({ ok: true, text: async () => '' });
+      prisma.booking.findUnique.mockResolvedValue({ ga4RefundReportedAmount: 60 });
+
+      await sendRefund({ ...baseBooking, id: 'bk_5', refundAmount: 40 }, { value: 40 });
+
+      const call = prisma.booking.update.mock.calls[0][0];
+      expect(call.data.ga4RefundReportedAmount).toBe(100);
+    });
+
+    it('leaves the refund ledger empty when GA rejects the refund', async () => {
+      global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 500, text: async () => 'boom' });
+
+      await sendRefund({ ...baseBooking, id: 'bk_6', refundAmount: 60 });
+
+      expect(prisma.booking.update).not.toHaveBeenCalled();
+    });
+
+    it('never records a refund GA was not actually told about', async () => {
+      global.fetch = jest.fn().mockResolvedValue({ ok: true, text: async () => '' });
+
+      // No consent → buildRefundEvent returns null, so nothing is delivered
+      // and nothing may be stamped as confirmed.
+      await sendRefund({ ...baseBooking, id: 'bk_7', analyticsConsent: false, refundAmount: 60 });
+
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(prisma.booking.update).not.toHaveBeenCalled();
+    });
+
+    it('does not let a refund ledger failure break the send', async () => {
+      global.fetch = jest.fn().mockResolvedValue({ ok: true, text: async () => '' });
+      prisma.booking.findUnique.mockRejectedValue(new Error('db down'));
+
+      await expect(sendRefund({ ...baseBooking, id: 'bk_8', refundAmount: 60 }))
+        .resolves
+        .toEqual({ ok: true });
     });
   });
 

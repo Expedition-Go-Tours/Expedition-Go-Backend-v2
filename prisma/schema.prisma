@@ -1231,6 +1231,13 @@ model Booking {
   // it into GA. scripts/ga4-reconcile.js diffs it against settled bookings.
   ga4ReportedAt DateTime?
 
+  // The same ledger for money coming back out. `ga4RefundReportedAmount`
+  // accumulates across partial refunds, so `refundAmount > ga4RefundReported
+  // Amount` means GA is still counting revenue the customer has had refunded.
+  // Written only after GA accepts the refund event.
+  ga4RefundReportedAt     DateTime?
+  ga4RefundReportedAmount Decimal?  @db.Decimal(10, 2)
+
   // Customer-selected pickup snapshot (mode, area/location, address, time).
   // Null when the tour has no pickup service.
   pickup Json?
