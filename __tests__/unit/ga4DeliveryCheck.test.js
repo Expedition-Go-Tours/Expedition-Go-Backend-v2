@@ -158,8 +158,8 @@ describe('reportBookingsGaNeverReceived — asks GA, not our own ledger', () => 
     // ga4ReportedAt is deliberately not selected or filtered: the point is that
     // this check does not consult it.
     prisma.booking.findMany.mockResolvedValue([
-      { bookingNumber: 'TRG-1', paidAt: new Date('2026-10-25T10:00:00Z'), grossAmount: 160 },
-      { bookingNumber: 'TRG-2', paidAt: new Date('2026-10-25T11:00:00Z'), grossAmount: 90 },
+      { bookingNumber: 'TRG-1', paidAt: new Date('2026-10-25T10:00:00Z'), ga4ReportedAt: new Date('2026-10-25T10:00:05Z'), grossAmount: 160 },
+      { bookingNumber: 'TRG-2', paidAt: new Date('2026-10-25T11:00:00Z'), ga4ReportedAt: null, grossAmount: 90 },
     ]);
     ga4Reporting.fetchPurchaseLedger.mockResolvedValue([
       { transactionId: 'TRG-1', revenue: 160, transactions: 1, itemsPurchased: 1 },
@@ -177,7 +177,7 @@ describe('reportBookingsGaNeverReceived — asks GA, not our own ledger', () => 
 
   it('is silent when GA holds every consented purchase', async () => {
     prisma.booking.findMany.mockResolvedValue([
-      { bookingNumber: 'TRG-1', paidAt: new Date('2026-10-25T10:00:00Z'), grossAmount: 160 },
+      { bookingNumber: 'TRG-1', paidAt: new Date('2026-10-25T10:00:00Z'), ga4ReportedAt: new Date('2026-10-25T10:00:05Z'), grossAmount: 160 },
     ]);
     ga4Reporting.fetchPurchaseLedger.mockResolvedValue([
       { transactionId: 'TRG-1', revenue: 160, transactions: 1, itemsPurchased: 1 },
@@ -200,14 +200,49 @@ describe('reportBookingsGaNeverReceived — asks GA, not our own ledger', () => 
     expect(ga4Reporting.fetchPurchaseLedger).not.toHaveBeenCalled();
   });
 
-  it('never alarms on an event young enough that GA may still be processing it', async () => {
-    prisma.booking.findMany.mockResolvedValue([]);
+  it('stays silent on a booking backfilled moments ago, however old the payment', async () => {
+    // The false positive this rule exists for: paid a week ago, sent a minute
+    // ago. GA has not had time to report it, so absence means nothing yet.
+    prisma.booking.findMany.mockResolvedValue([
+      { bookingNumber: 'TRG-RECENT', paidAt: new Date(NOW - 7 * 24 * 60 * 60 * 1000), ga4ReportedAt: new Date(NOW - 60 * 1000), grossAmount: 160 },
+    ]);
+    ga4Reporting.fetchPurchaseLedger.mockResolvedValue([]);
 
-    await findBookingsGaNeverReceived({ now: NOW, minAgeMs: 48 * 60 * 60 * 1000 });
+    const result = await reportBookingsGaNeverReceived({ now: NOW });
 
-    const { gte, lte } = prisma.booking.findMany.mock.calls[0][0].where.paidAt;
-    expect(lte.getTime()).toBe(NOW - 48 * 60 * 60 * 1000);
+    expect(result.count).toBe(0);
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it('measures age from the send, not the payment date', async () => {
+    // Paid recently but reported long ago (a late-settled pay-later booking):
+    // GA has had the event for days, so absence is real.
+    prisma.booking.findMany.mockResolvedValue([
+      { bookingNumber: 'TRG-OLDFLASH', paidAt: new Date(NOW - 5 * 60 * 60 * 1000), ga4ReportedAt: new Date(NOW - 60 * 24 * 60 * 60 * 1000), grossAmount: 90 },
+    ]);
+    ga4Reporting.fetchPurchaseLedger.mockResolvedValue([]);
+
+    const result = await reportBookingsGaNeverReceived({ now: NOW });
+
+    expect(result.count).toBe(1);
+    expect(result.bookings).toEqual(['TRG-OLDFLASH']);
+  });
+
+  it('queries GA through today, since a backfill may be dated by the send', async () => {
+    prisma.booking.findMany.mockResolvedValue([
+      { bookingNumber: 'TRG-DUE', paidAt: new Date(NOW - 3 * 24 * 60 * 60 * 1000), ga4ReportedAt: new Date(NOW - 3 * 24 * 60 * 60 * 1000), grossAmount: 160 },
+    ]);
+
+    await findBookingsGaNeverReceived({ now: NOW });
+
+    const { gte } = prisma.booking.findMany.mock.calls[0][0].where.paidAt;
     expect(gte.getTime()).toBe(NOW - 7 * 24 * 60 * 60 * 1000);
+    // No upper bound on paidAt: recent bookings are fetched and then aged
+    // client-side by their send time.
+    expect(prisma.booking.findMany.mock.calls[0][0].where.paidAt.lte).toBeUndefined();
+
+    const range = ga4Reporting.fetchPurchaseLedger.mock.calls[0][0];
+    expect(range.to).toBe(new Date(NOW).toISOString().slice(0, 10));
   });
 
   it('asks GA only for consented bookings with a client_id', async () => {

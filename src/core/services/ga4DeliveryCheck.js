@@ -157,8 +157,19 @@ async function reportUnreportedRefunds(opts = {}) {
 
 /**
  * ── The independent check ──────────────────────────────────────────────────
-
-const ga4Reporting = require('./ga4Reporting');
+ *
+ * What does GA itself say it received? The alarms above read
+ * `Booking.ga4ReportedAt`, which is written when the Measurement Protocol
+ * answers 2xx — still our own claim about an HTTP call. The incident this
+ * module exists for was precisely that claim being wrong: GA answers 204 to an
+ * unusable secret, and to a bogus one too (confirmed against /mp/collect — a
+ * 204 there means "accepted the POST", never "kept the event"). Four bookings
+ * had been marked delivered on log lines alone until GA's own ledger
+ * contradicted them.
+ *
+ * `ga4Reporting` is required lazily inside the function so these database-side
+ * alarms still work with no read side configured at all.
+ */
 
 /** GA's standard reports need time; alarm only on events old enough to have landed. */
 const DEFAULT_MIN_AGE_MS = 48 * 60 * 60 * 1000;
@@ -175,7 +186,7 @@ function isoDay(ms) {
  */
 async function findBookingsGaNeverReceived({
   now = Date.now(),
-  lookbackMs = 7 * 24 * 60 * 60 * 1000,
+  lookbackMs = DEFAULT_LOOKBACK_MS,
   minAgeMs = DEFAULT_MIN_AGE_MS,
   fetchImpl = fetch,
 } = {}) {
@@ -187,23 +198,35 @@ async function findBookingsGaNeverReceived({
 
   const bookings = await prisma.booking.findMany({
     where: {
-      paidAt: { gte: new Date(now - lookbackMs), lte: new Date(now - minAgeMs) },
+      paidAt: { gte: new Date(now - lookbackMs) },
       analyticsConsent: true,
       gaClientId: { not: null },
       paymentStatus: { in: SETTLED },
     },
-    select: { bookingNumber: true, paidAt: true, grossAmount: true, currency: true },
+    select: { bookingNumber: true, paidAt: true, ga4ReportedAt: true, grossAmount: true, currency: true },
     orderBy: { paidAt: 'asc' },
   });
-  if (bookings.length === 0) return { skipped: null, bookings: [] };
 
+  // Age is measured from the SEND, not from paidAt. A booking paid last
+  // Wednesday and backfilled one minute ago has had no chance to appear in
+  // GA's standard reports, and alarming on it would be reporting lag dressed up
+  // as a failure — which is how this check produced 4 false positives on its
+  // first run, minutes after a successful backfill.
+  const due = bookings.filter((b) => {
+    const sentAt = b.ga4ReportedAt ? b.ga4ReportedAt.getTime() : b.paidAt.getTime();
+    return now - sentAt >= minAgeMs;
+  });
+  if (due.length === 0) return { skipped: null, bookings: [] };
+
+  // Span through today: a backfill inside GA's 72h window is dated by paidAt,
+  // one outside it is dated by the send, so either can be the row's date.
   const ledger = await ga4Reporting.fetchPurchaseLedger(
-    { from: isoDay(now - lookbackMs), to: isoDay(now - minAgeMs) },
+    { from: isoDay(now - lookbackMs), to: isoDay(now) },
     { fetchImpl }
   );
   const inGa = new Set(ledger.map((row) => row.transactionId));
 
-  return { skipped: null, bookings: bookings.filter((b) => !inGa.has(b.bookingNumber)) };
+  return { skipped: null, bookings: due.filter((b) => !inGa.has(b.bookingNumber)) };
 }
 
 /**
