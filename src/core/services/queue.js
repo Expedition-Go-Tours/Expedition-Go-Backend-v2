@@ -134,6 +134,10 @@ const SCHEDULES = [
   // CLEANUP — reconciles
   { jobName: 'reconcile-ghana',             queue: 'cleanup',      everyMs: 30 * 60 * 1000 },
   { jobName: 'reconcile-travioafrica',      queue: 'cleanup',      everyMs: 30 * 60 * 1000 },
+  // Money events: a settled purchase GA never confirmed is a fault, not a
+  // choice — the incident that cost a week of revenue went unnoticed until a
+  // human compared dashboards. Every 6h is cheap and still same-day.
+  { jobName: 'check-ga4-delivery',          queue: 'cleanup',      everyMs: 6 * 3600 * 1000 },
   // AGGREGATIONS
   { jobName: 'refresh-popularity',          queue: 'aggregation', everyMs: 3600 * 1000 },
   { jobName: 'cleanup-events',              queue: 'aggregation', everyMs: 24 * 3600 * 1000 },
@@ -1275,6 +1279,11 @@ function registerWorkers() {
         case 'reconcile-travioafrica': {
           const { reconcileTravioAfricaPublish } = require('./autoPublishTravioAfrica');
           await reconcileTravioAfricaPublish();
+          break;
+        }
+        case 'check-ga4-delivery': {
+          const { reportUnreportedPurchases } = require('./ga4DeliveryCheck');
+          await reportUnreportedPurchases();
           break;
         }
       case 'cleanup-notifications': {
