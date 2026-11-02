@@ -70,6 +70,23 @@ function requestOwnsBooking(req, booking) {
   return false;
 }
 
+/**
+ * The error to send when the caller does not own the resource.
+ *
+ * These routes used to sit behind `protect`, which answers an EXPIRED session
+ * with 401 — and `fetchWithAuth` only retries a 401 (refresh, then replay). A
+ * blanket 404 here would turn a lapsed token on an open checkout page into a
+ * dead end instead of a silent recovery, so: presented a token that resolved
+ * to nobody → 401 (refresh and retry); presented nothing, or presented an
+ * identity that simply is not the owner → 404, which leaks nothing.
+ */
+function accessDenied(req, message) {
+  if (!req.user && !req.guestAccess && req.headers?.authorization) {
+    return new AppError('Your session has expired. Please sign in again.', 401);
+  }
+  return new AppError(message, 404);
+}
+
 const CACHE_PREFIX = BRAND.cachePrefix;
 const LIST_CACHE_KEY = `${CACHE_PREFIX}tours:list`;
 const DETAIL_CACHE_KEY = (slug) => `${CACHE_PREFIX}detail:${slug}`;
@@ -1380,7 +1397,7 @@ const getCheckoutDraft = catchAsync(async (req, res, next) => {
   // Found by id alone so a guest's draft is reachable at all; ownership is
   // decided per caller (session owner, or the GuestAccess token for it).
   if (!requestOwnsDraft(req, draft)) {
-    return next(new AppError('Checkout session not found or already completed', 404));
+    return next(accessDenied(req, 'Checkout session not found or already completed'));
   }
 
   const travelers = draft.payload?.travelers || {};
@@ -1580,7 +1597,7 @@ const getBooking = catchAsync(async (req, res, next) => {
   // then ownership-tested: a signed-in caller must own it, a guest must hold
   // the GuestAccess token issued for it. `customerId: null` in a where clause
   // would have matched EVERY guest booking — reading any id would have worked.
-  if (!requestOwnsBooking(req, booking)) return next(new AppError('Booking not found', 404));
+  if (!requestOwnsBooking(req, booking)) return next(accessDenied(req, 'Booking not found'));
 
   const decorated = withChoiceToken({ ...booking, refundState: bookingRefundState(booking) });
   res.status(200).json({ status: 'success', data: { booking: sanitizeBookingPaymentInternals(decorated) } });
@@ -1617,9 +1634,7 @@ const getBookingBySession = catchAsync(async (req, res, next) => {
 
   // Session id alone is not a credential: the caller must own the draft it
   // resolves to (session owner, or the guest token minted for it).
-  if (!requestOwnsDraft(req, draft)) return next(new AppError('Checkout session not found', 404));
-
-  if (!draft) return next(new AppError('Checkout session not found', 404));
+  if (!requestOwnsDraft(req, draft)) return next(accessDenied(req, 'Checkout session not found'));
 
   // If materialized, load the booking for the frontend.
   let booking = null;
@@ -1664,7 +1679,7 @@ const capturePaypalPayment = catchAsync(async (req, res, next) => {
     select: { id: true, customerId: true },
   });
   if (!requestOwnsDraft(req, ownedDraft)) {
-    return next(new AppError('Payment not found', 404));
+    return next(accessDenied(req, 'Payment not found'));
   }
 
   // A PayPal/Stripe/DB failure here must never look like "nothing happened":
@@ -1758,7 +1773,7 @@ const getBookingByPaypalOrder = catchAsync(async (req, res, next) => {
   });
 
   // Order id alone is not a credential — same rule as the Stripe session id.
-  if (!requestOwnsDraft(req, draft)) return next(new AppError('Checkout session not found', 404));
+  if (!requestOwnsDraft(req, draft)) return next(accessDenied(req, 'Checkout session not found'));
 
   let booking = null;
   if (draft.status === 'PAID' && draft.bookingId) {
@@ -1828,7 +1843,7 @@ const getPaypalApproval = catchAsync(async (req, res, next) => {
     where: { paypalOrderId: orderId },
     select: { id: true, customerId: true },
   });
-  if (!requestOwnsDraft(req, ownedDraft)) return next(new AppError('Payment not found', 404));
+  if (!requestOwnsDraft(req, ownedDraft)) return next(accessDenied(req, 'Payment not found'));
 
   const result = await payments.getPaypalApproval(orderId, { customerId: ownedDraft.customerId || null });
 
