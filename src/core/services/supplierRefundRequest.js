@@ -52,6 +52,14 @@ const ELIGIBLE_STATUSES = Object.freeze(['COMPLETED', 'NO_SHOW']);
 /** Payout states that mean the supplier was already credited for this booking. */
 const SETTLED_PAYOUT_STATES = Object.freeze(['INVOICED', 'REQUESTED', 'PAID']);
 
+/**
+ * A request in one of these states means the booking is already in the refund
+ * queue or mid-execution. A supplier must not file a second one while it is
+ * unresolved. The database partial unique index enforces the two live states;
+ * FAILED is checked here as well so an admin retry is not duplicated.
+ */
+const ACTIVE_REQUEST_STATUSES = Object.freeze(['PENDING_APPROVAL', 'EXECUTING', 'FAILED']);
+
 const CHARGE_REASON = 'SUPPLIER_REFUND';
 const REFUND_TYPES = Object.freeze(['PERCENT', 'AMOUNT']);
 
@@ -106,12 +114,18 @@ function refundableOf(booking) {
  * leave a booking COMPLETED or REFUNDED depending on the path taken) but the
  * cash facts do not.
  */
-function eligibilityError(booking, now = new Date()) {
+function eligibilityError(booking) {
   if (!booking) return 'Booking not found';
   if (booking.origin === 'SUPPLIER_CREATED') {
     // The platform never held this money — refunding it here would be fiction.
     // Offline collection refunds go through the collections ledger instead.
     return 'This booking was collected outside the platform. Refund it from the collections panel instead.';
+  }
+  if (!ELIGIBLE_STATUSES.includes(booking.status)) {
+    // Date alone is not completion. A past PENDING/CONFIRMED booking can still
+    // be waiting on a supplier action, and a cancelled booking belongs in the
+    // cancellation flow rather than this post-trip refund queue.
+    return 'Only a completed or no-show trip can be refunded. Cancel the booking instead.';
   }
   if (booking.paymentStatus !== 'SUCCEEDED' && booking.paymentStatus !== 'REFUNDED') {
     return 'Only a fully paid booking can be refunded';
@@ -231,6 +245,9 @@ function normalizePayload(payload, actor) {
   if (!REASON_CODES.has(reasonCode)) throw new AppError('Choose a reason for the refund', 400);
 
   const note = payload.note == null ? null : String(payload.note).trim().slice(0, 1000);
+  if (reasonCode === 'OTHER' && !note) {
+    throw new AppError('Explain the “Other” reason in the note', 400);
+  }
 
   return {
     operated,
@@ -294,7 +311,10 @@ const BOOKING_INCLUDE = {
 async function loadSupplierBooking(bookingId, supplierId) {
   const booking = await prisma.booking.findFirst({
     where: { id: bookingId, tour: { supplierId }, isSimulated: false },
-    include: { tour: { select: { id: true, title: true, slug: true, supplierId: true } } },
+    include: {
+      tour: { select: { id: true, title: true, slug: true, supplierId: true } },
+      customer: { select: { id: true, name: true, email: true } },
+    },
   });
   if (!booking) throw new AppError('Booking not found', 404);
   return booking;
@@ -306,12 +326,19 @@ async function loadSupplierBooking(bookingId, supplierId) {
  */
 async function quoteRefund({ bookingId, supplierId, requesterEmail = null }) {
   const booking = await loadSupplierBooking(bookingId, supplierId);
+  const currency = booking.currency || 'USD';
   const blocked = eligibilityError(booking);
-  const open = await prisma.supplierRefundRequest.findFirst({
-    where: { bookingId: booking.id, status: 'PENDING_APPROVAL' },
-    select: { id: true, requestNumber: true, status: true },
-  });
 
+  const [open, supplierBalance] = await Promise.all([
+    prisma.supplierRefundRequest.findFirst({
+      where: { bookingId: booking.id, status: { in: [...ACTIVE_REQUEST_STATUSES] } },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, requestNumber: true, status: true, createdAt: true },
+    }),
+    openBalance(supplierId, currency),
+  ]);
+
+  const reason = blocked || (open ? 'A refund request is already in progress for this booking.' : null);
   const gross = round2(toNumber(booking.grossAmount));
   const refundable = refundableOf(booking);
   const supplierPayout = round2(toNumber(booking.supplierPayout));
@@ -322,17 +349,20 @@ async function quoteRefund({ bookingId, supplierId, requesterEmail = null }) {
       bookingNumber: booking.bookingNumber,
       status: booking.status,
       travelDate: booking.travelDate,
-      currency: booking.currency || 'USD',
+      currency,
+      tourTitle: booking.tour?.title || null,
+      customerName: booking.customer?.name || null,
       grossAmount: gross,
       refundAmount: round2(toNumber(booking.refundAmount)),
       supplierPayout,
     },
-    eligible: !blocked,
-    reason: blocked || null,
+    eligible: !reason,
+    reason,
     refundable,
     supplierShareRaw: supplierPayout,
     payoutStatus: booking.payoutStatus,
     openRequest: open || null,
+    supplierBalance,
     // Who the request will be attributed to. Returned here so the modal does
     // not have to reach into client auth state for a display value.
     requestedByEmail: requesterEmail || null,
@@ -340,30 +370,91 @@ async function quoteRefund({ bookingId, supplierId, requesterEmail = null }) {
   };
 }
 
-/** Create a PENDING_APPROVAL request. One open request per booking. */
-async function createRefundRequest({ bookingId, supplierId, supplier, payload, actor, req }) {
+/**
+ * Request numbers are date + 4 random hex. Retry a collision instead of
+ * misreporting it as a duplicate request for the booking.
+ */
+async function createRequestRow(data, attempts = 2) {
+  try {
+    return await prisma.supplierRefundRequest.create({
+      data: { ...data, requestNumber: requestNumber() },
+    });
+  } catch (err) {
+    const target = Array.isArray(err?.meta?.target) ? err.meta.target.join(',') : String(err?.meta?.target || '');
+    if (err?.code === 'P2002' && target.includes('requestNumber') && attempts > 1) {
+      return createRequestRow(data, attempts - 1);
+    }
+    throw err;
+  }
+}
+
+/** Create a PENDING_APPROVAL request. One active request per booking. */
+async function createRefundRequest({
+  bookingId,
+  supplierId,
+  supplier,
+  payload,
+  actor,
+  req,
+  idempotencyKey = null,
+}) {
+  const key = idempotencyKey ? String(idempotencyKey).trim().slice(0, 120) : null;
+
+  // A retry after a lost response must return the first request, not create a
+  // second one or tell the supplier their successful attempt failed.
+  if (key) {
+    const replay = await prisma.supplierRefundRequest.findUnique({
+      where: { idempotencyKey: key },
+      include: BOOKING_INCLUDE,
+    });
+    if (replay) {
+      if (replay.supplierId !== supplierId) {
+        throw new AppError('This idempotency key belongs to another supplier', 409);
+      }
+      if (replay.bookingId && replay.bookingId !== bookingId) {
+        throw new AppError('This idempotency key was used for another booking', 409);
+      }
+      return serialize(replay);
+    }
+  }
+
   const booking = await loadSupplierBooking(bookingId, supplierId);
   const blocked = eligibilityError(booking);
   if (blocked) throw new AppError(blocked, 400);
+
+  const active = await prisma.supplierRefundRequest.findFirst({
+    where: { bookingId: booking.id, status: { in: [...ACTIVE_REQUEST_STATUSES] } },
+    select: { id: true, requestNumber: true, status: true },
+  });
+  if (active) {
+    throw new AppError('This booking already has a refund request in progress', 409);
+  }
 
   const normalized = normalizePayload(payload, actor || supplier);
   const preview = computePreview(booking, normalized);
 
   let request;
   try {
-    request = await prisma.supplierRefundRequest.create({
-      data: {
-        requestNumber: requestNumber(),
-        bookingId: booking.id,
-        supplierId,
-        payload: normalized,
-        preview,
-      },
+    request = await createRequestRow({
+      bookingId: booking.id,
+      supplierId,
+      payload: normalized,
+      preview,
+      idempotencyKey: key,
     });
   } catch (err) {
-    // The partial unique index is the concurrency guard, not this check.
     if (err && err.code === 'P2002') {
-      throw new AppError('This booking already has a refund request awaiting a decision', 409);
+      // A concurrent retry with the same key is a success, not a failure.
+      if (key) {
+        const replay = await prisma.supplierRefundRequest.findUnique({
+          where: { idempotencyKey: key },
+          include: BOOKING_INCLUDE,
+        });
+        if (replay && replay.supplierId === supplierId && (!replay.bookingId || replay.bookingId === bookingId)) {
+          return serialize(replay);
+        }
+      }
+      throw new AppError('This booking already has a refund request in progress', 409);
     }
     throw err;
   }
@@ -500,7 +591,7 @@ async function getAdminRefundRequest(id) {
       where: { bookingId: row.bookingId, reason: CHARGE_REASON, status: { not: 'REVERSED' } },
       _sum: { amount: true },
     }),
-    openBalance(row.supplierId),
+    openBalance(row.supplierId, row.booking?.currency),
   ]);
 
   let live = null;
@@ -525,14 +616,17 @@ async function getAdminRefundRequest(id) {
  * every OPEN platform charge. Same predicate the commission ledger uses, so
  * the two can never disagree about what a supplier actually has.
  */
-async function openBalance(supplierId) {
+async function openBalance(supplierId, currency = null) {
   try {
     const { eligibleBookingsWhere } = require('./financeHelpers');
     const where = eligibleBookingsWhere(supplierId);
+    if (currency) where.currency = currency;
+    const chargeWhere = { supplierId, status: 'OPEN' };
+    if (currency) chargeWhere.currency = currency;
     const [earnings, charges] = await Promise.all([
       prisma.booking.aggregate({ where, _sum: { supplierPayout: true } }),
       prisma.supplierCharge.aggregate({
-        where: { supplierId, status: 'OPEN' },
+        where: chargeWhere,
         _sum: { amount: true },
       }),
     ]);
@@ -541,7 +635,8 @@ async function openBalance(supplierId) {
       openCharges: round2(toNumber(charges._sum.amount)),
       available: round2(toNumber(earnings._sum.supplierPayout) - toNumber(charges._sum.amount)),
     };
-  } catch {
+  } catch (err) {
+    console.error('[SupplierRefund] open balance failed:', err.message);
     return null;
   }
 }
@@ -742,31 +837,41 @@ async function approveRefundRequest({ requestId, adminUser, note = null, req }) 
 }
 
 async function rejectRefundRequest({ requestId, adminUser, note, req }) {
-  const reason = note == null ? '' : String(note).trim();
+  const reason = note == null ? '' : String(note).trim().slice(0, 1000);
   if (!reason) throw new AppError('A reason is required when rejecting a refund request', 400);
 
-  const request = await prisma.supplierRefundRequest.findUnique({ where: { id: requestId } });
-  if (!request) throw new AppError('Refund request not found', 404);
-  if (request.status !== 'PENDING_APPROVAL') {
-    throw new AppError(`This request is not awaiting a decision (${request.status})`, 409);
-  }
-
-  const updated = await prisma.supplierRefundRequest.update({
-    where: { id: requestId },
+  // Conditional update + row check: an approval may be executing or may have
+  // just committed. Never overwrite COMPLETED with REJECTED because the read
+  // happened before the other admin's transaction committed.
+  const result = await prisma.supplierRefundRequest.updateMany({
+    where: { id: requestId, status: 'PENDING_APPROVAL' },
     data: {
       status: 'REJECTED',
       decidedBy: adminUser?.id || null,
       decidedAt: new Date(),
       decisionNote: reason,
     },
+  });
+  if (!result || result.count === 0) {
+    const current = await prisma.supplierRefundRequest.findUnique({
+      where: { id: requestId },
+      select: { status: true },
+    });
+    if (!current) throw new AppError('Refund request not found', 404);
+    throw new AppError(`This request is not awaiting a decision (${current.status})`, 409);
+  }
+
+  const updated = await prisma.supplierRefundRequest.findUnique({
+    where: { id: requestId },
     include: BOOKING_INCLUDE,
   });
+  if (!updated) throw new AppError('Refund request not found', 404);
 
   await logActivity({
     userId: adminUser?.id || null,
     action: 'booking.refund_request_rejected',
     resource: 'Booking',
-    resourceId: request.bookingId,
+    resourceId: updated.bookingId,
     metadata: { requestId, note: reason, admin: adminUser?.email || null },
     req,
   }).catch(() => {});
@@ -784,6 +889,7 @@ async function rejectRefundRequest({ requestId, adminUser, note, req }) {
 module.exports = {
   ELIGIBLE_STATUSES,
   SETTLED_PAYOUT_STATES,
+  ACTIVE_REQUEST_STATUSES,
   REFUND_REASONS,
   CHARGE_REASON,
   quoteRefund,

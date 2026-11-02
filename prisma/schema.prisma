@@ -2003,7 +2003,7 @@ model CancellationRequest {
   updatedAt DateTime @updatedAt
 
   @@index([status, createdAt]) // admin queue ordering
-  @@index([bookingId, status]) // one-pending-per-booking dedupe + chips
+  @@index([bookingId, status]) // active-request lookup + chips
   @@index([supplierId, createdAt]) // supplier's own requests
   @@index([batchId])
 }
@@ -3027,6 +3027,10 @@ model SupplierRefundRequest {
   id            String @id @default(cuid())
   requestNumber String @unique // e.g. SR-20261102-4F2A
 
+  // Client-supplied retry key. Nullable because older clients will not send
+  // one; Postgres allows many NULLs in a unique index.
+  idempotencyKey String? @unique
+
   bookingId String
   booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
@@ -3063,7 +3067,7 @@ model SupplierRefundRequest {
   updatedAt DateTime @updatedAt
 
   @@index([status, createdAt]) // admin queue ordering
-  @@index([bookingId, status]) // one-pending-per-booking dedupe
+  @@index([bookingId, status]) // active-request lookup
   @@index([supplierId]) // supplier's own list (prefix of the index below too)
   @@index([supplierId, createdAt])
 }

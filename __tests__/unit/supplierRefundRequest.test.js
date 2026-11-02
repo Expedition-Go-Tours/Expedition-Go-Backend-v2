@@ -10,7 +10,7 @@
 jest.mock('../../src/core/services/prismaClient', () => ({
   $transaction: jest.fn(),
   $queryRawUnsafe: jest.fn(),
-  booking: { findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
+  booking: { findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn(), aggregate: jest.fn() },
   supplierRefundRequest: {
     create: jest.fn(),
     findUnique: jest.fn(),
@@ -163,6 +163,13 @@ describe('eligibility', () => {
       .toMatch(/fully paid/i);
   });
 
+  it('refuses a booking that has not reached a terminal post-trip state', () => {
+    for (const status of ['PENDING', 'CONFIRMED', 'CANCELLED']) {
+      expect(service.eligibilityError(booking({ status })))
+        .toMatch(/completed or no-show/i);
+    }
+  });
+
   it('refuses a booking with nothing left to refund', () => {
     expect(service.eligibilityError(booking({ refundAmount: 151.22 })))
       .toMatch(/already been fully refunded/i);
@@ -178,6 +185,7 @@ describe('createRefundRequest', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     prisma.booking.findFirst.mockResolvedValue(booking());
+    prisma.supplierRefundRequest.findFirst.mockResolvedValue(null);
     prisma.supplierRefundRequest.create.mockResolvedValue({ id: 'r1', requestNumber: 'SR-1' });
     prisma.supplierRefundRequest.findUnique.mockResolvedValue({
       id: 'r1',
@@ -245,6 +253,37 @@ describe('createRefundRequest', () => {
     })).rejects.toThrow(/already has a refund request/i);
   });
 
+  it('blocks a new request while an earlier one is still active', async () => {
+    prisma.supplierRefundRequest.findFirst.mockResolvedValue({
+      id: 'r0', requestNumber: 'SR-0', status: 'EXECUTING',
+    });
+    await expect(service.createRefundRequest({
+      bookingId: 'b1', supplierId: 's1', payload: payload(), actor: { id: 'u1' },
+    })).rejects.toThrow(/already has a refund request in progress/i);
+    expect(prisma.supplierRefundRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('replays the first request for a repeated idempotency key', async () => {
+    prisma.supplierRefundRequest.findUnique.mockResolvedValue({
+      id: 'r1', requestNumber: 'SR-1', supplierId: 's1', status: 'PENDING_APPROVAL',
+      payload: payload(), preview: { proposed: 151.22, charge: 0, currency: 'USD' },
+      booking: { id: 'b1', bookingNumber: 'TRG-1', tour: { title: 'Tour' } },
+    });
+    const data = await service.createRefundRequest({
+      bookingId: 'b1', supplierId: 's1', payload: payload(), actor: { id: 'u1' },
+      idempotencyKey: 'retry-key-1',
+    });
+    expect(data.requestNumber).toBe('SR-1');
+    expect(prisma.supplierRefundRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('requires a note when the reason is Other', async () => {
+    await expect(service.createRefundRequest({
+      bookingId: 'b1', supplierId: 's1', actor: { id: 'u1' },
+      payload: { operated: true, attended: true, reasonCode: 'OTHER', refundType: 'AMOUNT', value: 10 },
+    })).rejects.toThrow(/explain.*other/i);
+  });
+
   it('stores the server-computed preview, not the request body', async () => {
     // The client cannot smuggle an amount in: only refundType + value are read,
     // and both are re-derived against the booking.
@@ -258,6 +297,44 @@ describe('createRefundRequest', () => {
     expect(data.preview.proposed).toBe(10);
     expect(data.preview.charge).toBe(8);
     expect(data.payload.proposed).toBeUndefined();
+  });
+});
+
+describe('quoteRefund', () => {
+  it('returns the currency-scoped balance and blocks a duplicate active request', async () => {
+    prisma.booking.findFirst.mockResolvedValue(booking({ currency: 'GHS' }));
+    prisma.supplierRefundRequest.findFirst.mockResolvedValue({
+      id: 'r0', requestNumber: 'SR-0', status: 'PENDING_APPROVAL',
+    });
+    prisma.booking.aggregate.mockResolvedValue({ _sum: { supplierPayout: 500 } });
+    prisma.supplierCharge.aggregate.mockResolvedValue({ _sum: { amount: 75 } });
+
+    const data = await service.quoteRefund({ bookingId: 'b1', supplierId: 's1' });
+
+    expect(data.eligible).toBe(false);
+    expect(data.openRequest).toEqual(expect.objectContaining({ requestNumber: 'SR-0' }));
+    expect(data.reason).toMatch(/already in progress/i);
+    expect(data.supplierBalance).toEqual({ earnings: 500, openCharges: 75, available: 425 });
+    expect(prisma.booking.aggregate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ currency: 'GHS' }) }),
+    );
+  });
+});
+
+describe('openBalance', () => {
+  it('filters earnings and charges to the booking currency', async () => {
+    prisma.booking.aggregate.mockResolvedValue({ _sum: { supplierPayout: 500 } });
+    prisma.supplierCharge.aggregate.mockResolvedValue({ _sum: { amount: 75 } });
+
+    const balance = await service.openBalance('s1', 'GHS');
+
+    expect(prisma.booking.aggregate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ currency: 'GHS' }) }),
+    );
+    expect(prisma.supplierCharge.aggregate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ currency: 'GHS', status: 'OPEN' }) }),
+    );
+    expect(balance).toEqual({ earnings: 500, openCharges: 75, available: 425 });
   });
 });
 
@@ -345,11 +422,9 @@ describe('approveRefundRequest', () => {
 describe('rejectRefundRequest', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    prisma.supplierRefundRequest.updateMany.mockResolvedValue({ count: 1 });
     prisma.supplierRefundRequest.findUnique.mockResolvedValue({
-      id: 'r1', requestNumber: 'SR-1', status: 'PENDING_APPROVAL', bookingId: 'b1', supplierId: 's1', payload: payload(),
-    });
-    prisma.supplierRefundRequest.update.mockResolvedValue({
-      id: 'r1', status: 'REJECTED', payload: payload(),
+      id: 'r1', requestNumber: 'SR-1', status: 'REJECTED', bookingId: 'b1', supplierId: 's1', payload: payload(),
       booking: { id: 'b1', tour: { title: 'Tour' } },
     });
   });
@@ -360,12 +435,20 @@ describe('rejectRefundRequest', () => {
     expect(prisma.supplierRefundRequest.update).not.toHaveBeenCalled();
   });
 
-  it('records the decision and the note', async () => {
+  it('records the decision and the note only when still pending', async () => {
     await service.rejectRefundRequest({ requestId: 'r1', adminUser: { id: 'a1' }, note: 'No evidence provided' });
-    expect(prisma.supplierRefundRequest.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ status: 'REJECTED', decisionNote: 'No evidence provided', decidedBy: 'a1' }),
-      }),
-    );
+    expect(prisma.supplierRefundRequest.updateMany).toHaveBeenCalledWith({
+      where: { id: 'r1', status: 'PENDING_APPROVAL' },
+      data: expect.objectContaining({ status: 'REJECTED', decisionNote: 'No evidence provided', decidedBy: 'a1' }),
+    });
+    expect(prisma.supplierRefundRequest.update).not.toHaveBeenCalled();
+  });
+
+  it('cannot overwrite a request that was approved concurrently', async () => {
+    prisma.supplierRefundRequest.updateMany.mockResolvedValue({ count: 0 });
+    prisma.supplierRefundRequest.findUnique.mockResolvedValue({ status: 'COMPLETED' });
+    await expect(service.rejectRefundRequest({
+      requestId: 'r1', adminUser: { id: 'a1' }, note: 'Late rejection',
+    })).rejects.toThrow(/not awaiting a decision.*COMPLETED/i);
   });
 });

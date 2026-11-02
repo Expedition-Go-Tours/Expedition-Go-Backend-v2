@@ -33,6 +33,7 @@ exports.create = catchAsync(async (req, res, next) => {
     payload: req.body,
     actor: req.user,
     req,
+    idempotencyKey: req.get('Idempotency-Key'),
   });
   res.status(201).json({ status: 'success', data: { request: data } });
 });
