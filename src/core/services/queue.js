@@ -132,6 +132,7 @@ const SCHEDULES = [
   // The v2 auto-request sweep (generate-payout-runs) is retired and its
   // scheduler is pruned on boot — see registerSchedules.
   { jobName: 'generate-due-invoices',       queue: 'cleanup',      everyMs: 60 * 60 * 1000 },
+  { jobName: 'remind-due-invoices',         queue: 'cleanup',      everyMs: 60 * 60 * 1000 },
   { jobName: 'plan-booking-reminders',      queue: 'cleanup',      everyMs: 3600 * 1000 },
   { jobName: 'dispatch-booking-reminders',  queue: 'cleanup',      everyMs: 15 * 60 * 1000 },
   // CLEANUP — reconciles
@@ -1252,6 +1253,11 @@ function registerWorkers() {
         case 'earnings-eligibility-sweep': {
           const { sweepEarningsEligibility } = require('./payoutCycles');
           await sweepEarningsEligibility();
+          break;
+        }
+        case 'remind-due-invoices': {
+          const { remindDueInvoices } = require('./invoiceService');
+          await remindDueInvoices();
           break;
         }
         case 'generate-payout-runs':

@@ -1896,7 +1896,15 @@ model Invoice {
   paidBy             String? // Admin user id who marked it paid
   reference          String? // Real bank / transaction reference entered by finance
 
+  // When finance was reminded that this invoice's payment date had arrived.
+  // Set once so the hourly sweep cannot repeat itself; nullable because every
+  // invoice raised before the reminder existed was never reminded.
+  dueReminderSentAt  DateTime?
+
   status InvoiceStatus @default(INVOICED)
+
+  // The hourly due-reminder sweep reads by status + scheduled date.
+  @@index([status, paymentScheduledAt])
 
   // Money (net amounts; commission already applied per line item)
   grossTotal      Decimal @db.Decimal(10, 2)
@@ -3056,7 +3064,8 @@ model SupplierRefundRequest {
 
   @@index([status, createdAt]) // admin queue ordering
   @@index([bookingId, status]) // one-pending-per-booking dedupe
-  @@index([supplierId, createdAt]) // supplier's own list
+  @@index([supplierId]) // supplier's own list (prefix of the index below too)
+  @@index([supplierId, createdAt])
 }
 
 enum SupplierRefundRequestStatus {

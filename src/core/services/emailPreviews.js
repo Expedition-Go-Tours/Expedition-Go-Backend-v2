@@ -193,7 +193,6 @@ const SAMPLE = {
   priceLabel: '$68.00',
   // Supplier refund request (Sprint 1 follow-on).
   requestNumber: 'SR-20261102-4F2A',
-  refundAmountLabel: '$151.22',
   chargeLabel: '$120.98',
   reasonLabel: 'Service quality fell short',
   operatedLabel: 'Yes',
@@ -345,6 +344,16 @@ const SAMPLE_OVERRIDES = {
   },
   'waitlist-open': {
     preheader: 'Accra Flying Dress Experience has availability on Wed, 4 Nov 2026',
+  },
+  // Refund-request previews: the shared sample describes a cancellation
+  // refund, so override the money facts for these two.
+  'supplier-refund-requested': {
+    refundAmountLabel: '$151.22',
+    chargeLabel: '$120.98',
+  },
+  'supplier-refund-decision': {
+    refundAmountLabel: '$151.22',
+    chargeLabel: '$120.98',
   },
 };
 

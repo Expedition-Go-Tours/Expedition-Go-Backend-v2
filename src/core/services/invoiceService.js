@@ -440,7 +440,7 @@ async function generateDueInvoices(now = new Date()) {
 
   const profiles = await prisma.supplierProfile.findMany({
     where: { payoutCycle: { not: null }, status: { in: ['APPROVED', 'ACTIVE'] } },
-    select: { userId: true, payoutCycle: true },
+    select: { userId: true, payoutCycle: true, user: { select: { name: true } } },
   });
 
   // A booking's invoice date is at most ~16 days after its window starts, so
@@ -579,6 +579,7 @@ async function generateDueInvoices(now = new Date()) {
           report.invoicesCreated += 1;
           report.bookingsInvoiced += group.items.length;
           createdThisSupplier.push({
+            id: invoice.id,
             invoiceNumber: invoice.invoiceNumber,
             netTotal: toNumber(invoice.netTotal),
             chargesTotal: toNumber(invoice.chargesTotal),
@@ -595,6 +596,29 @@ async function generateDueInvoices(now = new Date()) {
     }
 
     if (createdThisSupplier.length > 0) {
+      // The supplier is told their payment is scheduled; finance has to be told
+      // it is theirs to send. Finance v3 replaced the v2 payout-request sweep
+      // and this call went with it, so an invoice could be raised with the
+      // supplier notified and the admin never told to pay it.
+      const { notifyAdmin } = require('./adminNotificationService');
+      const totalDue = createdThisSupplier.reduce((sum, c) => sum + c.netTotal, 0);
+      const currencyLabel = createdThisSupplier[0].currency;
+      notifyAdmin({
+        type: 'PAYOUT_NEEDS_APPROVAL',
+        title: 'Invoice ready to pay',
+        message: `${createdThisSupplier.map((c) => c.invoiceNumber).join(', ')} — `
+          + `${currencyLabel} ${totalDue.toFixed(2)} to ${profile.user?.name || 'a supplier'}, `
+          + `payment scheduled ${createdThisSupplier[0].paidOn.toISOString().slice(0, 10)}`,
+        data: {
+          invoiceIds: createdThisSupplier.map((c) => c.id),
+          invoiceNumbers: createdThisSupplier.map((c) => c.invoiceNumber),
+          supplierId: profile.userId,
+          amount: totalDue,
+          currency: currencyLabel,
+          paymentScheduledAt: createdThisSupplier[0].paidOn.toISOString(),
+        },
+      }).catch(() => {});
+
       enqueueNotification({
         userId: profile.userId,
         type: 'INVOICE_GENERATED',
@@ -619,6 +643,76 @@ async function generateDueInvoices(now = new Date()) {
   return report;
 }
 
+/**
+ * Remind finance when an invoice's scheduled payment date arrives.
+ *
+ * Generation-time notification lands the moment the invoice exists — days or
+ * weeks before the money is actually due. This sweep closes the gap: for an
+ * INVOICED or APPROVED invoice whose `paymentScheduledAt` is today or
+ * tomorrow, tell the admin once. `dueReminderSentAt` is claimed before the
+ * notification, so an hourly cadence cannot repeat itself and a retried job
+ * cannot double-notify.
+ */
+async function remindDueInvoices(now = new Date()) {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 2); // today and tomorrow
+  const tomorrow = new Date(start);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  const due = await prisma.invoice.findMany({
+    where: {
+      status: { in: ['INVOICED', 'APPROVED'] },
+      dueReminderSentAt: null,
+      paymentScheduledAt: { gte: start, lt: end },
+    },
+    select: {
+      id: true,
+      invoiceNumber: true,
+      supplierId: true,
+      netTotal: true,
+      currency: true,
+      paymentScheduledAt: true,
+      supplier: { select: { name: true } },
+    },
+  });
+
+  if (due.length === 0) return { due: 0, notified: 0 };
+
+  const { notifyAdmin } = require('./adminNotificationService');
+  let notified = 0;
+
+  for (const invoice of due) {
+    const claimed = await prisma.invoice.updateMany({
+      where: { id: invoice.id, dueReminderSentAt: null },
+      data: { dueReminderSentAt: new Date() },
+    });
+    if (claimed.count === 0) continue;
+
+    const isToday = invoice.paymentScheduledAt < tomorrow;
+    await notifyAdmin({
+      type: 'PAYOUT_NEEDS_APPROVAL',
+      title: isToday ? 'Invoice payment due today' : 'Invoice payment due tomorrow',
+      message: `${invoice.invoiceNumber} — ${invoice.currency} ${toNumber(invoice.netTotal).toFixed(2)} `
+        + `to ${invoice.supplier?.name || 'a supplier'}`
+        + (invoice.status === 'APPROVED' ? ' (approved, awaiting transfer)' : ' (not yet approved)'),
+      data: {
+        invoiceIds: [invoice.id],
+        invoiceNumbers: [invoice.invoiceNumber],
+        supplierId: invoice.supplierId,
+        paymentScheduledAt: invoice.paymentScheduledAt.toISOString(),
+      },
+    }).catch(() => {});
+    notified += 1;
+  }
+
+  if (notified > 0) {
+    console.log(`[Finance] reminded finance about ${notified} invoice(s) due`);
+  }
+  return { due: due.length, notified };
+}
+
 module.exports = {
   v3BookingsWhere,
   selectInvoiceBookings,
@@ -630,6 +724,7 @@ module.exports = {
   approveInvoice,
   markInvoicePaid,
   generateDueInvoices,
+  remindDueInvoices,
   detachBookingFromInvoices,
   rebalanceInvoice,
 };
