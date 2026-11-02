@@ -14,7 +14,6 @@ const {
   MAX_TEAM_ROLES,
   normalizeTeamRoles,
   permissionsForRoles,
-  describeRoles,
   toRoleArray,
   TEAM_ROLE_LABELS,
   TEAM_ROLE_SUMMARIES,

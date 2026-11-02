@@ -108,7 +108,12 @@ function scopeDashboard(req, data) {
   if (!canAny(req, ['earnings.view', 'finance.view'])) {
     delete next.earnings;
     if (Array.isArray(next.topProducts)) {
-      next.topProducts = next.topProducts.map(({ revenue, totalRevenue, ...rest }) => rest);
+      next.topProducts = next.topProducts.map((item) => {
+        const copy = { ...item };
+        delete copy.revenue;
+        delete copy.totalRevenue;
+        return copy;
+      });
     }
   }
   return next;
