@@ -184,6 +184,18 @@ describe('activityFeed', () => {
     expect(serialized).toContain('isSimulated');
   });
 
+  it('nests review and wishlist brand filters under the tour relation', async () => {
+    await getActivityFeed({ window: 'today', type: 'reviews' });
+    const reviewWhere = prisma.review.findMany.mock.calls[0][0].where;
+    expect(reviewWhere.AND.some((part) => part?.tour?.supplier?.roles?.has === 'ghana')).toBe(true);
+
+    jest.clearAllMocks();
+    resetMocks();
+    await getActivityFeed({ window: 'today', type: 'customers' });
+    const wishlistWhere = prisma.wishlistItem.findMany.mock.calls[0][0].where;
+    expect(wishlistWhere.AND.some((part) => part?.tour?.supplier?.roles?.has === 'ghana')).toBe(true);
+  });
+
   it('does not query unrelated sources for a narrow type filter', async () => {
     await getActivityFeed({ window: 'today', type: 'reviews' });
 

@@ -37,7 +37,7 @@ const BOOKING_BRAND_WHERE = {
   ],
 };
 
-const TOUR_BRAND_WHERE = { supplier: { roles: { has: BRAND.role } } };
+const TOUR_BRAND_WHERE = { tour: { supplier: { roles: { has: BRAND.role } } } };
 
 const EVENT_BRAND_WHERE = {
   OR: [
