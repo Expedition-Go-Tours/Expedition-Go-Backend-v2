@@ -534,7 +534,7 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
         where: { id: existing.id },
         data: {
           roles: systemRoles,
-          role: systemRoles[0] || null,
+          role: systemRoles[0] || customRoles[0]?.slug || 'custom',
           status: 'PENDING',
           invitedById: req.user.id,
           inviteToken: token,
@@ -546,7 +546,7 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
           supplierId: req.supplierId,
           email,
           roles: systemRoles,
-          role: systemRoles[0] || null,
+          role: systemRoles[0] || customRoles[0]?.slug || 'custom',
           invitedById: req.user.id,
           inviteToken: token,
           tokenExpiresAt: expiresAt,
@@ -983,7 +983,7 @@ exports.directAddMember = catchAsync(async (req, res, next) => {
         where: { id: existing.id },
         data: {
           roles: systemRoles,
-          role: systemRoles[0] || null,
+          role: systemRoles[0] || customRoles[0]?.slug || 'custom',
           status: 'ACCEPTED',
           acceptedAt: new Date(),
           invitedById: req.user.id,
@@ -1000,7 +1000,7 @@ exports.directAddMember = catchAsync(async (req, res, next) => {
         supplierId: req.supplierId,
         email,
         roles: systemRoles,
-        role: systemRoles[0] || null,
+        role: systemRoles[0] || customRoles[0]?.slug || 'custom',
         status: 'ACCEPTED',
         acceptedAt: new Date(),
         invitedById: req.user.id,
@@ -1107,7 +1107,7 @@ exports.updateMemberRole = catchAsync(async (req, res, next) => {
   const updated = await prisma.$transaction(async (tx) => {
     const row = await tx.teamMember.update({
       where: { id },
-      data: { roles: assignment.systemRoles, role: assignment.systemRoles[0] || null },
+      data: { roles: assignment.systemRoles, role: assignment.systemRoles[0] || assignment.customRoles[0]?.slug || 'custom' },
     });
     await syncMemberCustomRoles(tx, id, assignment.customRoleIds);
     return row;
