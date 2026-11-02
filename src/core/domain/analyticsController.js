@@ -48,6 +48,7 @@ exports.trackEvent = catchAsync(async (req, res) => {
   enqueueEvent({
     name,
     userId: req.user?.id || null,
+    req,
     sessionId,
     source: 'web',
     resource: resource || null,
@@ -100,6 +101,7 @@ exports.trackBatch = catchAsync(async (req, res) => {
     enqueueEvent({
       name: evt.name,
       userId,
+      req,
       sessionId,
       source: 'web',
       resource: evt.resource || null,

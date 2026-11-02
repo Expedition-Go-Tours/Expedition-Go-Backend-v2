@@ -1,4 +1,5 @@
 const { resolveBrandKey } = require('../config/brands');
+const { setRequestMeta } = require('./requestMeta');
 
 /**
  * Attach the brand whose API namespace served this request.
@@ -13,6 +14,9 @@ function attachBrand(brandKey) {
   const key = resolveBrandKey(brandKey);
   return function brandContext(req, res, next) {
     req.brandKey = key;
+    // Make the route brand visible to logActivity()/eventEmitter() without
+    // threading req through every service call.
+    setRequestMeta({ brandKey: key });
     next();
   };
 }

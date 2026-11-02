@@ -49,6 +49,10 @@ function computeChainHash(prevHash, entry) {
   const payload = { ...entry };
   delete payload.prevHash;
   delete payload.hash;
+  // `brand` is routing metadata, not tamper evidence. It was added after the
+  // chain shipped, so including it would make every pre-migration row fail
+  // verification. It is stored and displayed, but never hashed.
+  delete payload.brand;
   const canonical = JSON.stringify(canonicalize(payload));
   return crypto
     .createHash('sha256')
@@ -69,12 +73,23 @@ async function logActivity({
   resourceId,
   oldValues = null,
   newValues = null,
-  metadata = {}
+  metadata = {},
+  brand = null,
 }) {
   try {
     const requestMeta = getRequestMeta();
     const resolvedIp = ipAddress || requestMeta.ipAddress || null;
     const resolvedAgent = userAgent || requestMeta.userAgent || null;
+    // The request carries the brand for both namespaced admin routes and
+    // storefront calls (Origin/Referer). Explicit callers can override it, and
+    // callers that already stamp `metadata.source`/`metadata.brand` (booking
+    // cancellation, wishlist) are honoured for queued/system work.
+    const metaBrand = metadata && (
+      ['ghana', 'africa', 'expedition'].includes(metadata.brand)
+        ? metadata.brand
+        : (['ghana', 'africa', 'expedition'].includes(metadata.source) ? metadata.source : null)
+    );
+    const resolvedBrand = brand || requestMeta.brandKey || metaBrand || null;
     const createdAt = new Date();
 
     // Auto-attach the touched endpoint (method + URL) so every entry records
@@ -95,6 +110,7 @@ async function logActivity({
       oldValues: oldValues ? JSON.parse(JSON.stringify(oldValues)) : null,
       newValues: newValues ? JSON.parse(JSON.stringify(newValues)) : null,
       metadata: enrichedMeta,
+      brand: resolvedBrand,
       createdAt,
     };
 
@@ -380,6 +396,7 @@ async function verifyAuditChain({ limit = 100000 } = {}) {
         oldValues: true,
         newValues: true,
         metadata: true,
+        brand: true,
         prevHash: true,
         hash: true,
       },
@@ -442,7 +459,7 @@ async function cleanupOldLogs(daysToKeep = 365) {
 
       await prisma.$transaction([
         prisma.auditLogArchive.createMany({
-          data: expired.map(({ id, userId, userEmail, ipAddress, userAgent, action, resource, resourceId, oldValues, newValues, metadata, prevHash, hash, createdAt }) => ({
+          data: expired.map(({ id, userId, userEmail, ipAddress, userAgent, action, resource, resourceId, oldValues, newValues, metadata, brand, prevHash, hash, createdAt }) => ({
             id,
             userId,
             userEmail,
@@ -454,6 +471,7 @@ async function cleanupOldLogs(daysToKeep = 365) {
             oldValues,
             newValues,
             metadata,
+            brand,
             prevHash,
             hash,
             createdAt,

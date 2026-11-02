@@ -564,6 +564,7 @@ model WishlistItem {
 
   @@unique([userId, tourId])
   @@index([userId, addedAt])
+  @@index([addedAt]) // Admin activity feed
   @@index([tourId])
   @@index([lastPriceAlertAt])
 }
@@ -1368,6 +1369,10 @@ model Booking {
   @@index([cancellationChoiceDeadline]) // Choice-window expiry sweep
   @@index([refundStatus]) // Stuck-refund retry/alert sweep
   @@index([origin, createdAt]) // Supplier-created reporting + origin filters
+  @@index([createdAt]) // Admin activity feed
+  @@index([paidAt]) // Admin activity feed
+  @@index([cancelledAt]) // Admin activity feed
+  @@index([refundedAt]) // Admin activity feed
 }
 
 // A single hosted Stripe Checkout Session created to collect an outstanding
@@ -2470,7 +2475,11 @@ model Event {
   resourceId String? // Affected entity ID
 
   properties Json // Arbitrary event payload (query params, tour IDs, amounts, etc.)
-  source     String? // Where the event originated — "web", "mobile", "api", "webhook"
+  source     String? // Delivery channel — "web", "mobile", "api", "webhook"
+  // Storefront/brand the event belongs to. Separate from `source` because a
+  // Ghana browser event is both `brand = "ghana"` and `source = "web"`.
+  // Expedition rolls up to Ghana (it is Ghana's sub-store).
+  brand String?
 
   createdAt DateTime @default(now())
 
@@ -2478,6 +2487,7 @@ model Event {
   @@index([userId])
   @@index([resource, resourceId])
   @@index([createdAt])
+  @@index([brand, createdAt]) // Brand-scoped admin activity/analytics
   @@index([name, createdAt]) // Coverage for time-series analytics queries
   @@index([userId, name, createdAt]) // Coverage for user-journey / funnel queries
 }
@@ -2774,6 +2784,11 @@ model AuditLog {
   newValues Json?
   metadata  Json?
 
+  // Storefront/brand this action belongs to. Auto-stamped from the request
+  // context (route namespace or Origin/Referer). Null only for legacy rows and
+  // system jobs that are genuinely brand-neutral.
+  brand String?
+
   // Tamper evidence (hash chain)
   prevHash String?
   hash     String?
@@ -2784,6 +2799,7 @@ model AuditLog {
   @@index([action])
   @@index([resource])
   @@index([createdAt])
+  @@index([brand, createdAt]) // Brand-scoped admin activity feed
   @@index([hash])
 }
 
@@ -2806,6 +2822,8 @@ model AuditLogArchive {
   newValues Json?
   metadata  Json?
 
+  brand String?
+
   // Tamper evidence (hash chain)
   prevHash String?
   hash     String?
@@ -2818,6 +2836,7 @@ model AuditLogArchive {
   @@index([resource])
   @@index([archivedAt])
   @@index([createdAt])
+  @@index([brand, createdAt])
 }
 
 model BookingCounter {
@@ -3067,6 +3086,7 @@ model SupplierRefundRequest {
   updatedAt DateTime @updatedAt
 
   @@index([status, createdAt]) // admin queue ordering
+  @@index([createdAt]) // admin activity feed
   @@index([bookingId, status]) // active-request lookup
   @@index([supplierId]) // supplier's own list (prefix of the index below too)
   @@index([supplierId, createdAt])

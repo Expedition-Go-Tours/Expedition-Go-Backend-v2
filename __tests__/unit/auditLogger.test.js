@@ -68,6 +68,12 @@ describe('auditLogger', () => {
       });
     });
 
+    it('keeps brand out of the tamper-evident hash', () => {
+      const entry = { action: 'tour.created', resource: 'Tour', metadata: {}, createdAt: new Date('2026-11-02T10:00:00Z') };
+      expect(logger.computeChainHash('p', { ...entry, brand: 'ghana' }))
+        .toBe(logger.computeChainHash('p', entry));
+    });
+
     it('computes a hash chain (hash + prevHash)', async () => {
       prisma.auditLog.findFirst.mockResolvedValue({ hash: 'abc123' });
 

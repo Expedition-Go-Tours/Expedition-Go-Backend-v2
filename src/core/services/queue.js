@@ -398,8 +398,23 @@ async function getSchedulerHealth() {
  * funnel. `emit` is itself fire-and-forget and never throws.
  */
 async function enqueueEvent(eventData) {
+  // Resolve the brand before the job crosses the queue boundary: an Express
+  // req is not serializable, so the worker would otherwise lose Origin/Referer
+  // and write an unattributable event.
+  const { resolveEventBrand } = require('./eventBrand');
+  const props = eventData.properties || {};
+  const brandFromProps = ['ghana', 'africa', 'expedition'].includes(props.brand)
+    ? props.brand
+    : (['ghana', 'africa', 'expedition'].includes(props.source) ? props.source : null);
+  const brand = eventData.brand
+    || brandFromProps
+    || resolveEventBrand(eventData.req)
+    || null;
+  const payload = brand ? { ...eventData, brand } : { ...eventData };
+  delete payload.req;
+
   try {
-    return await eventQueue().add('event', eventData, {
+    return await eventQueue().add('event', payload, {
       jobId: `evt:${eventData.name}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
     });
   } catch {
@@ -413,6 +428,7 @@ async function enqueueEvent(eventData) {
         resourceId: eventData.resourceId,
         properties: eventData.properties,
         source: eventData.source,
+        brand,
         req: eventData.req,
       });
     } catch { /* analytics is best-effort — never break the caller */ }
@@ -1112,9 +1128,9 @@ function registerWorkers() {
    * ------------------------------------------------------------------ */
   createWorker(QUEUE_NAMES.EVENTS, async (job) => {
     const { emit } = require('./eventEmitter');
-    const { name, userId, sessionId, resource, resourceId, properties, source } = job.data || {};
+    const { name, userId, sessionId, resource, resourceId, properties, source, brand } = job.data || {};
     if (!name) return;
-    await emit({ name, userId, sessionId, resource, resourceId, properties, source });
+    await emit({ name, userId, sessionId, resource, resourceId, properties, source, brand });
   }, 5);
 
   /* ------------------------------------------------------------------

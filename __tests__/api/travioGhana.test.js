@@ -670,6 +670,7 @@ describeDb('TravioGhana API (real DB)', () => {
       ['GET', '/api/travioghana/supplier/settings'],
       ['GET', '/api/travioghana/admin/me'],
       ['GET', '/api/travioghana/admin/analytics/overview'],
+      ['GET', '/api/travioghana/admin/activity'],
       ['GET', '/api/travioghana/admin/tours'],
     ])('%s %s returns 401 without token', async (method, path) => {
       const res = await request(app)[method.toLowerCase()](path);

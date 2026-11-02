@@ -64,6 +64,10 @@ router.get('/analytics/overview',
   requirePermission('dashboard.*', 'analytics.view'),
   ghana.getOverview,
 );
+router.get('/activity',
+  requirePermission('dashboard.*', 'analytics.view'),
+  ghana.getActivityFeed,
+);
 router.get('/analytics/revenue-trend',
   requirePermission('analytics.view'),
   ghana.getRevenueTrend,

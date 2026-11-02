@@ -24,14 +24,29 @@ const prisma = require('./prismaClient');
 const { resolveEventBrand } = require('./eventBrand');
 
 /**
- * Stamp the brand onto the event's properties so admin analytics can scope by
- * it (`properties->>'source' = <brand>`). An explicit caller-provided source
- * always wins.
+ * Stamp the brand onto the event.
+ *
+ * `properties.source` used to double as both the delivery channel ("web") and
+ * the brand ("ghana"). That collision meant any producer that set an origin
+ * channel (search, page views) was never brand-stamped. The brand now lives in
+ * its own column and is also mirrored to `properties.brand`; `source` keeps its
+ * original meaning.
  */
-function withBrandSource(properties, req) {
-  if (properties && properties.source) return properties || {};
-  const brand = resolveEventBrand(req);
-  return brand ? { ...(properties || {}), source: brand } : (properties || {});
+function brandFromProperties(properties) {
+  const next = properties || {};
+  if (['ghana', 'africa', 'expedition'].includes(next.brand)) return next.brand;
+  if (['ghana', 'africa', 'expedition'].includes(next.source)) return next.source;
+  return null;
+}
+
+function withBrandData(properties, req, explicitBrand) {
+  const next = { ...(properties || {}) };
+  const brand = explicitBrand || brandFromProperties(next) || resolveEventBrand(req) || null;
+  if (brand && !next.brand) next.brand = brand;
+  // Backwards compatibility for analytics that still read `properties.source`
+  // as the brand. Only fill it when the caller did not set an origin channel.
+  if (!next.source && brand) next.source = brand;
+  return next;
 }
 
 /**
@@ -74,6 +89,7 @@ async function emit({
   resourceId,
   properties = {},
   source,
+  brand,
 }) {
   // Preserve callers that pass userId as the second argument (convenience overload)
   // e.g. emit('booking.completed', userId, { resource: 'Booking', ... })
@@ -82,6 +98,7 @@ async function emit({
     const resolvedSessionId = sessionId || (req ? deriveSessionId(req) : null);
     const resolvedSource = source || (req ? 'web' : 'api');
     const resolvedUserId = userId || req?.user?.id || null;
+    const resolvedBrand = brand || brandFromProperties(properties) || resolveEventBrand(req) || null;
 
     const event = await prisma.event.create({
       data: {
@@ -90,8 +107,9 @@ async function emit({
         sessionId: resolvedSessionId,
         resource,
         resourceId,
-        properties: withBrandSource(properties, req),
+        properties: withBrandData(properties, req, resolvedBrand),
         source: resolvedSource,
+        brand: resolvedBrand,
       },
       select: { id: true },
     });
@@ -117,19 +135,21 @@ async function emit({
 async function emitBatch(events) {
   try {
     await prisma.$transaction(
-      events.map((evt) =>
-        prisma.event.create({
+      events.map((evt) => {
+        const brand = evt.brand || brandFromProperties(evt.properties) || resolveEventBrand(evt.req) || null;
+        return prisma.event.create({
           data: {
             name: evt.name,
             userId: evt.userId || evt.req?.user?.id || null,
             sessionId: evt.sessionId || (evt.req ? deriveSessionId(evt.req) : null),
             resource: evt.resource,
             resourceId: evt.resourceId,
-            properties: withBrandSource(evt.properties, evt.req),
+            properties: withBrandData(evt.properties, evt.req, brand),
             source: evt.source || 'api',
+            brand,
           },
-        })
-      )
+        });
+      })
     );
     return events.length;
   } catch (error) {

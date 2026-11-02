@@ -20,6 +20,7 @@ const { enqueueNotification } = require('./services/queue');
 const adminController = require('./domain/adminController');
 const { getBrand } = require('../../config/brands');
 const { computeFunnel } = require('./services/funnelEngine');
+const { getActivityFeed } = require('./services/activityFeed');
 const { Prisma } = require('@prisma/client');
 
 function makeAdminController(brandKey) {
@@ -395,6 +396,9 @@ controller.getOverview = catchAsync(async (req, res, next) => {
         topTours,
         topSuppliers,
         bookingStatusDistribution: bookingStatusDist,
+        // Legacy feed kept for older clients during the activity-feed rollout.
+        // The dashboard now reads GET /admin/activity; remove this in a later
+        // deploy once every client has moved.
         eventFeed: [
           ...ghanaEvents.map((e) => ({ ...e })),
           ...recentAuditLogs.map((a) => ({
@@ -421,6 +425,28 @@ controller.getOverview = catchAsync(async (req, res, next) => {
   }, 120);
 
   res.status(200).json(result);
+});
+
+/**
+ * GET /api/travioghana/admin/activity
+ *
+ * Dashboard activity feed. Brand-scoped and window-based (today / yesterday /
+ * last 7 days), with cursor pagination and an optional type filter.
+ *
+ * Deliberately separate from the overview payload: the feed needs to be fresh
+ * (the overview is cached in two-minute buckets) and clickable, and it must not
+ * turn a KPI query into a union across the analytics and audit tables.
+ */
+controller.getActivityFeed = catchAsync(async (req, res) => {
+  const data = await getActivityFeed({
+    window: req.query.window,
+    type: req.query.type,
+    q: req.query.q,
+    cursor: req.query.cursor,
+    limit: req.query.limit,
+  });
+
+  res.status(200).json({ status: 'success', data });
 });
 
 /**

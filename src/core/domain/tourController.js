@@ -402,6 +402,7 @@ exports.getAllTours = catchAsync(async (req, res, next) => {
     enqueueEvent({
       name: req.query.search ? 'search.executed' : 'browse.executed',
       userId: req.user?.id,
+      req,
       sessionId: deriveSessionId(req),
       source: 'web',
       properties: {
