@@ -30,6 +30,11 @@ const SHELL = {
   poweredByLabel: '',
   year: new Date().getFullYear(),
   preheader: 'New reservation TRG-48808538-2026-11, payment pending',
+  // Brand accent tokens — the GYG-variant templates read these instead of
+  // hard-coding a colour, so the same HTML renders Ghana-green or Africa-green.
+  accentColor: '#065F46',
+  accentDark: '#044B3B',
+  accentSoft: '#E7F5EF',
 };
 
 // A fully-populated SAMPLE booking so every conditional row renders. All values
@@ -148,7 +153,13 @@ const SAMPLE = {
   cancelledAtLabel: '15 Oct 2026, 20:01 GMT',
   cancellationReason: 'Severe weather in the region',
   compensationLabel: '$327.25',
+  cancellationFeeLabel: '$385.00',
   refundAmountLabel: '$385.00',
+  refundStatusLabel: 'Refund issued',
+  refundTimeline: 'It is on its way back to your original payment method. Most banks show it within 3\u20135 business days.',
+  refundDestinationNote: 'Back to your original payment method.',
+  refundFailed: false,
+  hasRefund: true,
   refundReference: 're_3Qk2Lm2eZvKYlo2C1xAMPLE',
   refundedAtLabel: '15 Oct 2026, 20:05 GMT',
   statusLabel: 'Scheduled',
@@ -161,6 +172,11 @@ const SAMPLE = {
   bookingUrl: 'https://travioghana.com/bookings/cmv2v1rxj0200i4nqlq9n1fau',
   tourUrl: 'https://travioghana.com/tour/cmv2v1rxj0200i4nqlq9n1fau/accra-flying-dress-experience',
   reviewUrl: 'https://travioghana.com/review/accra-flying-dress-experience?bookingId=cmv2v1rxj0200i4nqlq9n1fau&tourId=cmv2v1rxj0200i4nqlq9n1fau',
+  rating1Url: 'https://travioghana.com/review/accra-flying-dress-experience?bookingId=cmv2v1rxj0200i4nqlq9n1fau&tourId=cmv2v1rxj0200i4nqlq9n1fau&rating=1',
+  rating2Url: 'https://travioghana.com/review/accra-flying-dress-experience?bookingId=cmv2v1rxj0200i4nqlq9n1fau&tourId=cmv2v1rxj0200i4nqlq9n1fau&rating=2',
+  rating3Url: 'https://travioghana.com/review/accra-flying-dress-experience?bookingId=cmv2v1rxj0200i4nqlq9n1fau&tourId=cmv2v1rxj0200i4nqlq9n1fau&rating=3',
+  rating4Url: 'https://travioghana.com/review/accra-flying-dress-experience?bookingId=cmv2v1rxj0200i4nqlq9n1fau&tourId=cmv2v1rxj0200i4nqlq9n1fau&rating=4',
+  rating5Url: 'https://travioghana.com/review/accra-flying-dress-experience?bookingId=cmv2v1rxj0200i4nqlq9n1fau&tourId=cmv2v1rxj0200i4nqlq9n1fau&rating=5',
   manageUrl: 'https://travioghana.com/bookings/cmv2v1rxj0200i4nqlq9n1fau/manage',
   managePaymentUrl: 'https://travioghana.com/bookings/cmv2v1rxj0200i4nqlq9n1fau/payment',
   voucherUrl: 'https://travioghana.com/bookings/cmv2v1rxj0200i4nqlq9n1fau/voucher',
@@ -186,6 +202,17 @@ const CHANGED = new Set([
   'supplier-payout-scheduled',
   'supplier-payout-completed',
   'supplier-payout-failed',
+  'customer-cancelled-full-refund',
+  'customer-cancelled-unpaid',
+  'customer-cancelled-non-refundable',
+  'customer-cancelled-no-refund',
+  'supplier-cancelled-booking',
+  'supplier-customer-cancelled-free',
+  'supplier-customer-cancelled-unpaid',
+  'supplier-customer-cancelled-non-refundable',
+  'supplier-customer-cancelled-late',
+  'supplier-platform-cancelled',
+  'review-request',
 ]);
 
 // Grouping is presentation-only: first matching prefix wins, else "Other".
@@ -248,6 +275,43 @@ const SAMPLE_OVERRIDES = {
     bookingTypeLabel: 'Recorded by the supplier',
     preheader: '$385.00 booking value, $150.00 recorded as collected, $235.00 still to collect',
   },
+  // Cancellation previews. The shared sample describes a paid, refunded
+  // booking; each variant overrides the money facts so the copy under review
+  // matches the branch it represents.
+  'customer-cancelled-unpaid': {
+    refundStatusLabel: 'No payment was taken',
+    refundAmountLabel: '$0.00',
+    hasRefund: false,
+    paymentStatusLabel: 'Pending',
+  },
+  'customer-cancelled-non-refundable': {
+    refundStatusLabel: 'No refund is due',
+    refundAmountLabel: '$0.00',
+    hasRefund: false,
+    cancellationPolicyText: 'All sales are final. This experience is non-refundable.',
+  },
+  'customer-cancelled-no-refund': {
+    refundStatusLabel: 'No refund is due',
+    refundAmountLabel: '$0.00',
+    hasRefund: false,
+    cancelledAtLabel: '4 Nov 2026, 08:01 GMT',
+  },
+  'supplier-customer-cancelled-free': { payoutAmountLabel: '$0.00' },
+  'supplier-customer-cancelled-unpaid': {
+    payoutAmountLabel: '$0.00',
+    refundAmountLabel: '$0.00',
+  },
+  'supplier-customer-cancelled-non-refundable': {
+    payoutAmountLabel: '$0.00',
+    refundAmountLabel: '$0.00',
+    cancellationPolicyText: 'All sales are final. This experience is non-refundable.',
+  },
+  'supplier-customer-cancelled-late': {
+    payoutAmountLabel: '$0.00',
+    refundAmountLabel: '$0.00',
+    cancelledAtLabel: '4 Nov 2026, 08:01 GMT',
+  },
+  'supplier-platform-cancelled': { payoutAmountLabel: '$0.00' },
 };
 
 function renderTemplateDoc(key) {

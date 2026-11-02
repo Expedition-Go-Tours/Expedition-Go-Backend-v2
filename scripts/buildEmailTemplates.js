@@ -509,49 +509,154 @@ const bookingReminder = {
 
 const customerCancelledFullRefund = {
   key: 'customer-cancelled-full-refund',
-  name: 'Customer · Cancelled with full refund',
+  name: 'Customer · Cancelled with refund',
   build() {
     return B.shell('Your booking has been cancelled', `
-      ${B.hero({ heading: 'Your booking is cancelled', badgeText: 'Cancelled', badgeColor: 'danger', subtitle: 'Hello {{customerName}},<br>Your cancellation for <strong>{{tourTitle}}</strong> has been completed.' })}
-      ${B.sectionTitle('Cancellation details')}
-      ${B.detailCard([
-        { label: 'Experience', value: '{{tourTitle}}' },
-        { label: 'Original date', value: '{{dateLabel}}' },
-        { label: 'Cancelled by', value: 'Customer' },
-        { label: 'Cancellation date', value: '{{cancelledAtLabel}}' },
-        { label: 'Cancellation reason', value: '{{cancellationReason}}', if: '{{cancellationReason}}' },
-        { label: 'Refund amount', value: '{{refundAmountLabel}}' },
-        { label: 'Refund status', value: 'Processing' },
-        { label: 'Expected arrival', value: 'Usually 5\u201310 business days' },
+      ${B.statusRow('Cancelled', 'danger')}
+      ${B.displayHeading({
+        text: 'Your booking is cancelled',
+        subtext: 'Hi {{customerName}}, your booking for <strong>{{tourTitle}}</strong> on {{dateLabel}} has been cancelled.',
+      })}
+      ${B.textBlock('No action is needed from you. We have started your refund and will email you if anything changes.')}
+      ${B.refundBand({
+        amount: '{{refundAmountLabel}}',
+        eyebrow: 'Refund',
+        note: '{{refundDestinationNote}}',
+      })}
+      ${B.sectionHeading('Refund status')}
+      ${B.textBlock('{{refundStatusLabel}}', { bold: true, padding: '8px 40px 0 40px' })}
+      ${B.textBlock('{{refundTimeline}}', { muted: true, small: true, padding: '4px 40px 0 40px' })}
+      {{#if refundFailed}}
+      ${B.policyPanel({
+        title: 'Your refund needs attention',
+        body: 'We could not complete the refund automatically. Our team has been alerted and will retry it — you do not need to do anything.',
+        tone: 'warning',
+      })}
+      {{/if}}
+      ${B.bookingSummaryCard()}
+      ${B.helpBand({
+        title: 'Need help with this booking?',
+        body: 'If you have a question about the refund or this cancellation, our team can help.',
+        href: '{{bookingUrl}}',
+        label: 'View booking',
+      })}
+      ${B.pillButtons([
+        { label: 'Browse experiences', href: '{{browseUrl}}' },
+        { label: 'View cancellation', href: '{{cancellationUrl}}', kind: 'ghost' },
       ])}
-      ${B.callout('Your booking voucher is no longer valid.', 'warning')}
-      ${B.buttons([
-        { label: 'View cancellation', href: '{{cancellationUrl}}' },
-        { label: 'Book another experience', href: '{{browseUrl}}', kind: 'secondary' },
-      ])}
-    `);
+    `, { variant: 'gyg' });
+  },
+};
+
+const customerCancelledUnpaid = {
+  key: 'customer-cancelled-unpaid',
+  name: 'Customer · Cancelled before any payment',
+  build() {
+    return B.shell('Your booking has been cancelled', `
+      ${B.statusRow('Cancelled', 'neutral')}
+      ${B.displayHeading({
+        text: 'Your booking is cancelled',
+        subtext: 'Hi {{customerName}}, your reservation for <strong>{{tourTitle}}</strong> on {{dateLabel}} has been cancelled.',
+      })}
+      ${B.textBlock('No payment was taken for this booking, so there is nothing to refund and you will not be charged.')}
+      ${B.policyPanel({
+        title: 'No payment was taken',
+        body: 'This was a reserve-now-pay-later reservation. Your card was never charged — not today and not later.',
+        tone: 'success',
+      })}
+      ${B.bookingSummaryCard({
+        statusText: 'Cancelled',
+        statusTone: 'neutral',
+        rows: [
+          { label: 'Booking reference', value: '{{bookingNumber}}' },
+          { label: 'Date', value: '{{dateLabel}}{{#if timeLabel}} &middot; {{timeLabel}}{{/if}}' },
+          { label: 'Travellers', value: '{{travelersLabel}}' },
+        ],
+      })}
+      ${B.helpBand({
+        title: 'Want to rebook?',
+        body: 'This experience may still be available on another date.',
+        href: '{{tourUrl}}',
+        label: 'Check availability',
+      })}
+      ${B.pillButton('Browse experiences', '{{browseUrl}}')}
+    `, { variant: 'gyg' });
+  },
+};
+
+const customerCancelledNonRefundable = {
+  key: 'customer-cancelled-non-refundable',
+  name: 'Customer · Cancelled under a non-refundable policy',
+  build() {
+    return B.shell('Your booking has been cancelled', `
+      ${B.statusRow('Cancelled', 'neutral')}
+      ${B.displayHeading({
+        text: 'Your booking is cancelled',
+        subtext: 'Hi {{customerName}}, your booking for <strong>{{tourTitle}}</strong> on {{dateLabel}} has been cancelled.',
+      })}
+      ${B.textBlock('This experience is sold on a non-refundable basis, so no refund is due for this cancellation.')}
+      ${B.policyPanel({
+        title: 'This booking is non-refundable',
+        body: '{{cancellationPolicyText}}',
+        tone: 'warning',
+      })}
+      ${B.sectionHeading('What this means')}
+      ${B.textBlock('The cancellation policy you accepted at checkout applies here. If you believe this is a mistake, contact us and our team will review it with you.')}
+      ${B.bookingSummaryCard({
+        statusText: 'Cancelled',
+        statusTone: 'neutral',
+        rows: [
+          { label: 'Booking reference', value: '{{bookingNumber}}' },
+          { label: 'Date', value: '{{dateLabel}}{{#if timeLabel}} &middot; {{timeLabel}}{{/if}}' },
+          { label: 'Travellers', value: '{{travelersLabel}}' },
+          { label: 'Total paid', value: '{{totalLabel}}', strong: true },
+        ],
+      })}
+      ${B.helpBand({
+        title: 'Think this is wrong?',
+        body: 'Tell us what happened and our team will review the cancellation.',
+        href: '{{bookingUrl}}',
+        label: 'View booking',
+      })}
+      ${B.pillButton('Browse experiences', '{{browseUrl}}')}
+    `, { variant: 'gyg' });
   },
 };
 
 const customerCancelledNoRefund = {
   key: 'customer-cancelled-no-refund',
-  name: 'Customer · Cancelled without refund',
+  name: 'Customer · Cancelled after the deadline',
   build() {
     return B.shell('Your booking has been cancelled', `
-      ${B.hero({ heading: 'Your booking is cancelled', badgeText: 'Cancelled', badgeColor: 'danger' })}
-      ${B.paragraph('Your cancellation was made after the free-cancellation deadline.')}
-      ${B.detailCard([
-        { label: 'Cancellation deadline', value: '{{cancellationDeadlineLabel}}' },
-        { label: 'Cancellation time', value: '{{cancelledAtLabel}}' },
-        { label: 'Cancellation fee', value: '{{cancellationFeeLabel}}' },
-        { label: 'Refund amount', value: '{{refundAmountLabel}}' },
-        { label: 'Refund status', value: 'Not eligible' },
-      ])}
-      ${B.buttons([
-        { label: 'View cancellation', href: '{{cancellationUrl}}' },
-        { label: 'Contact support', href: '{{supportUrl}}', kind: 'secondary' },
-      ])}
-    `);
+      ${B.statusRow('Cancelled after deadline', 'danger')}
+      ${B.displayHeading({
+        text: 'Your booking is cancelled',
+        subtext: 'Hi {{customerName}}, your booking for <strong>{{tourTitle}}</strong> on {{dateLabel}} has been cancelled.',
+      })}
+      ${B.textBlock('This cancellation was made after the free-cancellation deadline, so it is not refundable under the policy you accepted at checkout.')}
+      ${B.policyPanel({
+        title: 'Outside the free-cancellation window',
+        body: 'Free cancellation for this experience closed on <strong>{{cancellationDeadlineLabel}}</strong>. It was cancelled on {{cancelledAtLabel}}.',
+        tone: 'warning',
+      })}
+      ${B.bookingSummaryCard({
+        statusText: 'Cancelled',
+        statusTone: 'danger',
+        rows: [
+          { label: 'Booking reference', value: '{{bookingNumber}}' },
+          { label: 'Date', value: '{{dateLabel}}{{#if timeLabel}} &middot; {{timeLabel}}{{/if}}' },
+          { label: 'Travellers', value: '{{travelersLabel}}' },
+          { label: 'Total paid', value: '{{totalLabel}}', strong: true },
+        ],
+      })}
+      ${B.helpBand({
+        title: 'Think this is wrong?',
+        body: 'If the activity date or the deadline looks incorrect, contact us and our team will check it for you.',
+        href: '{{bookingUrl}}',
+        label: 'View booking',
+      })}
+      ${B.pillButton('Browse experiences', '{{browseUrl}}')}
+    `, { variant: 'gyg' });
   },
 };
 
@@ -653,35 +758,57 @@ const supplierChangedBooking = {
 
 const supplierCancelledBooking = {
   key: 'supplier-cancelled-booking',
-  name: 'Customer · Supplier cancelled booking',
+  name: 'Customer · Supplier or platform cancelled booking',
   build() {
-    return B.shell('Important: Your booking has been cancelled', `
-      ${B.hero({ heading: "We're sorry, your experience has been cancelled", badgeText: 'Cancelled', badgeColor: 'danger' })}
+    return B.shell('Important: your booking has been cancelled', `
+      ${B.statusRow('Cancelled', 'neutral')}
+      ${B.displayHeading({
+        text: "We're sorry \u2014 your experience has been cancelled",
+        subtext: 'Hi {{customerName}}, <strong>{{tourTitle}}</strong> on {{dateLabel}} can no longer go ahead.',
+      })}
       {{#if choiceUrl}}
-      ${B.paragraph('You can choose a new date for this experience, or take a full refund, no questions asked. If we don\u2019t hear from you, a full refund is issued automatically.')}
+      ${B.textBlock('You can choose a new date for this experience, or take a full refund. No questions asked. If we do not hear from you, a full refund is issued automatically.')}
       {{else}}
-      ${B.paragraph('Unfortunately, the supplier can no longer operate your experience. Your refund is on its way back to your original payment method.')}
+      ${B.textBlock('The operator is no longer able to run this experience, so we have cancelled your booking and started a full refund.')}
       {{/if}}
-      ${B.detailCard([
-        { label: 'Experience', value: '{{tourTitle}}' },
-        { label: 'Original date', value: '{{dateLabel}}' },
-        { label: 'Reason', value: '{{cancellationReason}}', if: '{{cancellationReason}}' },
-        { label: 'Refund amount', value: '{{refundAmountLabel}}' },
-        { label: 'Refund status', value: '{{refundStatusLabel}}' },
-        { label: 'Decide by', value: '{{choiceDeadlineLabel}}', if: '{{choiceDeadlineLabel}}' },
-      ])}
+      {{#if hasRefund}}
+      ${B.refundBand({
+        amount: '{{refundAmountLabel}}',
+        eyebrow: 'Refund',
+        note: '{{refundDestinationNote}}',
+      })}
+      ${B.sectionHeading('Refund status')}
+      ${B.textBlock('{{refundStatusLabel}}', { bold: true, padding: '8px 40px 0 40px' })}
+      ${B.textBlock('{{refundTimeline}}', { muted: true, small: true, padding: '4px 40px 0 40px' })}
+      {{/if}}
+      ${B.bookingSummaryCard({
+        statusText: 'Cancelled',
+        statusTone: 'neutral',
+        rows: [
+          { label: 'Booking reference', value: '{{bookingNumber}}' },
+          { label: 'Original date', value: '{{dateLabel}}{{#if timeLabel}} &middot; {{timeLabel}}{{/if}}' },
+          { label: 'Travellers', value: '{{travelersLabel}}' },
+          { label: 'Refund', value: '{{refundAmountLabel}}', if: '{{hasRefund}}', strong: true },
+        ],
+      })}
+      {{#if choiceDeadlineLabel}}
+      ${B.policyPanel({
+        title: 'Decide by {{choiceDeadlineLabel}}',
+        body: 'If you do not choose, we will refund you in full automatically.',
+        tone: 'info',
+      })}
+      {{/if}}
+      {{#if cancellationReason}}
+      ${B.textBlock('Reason: {{cancellationReason}}', { muted: true, small: true })}
+      {{/if}}
       {{#if choiceUrl}}
-      ${B.buttons([
-        { label: 'Choose a new date', href: '{{choiceUrl}}' },
-        { label: 'Get a full refund', href: '{{choiceUrl}}', kind: 'secondary' },
-      ])}
+      ${B.pillButton('Choose a new date', '{{choiceUrl}}')}
+      ${B.pillButton('Get a full refund', '{{choiceUrl}}', { kind: 'secondary' })}
+      {{else}}
+      ${B.pillButton('Browse experiences', '{{browseUrl}}')}
+      ${B.pillButton('View refund', '{{refundUrl}}', { kind: 'ghost' })}
       {{/if}}
-      ${B.buttons([
-        { label: 'Find another experience', href: '{{browseUrl}}' },
-        { label: 'View refund', href: '{{refundUrl}}', kind: 'secondary' },
-        { label: 'Contact support', href: '{{supportUrl}}', kind: 'secondary' },
-      ])}
-    `);
+    `, { variant: 'gyg' });
   },
 };
 
@@ -761,20 +888,31 @@ const reviewRequest = {
   name: 'Customer · Review request',
   build() {
     return B.shell('How was your experience?', `
-      ${B.mediaHeader({
-        imageVar: 'tourImageUrl',
-        badgeText: 'Review',
-        badgeColor: 'accent',
-        heading: 'How was your experience?',
-        subtitle: '{{tourTitle}} &middot; {{dateLabel}}',
+      ${B.photoHeader({ height: 236 })}
+      ${B.displayHeading({
+        text: 'How was your experience?',
+        subtext: '{{tourTitle}} &middot; {{dateLabel}}',
+        padding: '26px 40px 0 40px',
       })}
-      ${B.paragraph('Hello {{customerName}}, thank you for booking with {{brandName}}. We hope you had a memorable experience.')}
-      ${B.paragraph('Your review helps other travellers make better choices. It only takes a minute.')}
-      ${B.buttons([
-        { label: 'Write a review', href: '{{reviewUrl}}' },
-        { label: 'Explore more experiences', href: '{{browseUrl}}', kind: 'secondary' },
+      ${B.textBlock('Hi {{customerName}}, thank you for travelling with {{brandName}}. We would love to hear how it went.', { center: false })}
+      ${B.starRating()}
+      ${B.textBlock('Tap a star to start your review. It takes about a minute.', { muted: true, small: true, center: true, padding: '10px 40px 0 40px' })}
+      ${B.pillButton('Write a review', '{{reviewUrl}}')}
+      ${B.hairline()}
+      ${B.sectionHeading('What to share')}
+      ${B.staticList([
+        'What you enjoyed most about the experience',
+        'How the guide, meeting point and timing felt',
+        'One tip for travellers booking this next',
       ])}
-    `);
+      ${B.helpBand({
+        title: 'Booking {{bookingNumber}}',
+        body: 'Your review will appear on the experience page and help future travellers choose with confidence.',
+        href: '{{bookingUrl}}',
+        label: 'View booking',
+      })}
+      ${B.pillButton('Explore more experiences', '{{browseUrl}}', { kind: 'ghost' })}
+    `, { variant: 'gyg', footer: 'review' });
   },
 };
 
@@ -1088,30 +1226,106 @@ const supplierCustomerCancelledFree = {
   name: 'Supplier · Customer cancelled (free period)',
   build() {
     return B.shell('Booking cancelled: do not operate', `
-      ${B.hero({ heading: 'This booking has been cancelled', badgeText: 'Cancelled', badgeColor: 'danger' })}
-      ${B.callout('DO NOT OPERATE THIS BOOKING', 'danger')}
-      ${B.sectionTitle('Booking details')}
-      ${B.detailCard([
-        { label: 'Booking reference', value: '{{bookingNumber}}' },
-        { label: 'Experience', value: '{{tourTitle}}' },
-        { label: 'Activity date', value: '{{dateLabel}}' },
-        { label: 'Start time', value: '{{timeLabel}}', if: '{{timeLabel}}' },
-        { label: 'Duration', value: '{{durationLabel}}', if: '{{durationLabel}}' },
-        { label: 'Travellers', value: '{{travelersLabel}}' },
-      ])}
-      ${B.sectionTitle('Lead traveller')}
-      ${B.contactCard({ name: '{{leadTravelerName}}', email: '{{leadTravelerEmail}}', phone: '{{leadTravelerPhone}}', initials: '{{customerInitials}}' })}
-      ${B.sectionTitle('Cancellation details')}
-      ${B.detailCard([
-        { label: 'Cancelled by', value: 'Customer' },
-        { label: 'Cancellation time', value: '{{cancelledAtLabel}}' },
-        { label: 'Cancellation policy', value: 'Free cancellation' },
-        { label: 'Supplier payout', value: '{{payoutAmountLabel}}' },
-        { label: 'Availability', value: 'Automatically restored' },
-      ])}
-      ${B.callout('Remove the customer from all guide, driver, vehicle and pickup schedules.', 'warning')}
-      ${B.buttonPrimary('View cancelled booking', '{{supplierBookingUrl}}')}
-    `);
+      ${B.statusRow('Cancelled \u2014 do not operate', 'danger')}
+      ${B.displayHeading({
+        text: 'Booking cancelled',
+        subtext: '<strong>{{tourTitle}}</strong> &middot; {{dateLabel}}',
+      })}
+      ${B.textBlock('Hi {{supplierName}}, {{leadTravelerName}} cancelled booking <strong>{{bookingNumber}}</strong> on {{cancelledAtLabel}}. It was cancelled before the free-cancellation deadline.')}
+      ${B.policyPanel({
+        title: 'Do not operate this booking',
+        body: 'Release the slot and remove the guest from all guide, driver, vehicle and pickup schedules.',
+        tone: 'danger',
+      })}
+      ${B.bookingSummaryCard({
+        statusText: 'Cancelled',
+        statusTone: 'danger',
+        rows: [
+          { label: 'Booking reference', value: '{{bookingNumber}}' },
+          { label: 'Date', value: '{{dateLabel}}{{#if timeLabel}} &middot; {{timeLabel}}{{/if}}' },
+          { label: 'Travellers', value: '{{travelersLabel}}' },
+          { label: 'Customer refund', value: '{{refundAmountLabel}}' },
+          { label: 'Your payout', value: '{{payoutAmountLabel}}', strong: true },
+        ],
+      })}
+      ${B.sectionHeading('Refund and payout')}
+      {{#if refundIssued}}
+      ${B.textBlock('The customer has been refunded <strong>{{refundAmountLabel}}</strong>. No payout will be issued for this cancelled booking.')}
+      {{else}}
+      {{#if refundFailed}}
+      ${B.textBlock('The customer\u2019s refund of <strong>{{refundAmountLabel}}</strong> could not be completed automatically, and our team will retry it. No payout will be issued for this cancelled booking.')}
+      {{else}}
+      ${B.textBlock('A refund of <strong>{{refundAmountLabel}}</strong> for the customer is in progress. No payout will be issued for this cancelled booking.')}
+      {{/if}}
+      {{/if}}
+      ${B.pillButton('Open booking in portal', '{{supplierBookingUrl}}')}
+    `, { variant: 'gyg', footer: 'supplier' });
+  },
+};
+
+const supplierCustomerCancelledUnpaid = {
+  key: 'supplier-customer-cancelled-unpaid',
+  name: 'Supplier · Booking cancelled before payment',
+  build() {
+    return B.shell('Booking cancelled: payment not collected', `
+      ${B.statusRow('Cancelled', 'neutral')}
+      ${B.displayHeading({
+        text: 'Booking cancelled',
+        subtext: '<strong>{{tourTitle}}</strong> &middot; {{dateLabel}}',
+      })}
+      ${B.textBlock('Hi {{supplierName}}, booking <strong>{{bookingNumber}}</strong> has been cancelled. No payment was collected for this reservation.')}
+      ${B.policyPanel({
+        title: 'Payment not collected',
+        body: 'There is nothing to refund and no payout is due. Release the slot and remove the guest from all schedules.',
+        tone: 'warning',
+      })}
+      ${B.bookingSummaryCard({
+        statusText: 'Cancelled',
+        statusTone: 'neutral',
+        rows: [
+          { label: 'Booking reference', value: '{{bookingNumber}}' },
+          { label: 'Date', value: '{{dateLabel}}{{#if timeLabel}} &middot; {{timeLabel}}{{/if}}' },
+          { label: 'Travellers', value: '{{travelersLabel}}' },
+          { label: 'Payment', value: 'Not collected' },
+          { label: 'Your payout', value: '{{payoutAmountLabel}}', strong: true },
+        ],
+      })}
+      ${B.textBlock('No payout will be issued for this booking.')}
+      ${B.pillButton('Open booking in portal', '{{supplierBookingUrl}}')}
+    `, { variant: 'gyg', footer: 'supplier' });
+  },
+};
+
+const supplierCustomerCancelledNonRefundable = {
+  key: 'supplier-customer-cancelled-non-refundable',
+  name: 'Supplier · Customer cancelled (non-refundable policy)',
+  build() {
+    return B.shell('Booking cancelled: non-refundable', `
+      ${B.statusRow('Cancelled \u2014 non-refundable', 'danger')}
+      ${B.displayHeading({
+        text: 'Booking cancelled',
+        subtext: '<strong>{{tourTitle}}</strong> &middot; {{dateLabel}}',
+      })}
+      ${B.textBlock('Hi {{supplierName}}, {{leadTravelerName}} cancelled booking <strong>{{bookingNumber}}</strong> on {{cancelledAtLabel}}. This experience is sold on a non-refundable basis.')}
+      ${B.policyPanel({
+        title: 'Non-refundable policy',
+        body: '{{cancellationPolicyText}} No refund is due to the customer for this cancellation.',
+        tone: 'warning',
+      })}
+      ${B.bookingSummaryCard({
+        statusText: 'Cancelled',
+        statusTone: 'danger',
+        rows: [
+          { label: 'Booking reference', value: '{{bookingNumber}}' },
+          { label: 'Date', value: '{{dateLabel}}{{#if timeLabel}} &middot; {{timeLabel}}{{/if}}' },
+          { label: 'Travellers', value: '{{travelersLabel}}' },
+          { label: 'Customer refund', value: '{{refundAmountLabel}}' },
+          { label: 'Your payout', value: '{{payoutAmountLabel}}', strong: true },
+        ],
+      })}
+      ${B.textBlock('Do not operate this booking. No payout will be issued for the cancelled booking.')}
+      ${B.pillButton('Open booking in portal', '{{supplierBookingUrl}}')}
+    `, { variant: 'gyg', footer: 'supplier' });
   },
 };
 
@@ -1120,28 +1334,30 @@ const supplierCustomerCancelledLate = {
   name: 'Supplier · Customer cancelled (late)',
   build() {
     return B.shell('Late customer cancellation', `
-      ${B.hero({ heading: 'Booking cancelled after the deadline', badgeText: 'Late cancellation', badgeColor: 'danger' })}
-      ${B.callout('DO NOT OPERATE UNLESS SUPPORT INSTRUCTS OTHERWISE', 'danger')}
-      ${B.sectionTitle('Booking details')}
-      ${B.detailCard([
-        { label: 'Booking reference', value: '{{bookingNumber}}' },
-        { label: 'Experience', value: '{{tourTitle}}' },
-        { label: 'Activity date', value: '{{dateLabel}}' },
-        { label: 'Travellers', value: '{{travelersLabel}}' },
-      ])}
-      ${B.sectionTitle('Lead traveller')}
-      ${B.contactCard({ name: '{{leadTravelerName}}', email: '{{leadTravelerEmail}}', phone: '{{leadTravelerPhone}}', initials: '{{customerInitials}}' })}
-      ${B.sectionTitle('Cancellation details')}
-      ${B.detailCard([
-        { label: 'Cancelled by', value: 'Customer' },
-        { label: 'Cancellation deadline', value: '{{cancellationDeadlineLabel}}' },
-        { label: 'Cancellation time', value: '{{cancelledAtLabel}}' },
-        { label: 'Cancellation status', value: 'Late cancellation' },
-        { label: 'Cancellation payout', value: '{{payoutAmountLabel}}' },
-        { label: 'Payout status', value: 'Scheduled' },
-      ])}
-      ${B.buttonPrimary('View cancellation and payout', '{{supplierBookingUrl}}')}
-    `);
+      ${B.statusRow('Late cancellation', 'danger')}
+      ${B.displayHeading({
+        text: 'Late customer cancellation',
+        subtext: '<strong>{{tourTitle}}</strong> &middot; {{dateLabel}}',
+      })}
+      ${B.textBlock('Hi {{supplierName}}, {{leadTravelerName}} cancelled booking <strong>{{bookingNumber}}</strong> at {{cancelledAtLabel}}, after the free-cancellation deadline of {{cancellationDeadlineLabel}}.')}
+      ${B.policyPanel({
+        title: 'Do not operate unless support instructs otherwise',
+        body: 'The customer missed the free-cancellation deadline. No refund is due and no payout will be issued for this booking.',
+        tone: 'danger',
+      })}
+      ${B.bookingSummaryCard({
+        statusText: 'Late cancellation',
+        statusTone: 'danger',
+        rows: [
+          { label: 'Booking reference', value: '{{bookingNumber}}' },
+          { label: 'Date', value: '{{dateLabel}}{{#if timeLabel}} &middot; {{timeLabel}}{{/if}}' },
+          { label: 'Travellers', value: '{{travelersLabel}}' },
+          { label: 'Customer refund', value: '{{refundAmountLabel}}' },
+          { label: 'Your payout', value: '{{payoutAmountLabel}}', strong: true },
+        ],
+      })}
+      ${B.pillButton('Open booking in portal', '{{supplierBookingUrl}}')}
+    `, { variant: 'gyg', footer: 'supplier' });
   },
 };
 
@@ -1149,27 +1365,35 @@ const supplierPlatformCancelled = {
   key: 'supplier-platform-cancelled',
   name: 'Supplier · Platform cancelled booking',
   build() {
-    return B.shell('Booking cancelled by Expedition-Go Tours', `
-      ${B.hero({ heading: 'Do not operate this booking', badgeText: 'Cancelled', badgeColor: 'danger', subtitle: '{{brandName}} has cancelled this booking.' })}
-      ${B.sectionTitle('Booking details')}
-      ${B.detailCard([
-        { label: 'Booking reference', value: '{{bookingNumber}}' },
-        { label: 'Experience', value: '{{tourTitle}}' },
-        { label: 'Activity date', value: '{{dateLabel}}' },
-        { label: 'Travellers', value: '{{travelersLabel}}' },
-      ])}
-      ${B.sectionTitle('Lead traveller')}
-      ${B.contactCard({ name: '{{leadTravelerName}}', email: '{{leadTravelerEmail}}', phone: '{{leadTravelerPhone}}', initials: '{{customerInitials}}' })}
-      ${B.sectionTitle('Cancellation details')}
-      ${B.detailCard([
-        { label: 'Reason', value: '{{cancellationReason}}', if: '{{cancellationReason}}' },
-        { label: 'Customer notified', value: 'Yes' },
-        { label: 'Customer refund', value: 'Full refund' },
-        { label: 'Supplier cancellation compensation', value: '{{compensationLabel}}' },
-        { label: 'Availability', value: 'Automatically restored' },
-      ])}
-      ${B.buttonPrimary('View cancellation', '{{supplierBookingUrl}}')}
-    `);
+    return B.shell('Booking cancelled by the platform', `
+      ${B.statusRow('Cancelled by {{brandName}}', 'danger')}
+      ${B.displayHeading({
+        text: 'Booking cancelled',
+        subtext: '{{brandName}} has cancelled this booking. Do not operate it.',
+      })}
+      ${B.textBlock('Hi {{supplierName}}, booking <strong>{{bookingNumber}}</strong> for {{tourTitle}} on {{dateLabel}} has been cancelled by our team. The customer has been notified and will be refunded in full.')}
+      ${B.policyPanel({
+        title: 'Do not operate this booking',
+        body: 'Release the slot and remove the guest from all guide, driver, vehicle and pickup schedules.',
+        tone: 'danger',
+      })}
+      ${B.bookingSummaryCard({
+        statusText: 'Cancelled',
+        statusTone: 'danger',
+        rows: [
+          { label: 'Booking reference', value: '{{bookingNumber}}' },
+          { label: 'Date', value: '{{dateLabel}}{{#if timeLabel}} &middot; {{timeLabel}}{{/if}}' },
+          { label: 'Travellers', value: '{{travelersLabel}}' },
+          { label: 'Customer refund', value: '{{refundAmountLabel}}' },
+          { label: 'Your payout', value: '{{payoutAmountLabel}}', strong: true },
+          { label: 'Compensation', value: '{{compensationLabel}}', if: '{{compensationLabel}}' },
+        ],
+      })}
+      {{#if cancellationReason}}
+      ${B.textBlock('Reason: {{cancellationReason}}', { muted: true, small: true })}
+      {{/if}}
+      ${B.pillButton('Open booking in portal', '{{supplierBookingUrl}}')}
+    `, { variant: 'gyg', footer: 'supplier' });
   },
 };
 
@@ -1340,27 +1564,27 @@ const supplierReviewInvite = {
   key: 'supplier-review-invite',
   name: 'Supplier · Activity completed review link',
   build() {
-    return B.shell('Invite {{guestName}} to review their experience', `
-      ${B.mediaHeader({
-        imageVar: 'tourImageUrl',
-        badgeText: '&#10003;&nbsp;&nbsp;Completed',
-        badgeColor: 'success',
-        heading: 'Invite {{guestName}} to review their experience',
-        subtitle: '{{tourTitle}}{{#if dateLabel}} &middot; {{dateLabel}}{{/if}}',
+    return B.shell('Invite {{guestName}} to share their experience', `
+      ${B.photoHeader({ height: 210 })}
+      ${B.statusRow('Completed', 'success', { padding: '24px 40px 0 40px' })}
+      ${B.displayHeading({
+        text: 'Invite {{guestName}} to share their experience',
+        subtext: '{{tourTitle}}',
+        padding: '14px 40px 0 40px',
       })}
-      ${B.paragraph('Hi {{supplierName}},')}
-      ${B.paragraph('Your activity, {{tourTitle}}, with {{guestName}}{{#if dateLabel}} on {{dateLabel}}{{/if}} has been marked as completed.')}
-      ${B.paragraph('Now is a good time to follow up with your guest and invite them to share their experience. Honest reviews help future travellers know what to expect and give you useful feedback to improve the experiences you offer.')}
-      ${B.sectionTitle('Review link for {{guestName}}')}
-      ${B.paragraph('Share the link below with your guest so they can leave a review of their experience.')}
+      ${B.textBlock('Hi {{supplierName}}, your activity with {{guestName}}{{#if dateLabel}} on {{dateLabel}}{{/if}} has been marked as completed.')}
+      ${B.textBlock('Now is a good time to follow up and invite your guest to share their experience. Honest reviews help future travellers know what to expect and give you useful feedback.')}
+      ${B.sectionHeading('Review link for {{guestName}}')}
+      ${B.textBlock('Send the link below to your guest. It opens the review form for this booking.', { muted: true, small: true })}
       ${B.copyLink('{{reviewUrl}}')}
-      ${B.paragraph(`Prefer to check the reservation first? <a href="{{supplierBookingUrl}}" class="dm-accent" style="color:${B.COLORS.accent};font-weight:700;text-decoration:none;">View booking</a>`)}
+      ${B.pillButton('Open booking in portal', '{{supplierBookingUrl}}')}
       {{#if bookingNumber}}
       ${B.referenceBar({ reference: '{{bookingNumber}}' })}
       {{/if}}
-      ${B.paragraph('Please let your guest share their own experience in their own words. There is no need to suggest a particular rating or response.', { muted: true, small: true })}
-      ${B.paragraph('Thank you for delivering memorable experiences with {{brandName}}.')}
-    `);
+      ${B.hairline()}
+      ${B.textBlock('Please let your guest share their own experience in their own words. There is no need to suggest a particular rating or response.', { muted: true, small: true })}
+      ${B.textBlock('Thank you for delivering memorable experiences with {{brandName}}.')}
+    `, { variant: 'gyg', footer: 'supplier' });
   },
 };
 
@@ -1529,6 +1753,8 @@ const TEMPLATE_DEFS = [
   pickupLocationRequired,
   bookingReminder,
   customerCancelledFullRefund,
+  customerCancelledUnpaid,
+  customerCancelledNonRefundable,
   customerCancelledNoRefund,
   refundProcessing,
   refundCompleted,
@@ -1546,6 +1772,8 @@ const TEMPLATE_DEFS = [
   supplierPickupRequired,
   supplierBookingReminder,
   supplierCustomerCancelledFree,
+  supplierCustomerCancelledUnpaid,
+  supplierCustomerCancelledNonRefundable,
   supplierCustomerCancelledLate,
   supplierPlatformCancelled,
   supplierCancellationRecorded,

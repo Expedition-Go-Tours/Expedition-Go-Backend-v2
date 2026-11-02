@@ -68,7 +68,7 @@ describe('supplier-review-invite artifact', () => {
 
   it('points the secondary action at the supplier booking, not the review page', () => {
     const html = artifact();
-    expect(html).toContain('View booking');
+    expect(html).toContain('Open booking in portal');
     expect(html).toContain('href="{{supplierBookingUrl}}"');
   });
 
@@ -165,7 +165,7 @@ describe('sendSupplierReviewInviteEmail', () => {
     // A single recipient may be normalized to a bare string by the send layer.
     expect(Array.isArray(to) ? to : [to]).toEqual(['supplier@example.com']);
     expect(subject).toBe('Activity completed - send Ada Lovelace the review link (Ref: TB-001)');
-    expect(html).toContain('Invite Ada Lovelace to review their experience');
+    expect(html).toContain('Invite Ada Lovelace to share their experience');
     expect(html).toContain('review/test-tour?bookingId=booking-1');
     expect(html).not.toContain('{{');
     expect(html).not.toContain('\u2014');

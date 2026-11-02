@@ -401,28 +401,41 @@ function evaluateModifyPolicy(booking, tour, now = new Date()) {
  * - all_sales_final: cancellation allowed, but never refunded
  * - standard/custom: allowed outside cancellationWindowHours, refunded by refundPercentage
  * - A cancellationWindowHours of 0 is valid (window is open); it must not fall back to 24
+ *
+ * The returned object is additive: existing callers read `allowed`,
+ * `refundAmount`, `refundPercentage`, `reason` and `windowHours`, while the
+ * cancellation-email layer also reads `deadline`, `isLate`, `refundEligible`
+ * and `policyType`. Lateness is derived from the deadline comparison only —
+ * never from whether a refund happened to succeed.
  */
 function evaluateCancellationPolicy(booking, tour, cancellationDate = new Date()) {
   const bookingDate = new Date(booking.travelDate);
   const hoursUntilBooking = (bookingDate - cancellationDate) / (1000 * 60 * 60);
+  const validTravelDate = Number.isFinite(bookingDate.getTime());
 
   const policy = tour?.bookingAndTickets?.cancellationPolicy;
 
   if (!policy) {
     // Default policy: full refund if more than 24 hours
-    const eligible = Number.isFinite(hoursUntilBooking) && hoursUntilBooking >= 24;
+    const windowHours = 24;
+    const eligible = Number.isFinite(hoursUntilBooking) && hoursUntilBooking >= windowHours;
     return {
       allowed: eligible,
       refundAmount: eligible ? parseFloat(booking.grossAmount) : 0,
       refundPercentage: eligible ? 100 : 0,
       reason: eligible ? 'Full refund (24+ hours notice)' : 'No refund (less than 24 hours)',
-      windowHours: 24
+      windowHours,
+      policyType: 'standard',
+      deadline: validTravelDate ? new Date(bookingDate.getTime() - windowHours * 60 * 60 * 1000) : null,
+      isLate: Number.isFinite(hoursUntilBooking) && hoursUntilBooking < windowHours,
+      refundEligible: eligible,
     };
   }
 
   const type = policy.type || 'standard';
   const windowHours = Number.isFinite(policy.cancellationWindowHours) ? policy.cancellationWindowHours : 24;
   const refundPercentage = Number.isFinite(policy.refundPercentage) ? policy.refundPercentage : 100;
+  const deadline = validTravelDate ? new Date(bookingDate.getTime() - windowHours * 60 * 60 * 1000) : null;
 
   if (type === 'all_sales_final') {
     return {
@@ -430,7 +443,11 @@ function evaluateCancellationPolicy(booking, tour, cancellationDate = new Date()
       refundAmount: 0,
       refundPercentage: 0,
       reason: 'No refund - all sales final',
-      windowHours: 0
+      windowHours: 0,
+      policyType: 'all_sales_final',
+      deadline: null,
+      isLate: false,
+      refundEligible: false,
     };
   }
 
@@ -440,7 +457,11 @@ function evaluateCancellationPolicy(booking, tour, cancellationDate = new Date()
       refundAmount: 0,
       refundPercentage: 0,
       reason: `Cancellation not allowed within ${windowHours} hours of tour`,
-      windowHours
+      windowHours,
+      policyType: type,
+      deadline,
+      isLate: true,
+      refundEligible: false,
     };
   }
 
@@ -450,7 +471,11 @@ function evaluateCancellationPolicy(booking, tour, cancellationDate = new Date()
     refundAmount,
     refundPercentage,
     reason: refundPercentage >= 100 ? 'Full refund available' : `Partial refund (${refundPercentage}%) available`,
-    windowHours
+    windowHours,
+    policyType: type,
+    deadline,
+    isLate: false,
+    refundEligible: refundPercentage > 0,
   };
 }
 

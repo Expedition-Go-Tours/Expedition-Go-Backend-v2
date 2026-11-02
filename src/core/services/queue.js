@@ -462,6 +462,8 @@ const EMAIL_JOB_DISPATCH = {
   'pickup-location-required': ['sendPickupLocationRequiredEmail', true],
   'booking-reminder': ['sendBookingReminderEmail', true],
   'customer-cancelled-full-refund': ['sendCustomerCancelledFullRefundEmail', true],
+  'customer-cancelled-unpaid': ['sendCustomerCancelledUnpaidEmail', true],
+  'customer-cancelled-non-refundable': ['sendCustomerCancelledNonRefundableEmail', true],
   'customer-cancelled-no-refund': ['sendCustomerCancelledNoRefundEmail', true],
   'refund-processing': ['sendRefundProcessingEmail', true],
   'refund-completed': ['sendRefundCompletedEmail', true],
@@ -482,8 +484,11 @@ const EMAIL_JOB_DISPATCH = {
   'supplier-pickup-required': ['sendSupplierPickupRequiredEmail', true],
   'supplier-booking-reminder': ['sendSupplierBookingReminderEmail', true],
   'supplier-customer-cancelled-free': ['sendSupplierCustomerCancelledFreeEmail', true],
+  'supplier-customer-cancelled-unpaid': ['sendSupplierCustomerCancelledUnpaidEmail', true],
+  'supplier-customer-cancelled-non-refundable': ['sendSupplierCustomerCancelledNonRefundableEmail', true],
   'supplier-customer-cancelled-late': ['sendSupplierCustomerCancelledLateEmail', true],
   'supplier-platform-cancelled': ['sendSupplierPlatformCancelledEmail', true],
+  'supplier-cancellation': ['sendSupplierCancellationEmail', true],
   'supplier-cancellation-recorded': ['sendSupplierCancellationRecordedEmail', true],
   'supplier-review-invite': ['sendSupplierReviewInviteEmail', true],
 };
@@ -658,7 +663,11 @@ async function processEmailJob(job) {
         include: EMAIL_BOOKING_INCLUDE,
       });
       if (!booking) throw new Error(`Booking ${job.bookingId} not found`);
-      await emailService.sendBookingCancellationEmail(booking, job.refundAmount);
+      // Prefer the explicit outcome context written by the cancelling endpoint
+      // (origin, refund state, cancellation time). Legacy jobs only carry a
+      // numeric refundAmount, which the email router still understands.
+      const context = job.data && Object.keys(job.data).length ? job.data : job.refundAmount;
+      await emailService.sendBookingCancellationEmail(booking, context);
       break;
     }
 
@@ -668,7 +677,10 @@ async function processEmailJob(job) {
         include: EMAIL_BOOKING_INCLUDE,
       });
       if (!booking) throw new Error(`Booking ${job.bookingId} not found`);
-      await emailService.sendBookingCancellationEmail(booking, booking.refundAmount);
+      const context = job.data && Object.keys(job.data).length
+        ? job.data
+        : { cancelledBy: booking.cancellationOrigin || 'SYSTEM' };
+      await emailService.sendBookingCancellationEmail(booking, context);
       break;
     }
 

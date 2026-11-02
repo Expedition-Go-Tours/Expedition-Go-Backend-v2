@@ -3,7 +3,7 @@ const prisma = require('./services/prismaClient');
 const catchAsync = require('./services/catchAsync');
 const AppError = require('./services/appError');
 const cache = require('./services/cacheHelper');
-const { sendEmail, sendSupplierCustomerCancelledFreeEmail, sendSupplierCustomerCancelledLateEmail } = require('./services/emailService');
+const { sendEmail, sendSupplierCancellationEmail } = require('./services/emailService');
 const { enqueueEvent, enqueueEmail, enqueueNotification } = require('./services/queue');
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy, evaluateModifyPolicy, isValidEmail } = require('./services/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('./services/tourHelpers');
@@ -3029,10 +3029,20 @@ controller.cancelBooking = catchAsync(async (req, res, next) => {
     }
   }
 
+  // One explicit cancellation context drives both emails, so the customer and
+  // supplier copies can never disagree about lateness, refund or payout.
+  const cancellationContext = {
+    cancelledBy: 'CUSTOMER',
+    cancelledAt: result.cancelledAt,
+    refundAmount: needsRefund ? refundAmount : 0,
+    refundSucceeded: needsRefund ? refundSucceeded : undefined,
+    refundStatus: needsRefund ? (refundSucceeded ? 'SUCCEEDED' : 'PENDING') : 'NOT_APPLICABLE',
+  };
+
   enqueueEmail({
     type: 'booking-cancellation',
     bookingId: booking.id,
-    refundAmount: refundSucceeded ? refundAmount : 0,
+    data: cancellationContext,
     brandName: BRAND.brandName,
   }).catch((err) => console.error('[Expedition] Cancellation email failed:', err.message));
 
@@ -3045,11 +3055,9 @@ controller.cancelBooking = catchAsync(async (req, res, next) => {
     data: { bookingId: booking.id, source: BRAND.eventNamespace },
   }).catch((err) => console.error('[Expedition] Supplier cancellation notification failed:', err.message));
 
-  // Supplier email — different templates for free-cancellation vs late/penalty.
-  const supplierCancelEmail = refundSucceeded
-    ? sendSupplierCustomerCancelledFreeEmail(booking, { cancelledAt: result.cancelledAt })
-    : sendSupplierCustomerCancelledLateEmail(booking, { cancelledAt: result.cancelledAt });
-  supplierCancelEmail
+  // Supplier email — the outcome helper picks the right template from policy,
+  // clock and refund state (never from refund success).
+  sendSupplierCancellationEmail(booking, cancellationContext)
     .catch((err) => console.error('[Expedition] Supplier cancellation email failed:', err.message));
 
   logActivity({

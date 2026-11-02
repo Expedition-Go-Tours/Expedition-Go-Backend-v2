@@ -21,6 +21,7 @@ const prisma = require('./prismaClient');
 const getConfig = require('./getConfig');
 const { render } = require('./emailRenderer');
 const fmt = require('./emailFormatting');
+const { resolveCancellationOutcome } = require('./cancellationOutcome');
 const emailUrls = require('../../../config/emailUrls');
 const { resolveRecipients } = require('./notificationRecipientService');
 const { payLaterChargeAt } = require('./payLaterCharge');
@@ -790,8 +791,9 @@ function cancellationPolicyTextFor(tour) {
     '';
   if (text) return text;
   // A non-refundable policy with no explicit wording must not fall through to
-  // the free-cancellation default, which would contradict the deadline callout.
-  if (policy && typeof policy === 'object' && policy.type === 'all_sales_final') {
+  // the free-cancellation default, which would contradict the email copy. Both
+  // all_sales_final and an explicit 0% refund share that meaning.
+  if (policy && typeof policy === 'object' && (policy.type === 'all_sales_final' || policy.refundPercentage === 0)) {
     return 'All sales are final. This experience is non-refundable.';
   }
   return 'Free cancellation up to 24 hours before your experience.';
@@ -1168,39 +1170,106 @@ async function sendBookingReminderEmail(booking, { items = [] } = {}) {
   });
 }
 
-async function sendCustomerCancelledFullRefundEmail(booking, { cancelledAt, refundAmount } = {}) {
+/**
+ * Cancellation emails all read from one outcome object so the customer and the
+ * supplier copy can never disagree about lateness, refunds or payout.
+ */
+function normalizeCancellationOptions(options) {
+  // Legacy call style: sendBookingCancellationEmail(booking, refundAmount).
+  if (typeof options === 'number' || typeof options === 'string') {
+    const amount = Number(options);
+    return {
+      refundAmount: Number.isFinite(amount) ? amount : 0,
+      refundSucceeded: Number(amount) > 0,
+    };
+  }
+  return options && typeof options === 'object' ? options : {};
+}
+
+/**
+ * Data shared by every cancellation template. The outcome decides the labels;
+ * the template only decides the layout.
+ */
+function cancellationEmailData(base, b, outcome) {
+  const currency = b.currency || 'USD';
+  const deadline = outcome.deadline || fmt.getCancelDeadline(b, b.tour || {});
+  const refundStatusLabel = {
+    succeeded: 'Refund issued',
+    pending: 'Refund in progress',
+    failed: 'Refund could not be completed automatically',
+    none: outcome.unpaid ? 'No payment was taken' : 'No refund is due',
+  }[outcome.refundState] || 'Refund in progress';
+  const refundTimeline = {
+    succeeded: 'It is on its way back to your original payment method. Most banks show it within 3\u20135 business days.',
+    pending: 'We are processing it now. Most refunds arrive within 3\u20135 business days, and we will email you when it is complete.',
+    failed: 'Our team has been alerted and will retry it. You do not need to do anything.',
+    none: '',
+  }[outcome.refundState] || '';
+
+  return {
+    ...base,
+    cancellationPolicyText: cancellationPolicyTextFor(b.tour),
+    cancelledAtLabel: fmt.formatDateTime(outcome.cancelledAt),
+    cancellationDeadlineLabel: deadline ? fmt.formatDateTime(deadline) : '',
+    cancellationReason: b.cancellationReason || '',
+    refundAmountLabel: fmt.formatCurrency(outcome.refundAmount || 0, currency),
+    refundStatusLabel,
+    refundTimeline,
+    refundDestinationNote: outcome.unpaid
+      ? 'No payment was taken, so there is nothing to refund.'
+      : 'Back to your original payment method.',
+    refundIssued: outcome.refundState === 'succeeded',
+    refundPending: outcome.refundState === 'pending',
+    refundFailed: outcome.refundState === 'failed',
+    hasRefund: !outcome.unpaid && (outcome.refundAmount || 0) > 0,
+    // A cancelled booking never pays the supplier — never format the stale
+    // payout value still sitting on the row.
+    payoutAmountLabel: fmt.formatCurrency(0, currency),
+  };
+}
+
+/**
+ * Send the customer cancellation email. With no `key` the outcome chooses the
+ * template; the named wrappers below pin a template for legacy queue jobs.
+ */
+async function sendCustomerCancellation(booking, { key, subject, options = {} } = {}) {
   const b = await resolveBookingContext(booking);
   const base = await buildBookingBase(b);
-  const data = {
-    ...base,
-    cancelledAtLabel: fmt.formatDateTime(cancelledAt || b.cancelledAt || new Date()),
-    cancellationReason: b.cancellationReason || '',
-    refundAmountLabel: fmt.formatCurrency(refundAmount ?? b.refundAmount ?? b.grossAmount, b.currency),
-  };
+  const outcome = resolveCancellationOutcome(b, b.tour || {}, normalizeCancellationOptions(options));
+  const data = cancellationEmailData(base, b, outcome);
   return sendRendered({
     to: base.customerEmail,
-    subject: 'Your booking has been cancelled',
-    key: 'customer-cancelled-full-refund',
+    subject: subject || outcome.customerSubject,
+    key: key || outcome.customerTemplateKey,
     data,
   });
 }
 
-async function sendCustomerCancelledNoRefundEmail(booking, { cancelledAt, cancellationFee, refundAmount = 0 } = {}) {
-  const b = await resolveBookingContext(booking);
-  const base = await buildBookingBase(b);
-  const deadline = fmt.getCancelDeadline(b, b.tour || {});
-  const data = {
-    ...base,
-    cancelledAtLabel: fmt.formatDateTime(cancelledAt || b.cancelledAt || new Date()),
-    cancellationDeadlineLabel: fmt.formatDateTime(deadline),
-    cancellationFeeLabel: fmt.formatCurrency(cancellationFee ?? b.grossAmount, b.currency),
-    refundAmountLabel: fmt.formatCurrency(refundAmount ?? 0, b.currency),
-  };
-  return sendRendered({
-    to: base.customerEmail,
-    subject: 'Your booking has been cancelled',
+async function sendCustomerCancelledFullRefundEmail(booking, options = {}) {
+  return sendCustomerCancellation(booking, {
+    key: 'customer-cancelled-full-refund',
+    options,
+  });
+}
+
+async function sendCustomerCancelledUnpaidEmail(booking, options = {}) {
+  return sendCustomerCancellation(booking, {
+    key: 'customer-cancelled-unpaid',
+    options,
+  });
+}
+
+async function sendCustomerCancelledNonRefundableEmail(booking, options = {}) {
+  return sendCustomerCancellation(booking, {
+    key: 'customer-cancelled-non-refundable',
+    options,
+  });
+}
+
+async function sendCustomerCancelledNoRefundEmail(booking, options = {}) {
+  return sendCustomerCancellation(booking, {
     key: 'customer-cancelled-no-refund',
-    data,
+    options,
   });
 }
 
@@ -1258,19 +1327,19 @@ async function sendSupplierChangedBookingEmail(booking, { changes = [], changeRe
   });
 }
 
-async function sendSupplierCancelledBookingEmail(booking, { reason, refundAmount } = {}) {
+async function sendSupplierCancelledBookingEmail(booking, { reason, refundAmount, cancelledAt } = {}) {
   const b = await resolveBookingContext(booking);
   const base = await buildBookingBase(b);
   const origin = emailUrls.bookingClientOrigin(b);
 
-  // Refund state is the authoritative label — never a hardcoded "Processing".
-  const refundStatusLabel = {
-    PENDING: 'Processing',
-    PROCESSING: 'Processing',
-    SUCCEEDED: 'Completed',
-    FAILED: 'Failed — our team has been alerted and will retry',
-    NOT_APPLICABLE: 'No refund due (booking was unpaid)',
-  }[b.refundStatus] || (b.refundStatus ? b.refundStatus : 'Processing');
+  // The booking was cancelled by the supplier/platform, so lateness is never
+  // applicable — resolveCancellationOutcome forces it off for this origin.
+  const outcome = resolveCancellationOutcome(b, b.tour || {}, {
+    cancelledBy: b.cancellationOrigin || 'SUPPLIER',
+    cancelledAt,
+    refundAmount,
+  });
+  const data = cancellationEmailData(base, b, outcome);
 
   // Supplier-caused cancels open the reschedule-or-refund window.
   const openChoice =
@@ -1279,26 +1348,23 @@ async function sendSupplierCancelledBookingEmail(booking, { reason, refundAmount
     b.cancellationChoiceDeadline &&
     !b.customerChoice;
 
-  const data = {
-    ...base,
-    cancellationReason: reason || b.cancellationReason || '',
-    refundAmountLabel: fmt.formatCurrency(refundAmount ?? b.refundAmount ?? b.grossAmount, b.currency),
-    refundStatusLabel,
-    ...(openChoice
-      ? {
-          choiceUrl: emailUrls.cancellationChoice(
-            require('./cancellationReasons').signChoiceToken(b.id, b.cancellationChoiceDeadline),
-            origin
-          ),
-          choiceDeadlineLabel: fmt.formatDateTime(b.cancellationChoiceDeadline),
-        }
-      : {}),
-  };
   return sendRendered({
     to: base.customerEmail,
-    subject: 'Important: Your booking has been cancelled',
+    subject: outcome.customerSubject,
     key: 'supplier-cancelled-booking',
-    data,
+    data: {
+      ...data,
+      cancellationReason: reason || b.cancellationReason || '',
+      ...(openChoice
+        ? {
+            choiceUrl: emailUrls.cancellationChoice(
+              require('./cancellationReasons').signChoiceToken(b.id, b.cancellationChoiceDeadline),
+              origin
+            ),
+            choiceDeadlineLabel: fmt.formatDateTime(b.cancellationChoiceDeadline),
+          }
+        : {}),
+    },
   });
 }
 
@@ -1334,9 +1400,19 @@ async function sendReviewRequestEmail(booking) {
   const b = await resolveBookingContext(booking);
   const base = await buildBookingBase(b);
   const origin = emailUrls.bookingClientOrigin(b);
+  const reviewUrl = emailUrls.writeReview(b.id, origin, b.tour?.slug, b.tour?.id);
+  // Star taps deep-link to the same review form with the rating preselected,
+  // so the click from the inbox lands on a half-filled form (see
+  // ReviewExperiencePage's ?rating= support on both storefronts).
+  const ratingUrl = (n) => `${reviewUrl}${reviewUrl.includes('?') ? '&' : '?'}rating=${n}`;
   const data = {
     ...base,
-    reviewUrl: emailUrls.writeReview(b.id, origin, b.tour?.slug, b.tour?.id),
+    reviewUrl,
+    rating1Url: ratingUrl(1),
+    rating2Url: ratingUrl(2),
+    rating3Url: ratingUrl(3),
+    rating4Url: ratingUrl(4),
+    rating5Url: ratingUrl(5),
     browseUrl: emailUrls.browseExperiences(origin),
   };
   return sendRendered({
@@ -1344,6 +1420,9 @@ async function sendReviewRequestEmail(booking) {
     subject: 'How was your experience?',
     key: 'review-request',
     data,
+    opts: {
+      preheader: `Tell us how ${base.tourTitle} went — it takes about a minute.`,
+    },
   });
 }
 
@@ -1648,46 +1727,79 @@ async function sendSupplierBookingReminderEmail(booking) {
   });
 }
 
-async function sendSupplierCustomerCancelledFreeEmail(booking, { cancelledAt } = {}) {
+/**
+ * Send the supplier cancellation notice. With no `key` the outcome chooses the
+ * template; the named wrappers below pin a template for legacy queue jobs.
+ */
+async function sendSupplierCancellation(booking, { key, subject, options = {} } = {}) {
   const b = await resolveBookingContext(booking);
   const base = await buildBookingBase(b);
   const supplier = b.tour?.supplier || {};
-  const data = {
-    ...base,
-    cancelledAtLabel: fmt.formatDateTime(cancelledAt || b.cancelledAt || new Date()),
-  };
+  const outcome = resolveCancellationOutcome(b, b.tour || {}, normalizeCancellationOptions(options));
+  const data = cancellationEmailData(base, b, outcome);
+  const resolvedSubject = typeof subject === 'function'
+    ? subject({ data, outcome })
+    : (subject || outcome.supplierSubject);
   return sendRendered({
-    ...await supplierRecipientList(supplier, "bookings"),
-    subject: 'Booking cancelled — do not operate',
+    ...await supplierRecipientList(supplier, 'bookings'),
+    subject: resolvedSubject,
+    key: key || outcome.supplierTemplateKey,
+    data,
+  });
+}
+
+/** Router used by the cancellation flows: chooses the supplier template. */
+async function sendSupplierCancellationEmail(booking, options = {}) {
+  return sendSupplierCancellation(booking, {
+    subject: ({ data, outcome }) => (outcome.platformCancel
+      ? `Booking cancelled by ${data.brandName || 'the platform'}`
+      : outcome.supplierSubject),
+    options,
+  });
+}
+
+async function sendSupplierCustomerCancelledFreeEmail(booking, options = {}) {
+  return sendSupplierCancellation(booking, {
     key: 'supplier-customer-cancelled-free',
-    data,
+    subject: 'Booking cancelled — do not operate',
+    options,
   });
 }
 
-async function sendSupplierCustomerCancelledLateEmail(booking, { cancelledAt } = {}) {
-  const b = await resolveBookingContext(booking);
-  const base = await buildBookingBase(b);
-  const supplier = b.tour?.supplier || {};
-  const deadline = fmt.getCancelDeadline(b, b.tour || {});
-  const data = {
-    ...base,
-    cancelledAtLabel: fmt.formatDateTime(cancelledAt || b.cancelledAt || new Date()),
-    cancellationDeadlineLabel: fmt.formatDateTime(deadline),
-  };
-  return sendRendered({
-    ...await supplierRecipientList(supplier, "bookings"),
-    subject: 'Late customer cancellation',
+async function sendSupplierCustomerCancelledUnpaidEmail(booking, options = {}) {
+  return sendSupplierCancellation(booking, {
+    key: 'supplier-customer-cancelled-unpaid',
+    subject: 'Booking cancelled — payment not collected',
+    options,
+  });
+}
+
+async function sendSupplierCustomerCancelledNonRefundableEmail(booking, options = {}) {
+  return sendSupplierCancellation(booking, {
+    key: 'supplier-customer-cancelled-non-refundable',
+    subject: 'Booking cancelled — non-refundable',
+    options,
+  });
+}
+
+async function sendSupplierCustomerCancelledLateEmail(booking, options = {}) {
+  return sendSupplierCancellation(booking, {
     key: 'supplier-customer-cancelled-late',
-    data,
+    subject: 'Late customer cancellation',
+    options,
   });
 }
 
-async function sendSupplierPlatformCancelledEmail(booking, { reason, compensation } = {}) {
+async function sendSupplierPlatformCancelledEmail(booking, { reason, compensation, cancelledAt } = {}) {
   const b = await resolveBookingContext(booking);
   const base = await buildBookingBase(b);
   const supplier = b.tour?.supplier || {};
+  const outcome = resolveCancellationOutcome(b, b.tour || {}, {
+    cancelledBy: 'ADMIN',
+    cancelledAt,
+  });
   const data = {
-    ...base,
+    ...cancellationEmailData(base, b, outcome),
     cancellationReason: reason || b.cancellationReason || '',
     compensationLabel: fmt.formatCurrency(compensation ?? 0, b.currency),
   };
@@ -1938,11 +2050,17 @@ async function sendBookingConfirmationEmail(booking) {
   }
 }
 
-async function sendBookingCancellationEmail(booking, refundAmount = null) {
+/**
+ * Customer cancellation router.
+ *
+ * Accepts either an explicit context object
+ * (`{ cancelledBy, cancelledAt, refundAmount, refundSucceeded, refundStatus }`)
+ * or the legacy numeric refund amount. The template is chosen from the policy
+ * and the clock — never from whether the refund happened to succeed.
+ */
+async function sendBookingCancellationEmail(booking, context = null) {
   try {
-    const hasRefund = Number(refundAmount) > 0;
-    if (hasRefund) return await sendCustomerCancelledFullRefundEmail(booking, { refundAmount });
-    return await sendCustomerCancelledNoRefundEmail(booking);
+    return await sendCustomerCancellation(booking, { options: context });
   } catch (error) {
     console.error('Booking cancellation email failed:', error);
     throw error;
@@ -2569,7 +2687,10 @@ module.exports = {
   sendPickupLocationRequiredEmail,
   sendBookingReminderEmail,
   sendCustomerCancelledFullRefundEmail,
+  sendCustomerCancelledUnpaidEmail,
+  sendCustomerCancelledNonRefundableEmail,
   sendCustomerCancelledNoRefundEmail,
+  normalizeCancellationOptions,
   sendRefundProcessingEmail,
   sendRefundCompletedEmail,
   sendSupplierChangedBookingEmail,
@@ -2589,7 +2710,10 @@ module.exports = {
   sendSupplierPickupRequiredEmail,
   sendSupplierBookingReminderEmail,
   sendSupplierCustomerCancelledFreeEmail,
+  sendSupplierCustomerCancelledUnpaidEmail,
+  sendSupplierCustomerCancelledNonRefundableEmail,
   sendSupplierCustomerCancelledLateEmail,
+  sendSupplierCancellationEmail,
   sendSupplierPlatformCancelledEmail,
   sendSupplierCancellationRecordedEmail,
   sendSupplierPayoutScheduledEmail,

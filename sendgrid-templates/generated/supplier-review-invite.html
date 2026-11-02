@@ -7,7 +7,7 @@
   <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
   <meta name="color-scheme" content="light dark">
   <meta name="supported-color-schemes" content="light dark">
-<title>Invite {{guestName}} to review their experience</title>
+<title>Invite {{guestName}} to share their experience</title>
 <style>
   body { margin:0; padding:0; width:100% !important; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; background-color:#F8FAFC; }
   table, td { mso-table-lspace:0pt; mso-table-rspace:0pt; border-collapse:collapse; }
@@ -107,74 +107,49 @@
   }
 </style>
 </head>
-<body class="dm-bg" style="margin:0;padding:0;background-color:#F8FAFC;">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F8FAFC" class="dm-bg">
+<body class="dm-bg" style="margin:0;padding:0;background-color:#F3F4F6;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F3F4F6" class="dm-bg">
     <tr>
-      <td align="center" style="padding:32px 16px;" class="shell-pad">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="container" style="max-width:640px;">
+      <td align="center" style="padding:28px 14px;" class="shell-pad">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="container" style="max-width:600px;">
           <!-- Preheader (hidden) -->
           <tr><td style="display:none;max-height:0;overflow:hidden;mso-hide:all;">{{preheader}}</td></tr>
-          <!-- Card -->
+          <!-- Canvas -->
           <tr>
-            <td class="dm-card" style="background-color:#FFFFFF;border:1px solid #E2E8F0;border-radius:16px;padding:0;overflow:hidden;">
-              <!-- Brand header: the logo lives INSIDE the card so the whole
-                   email reads as one object, and is sized up from the old
-                   170px so it holds its own against the 640px card. It carries
-                   the card's top radius itself because overflow:hidden on a
-                   <td> is not honoured everywhere. -->
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:separate;border-spacing:0;border-radius:16px 16px 0 0;">
+            <td class="dm-card" bgcolor="#FFFFFF" style="background-color:#FFFFFF;border-radius:6px;padding:0;overflow:hidden;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <!-- Logo: centred, with generous top space -->
                 <tr>
-                  <td align="center" style="padding:26px 24px 22px 24px;">
-                    <img src="{{logoUrl}}" alt="{{brandName}}" width="220" style="display:block;width:220px;max-width:220px;height:auto;margin:0 auto;border:0;outline:none;">
-                    {{#if poweredByLabel}}<div style="margin-top:12px;">
-                      <span class="dm-accent-soft dm-accent" style="display:inline-block;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:700;letter-spacing:0.3px;color:#007A4D;background-color:#E6F6F0;border-radius:999px;padding:5px 14px;line-height:1;">{{poweredByLabel}}</span>
-                    </div>{{/if}}
+                  <td align="center" style="padding:30px 40px 14px 40px;" class="pad">
+                    <img src="{{logoUrl}}" alt="{{brandName}}" width="180" style="display:block;width:180px;max-width:180px;height:auto;margin:0 auto;border:0;outline:none;">
                   </td>
                 </tr>
-              </table>
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                 
       
-  <tr><td class="media-header-background" bgcolor="#001F3F" style="padding:0;background-color:#001F3F;background-size:cover;background-position:center;background-repeat:no-repeat;"{{#if tourImageUrl}} background="{{tourImageUrl}}"{{/if}}>
-    <!--[if gte mso 9]>
-    <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:640px;height:248px;">
-      <v:fill color="#001F3F" />
-      <v:textbox inset="0,0,0,0">
-    <![endif]-->
-    <div>
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="media-header-scrim" style="border-collapse:separate;border-spacing:0;background-color:rgba(0,31,63,0.45);border-radius:0;overflow:hidden;">
-      <tr>
-        <td valign="bottom" class="pad" style="padding:120px 34px 28px 34px;">
-          <div style="margin:0 0 14px 0;"><span style="display:inline-block;background-color:#007A4D;color:#FFFFFF;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:11px;font-weight:800;letter-spacing:0.9px;text-transform:uppercase;border-radius:999px;padding:7px 14px;line-height:1;">&#10003;&nbsp;&nbsp;Completed</span></div>
-          <div style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:26px;font-weight:800;color:#ffffff;line-height:1.24;text-shadow:0 1px 3px rgba(0,0,0,0.45);">Invite {{guestName}} to review their experience</div>
-          <div style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:500;color:#E8EEF5;line-height:1.5;padding-top:8px;text-shadow:0 1px 3px rgba(0,0,0,0.45);">{{tourTitle}}{{#if dateLabel}} &middot; {{dateLabel}}{{/if}}</div>
-        </td>
-      </tr>
-    </table></div>
-    <!--[if gte mso 9]>
-      </v:textbox>
-    </v:rect>
-    <![endif]-->
+  <tr><td style="padding:0;font-size:0;line-height:0;background-color:{{accentSoft}};">
+    {{#if tourImageUrl}}<img src="{{tourImageUrl}}" width="600" alt="{{tourTitle}}" style="display:block;width:100%;max-width:600px;height:210px;object-fit:cover;border:0;outline:none;">{{/if}}
+  </td></tr>
+      <tr><td class="pad" style="padding:24px 40px 0 40px;" align="center"><span style="display:inline-block;background-color:#E9F6F0;color:#06603F;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:11px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;border-radius:999px;padding:7px 13px;line-height:1;margin:0 auto;">Completed</span></td></tr>
+      
+  <tr><td class="pad" style="padding:14px 40px 0 40px;">
+    <h1 class="font-main dm-text" style="margin:0;font-size:30px;font-weight:800;color:#1A2B49;line-height:1.22;text-align:center;letter-spacing:-0.3px;">Invite {{guestName}} to share their experience</h1>
+    <p class="font-main dm-muted" style="margin:10px 0 0 0;font-size:16px;color:#63687A;line-height:1.6;text-align:center;">{{tourTitle}}</p>
   </td></tr>
       
-  <tr><td class="pad" style="padding:16px 40px 0 40px;">
-    <p class="dm-text" style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;color:#334155;line-height:1.7;text-align:left;">Hi {{supplierName}},</p>
+  <tr><td class="pad" style="padding:14px 40px 0 40px;">
+    <p class="dm-text" style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;color:#3F4A5F;line-height:1.68;text-align:left;">Hi {{supplierName}}, your activity with {{guestName}}{{#if dateLabel}} on {{dateLabel}}{{/if}} has been marked as completed.</p>
   </td></tr>
       
-  <tr><td class="pad" style="padding:16px 40px 0 40px;">
-    <p class="dm-text" style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;color:#334155;line-height:1.7;text-align:left;">Your activity, {{tourTitle}}, with {{guestName}}{{#if dateLabel}} on {{dateLabel}}{{/if}} has been marked as completed.</p>
+  <tr><td class="pad" style="padding:14px 40px 0 40px;">
+    <p class="dm-text" style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;color:#3F4A5F;line-height:1.68;text-align:left;">Now is a good time to follow up and invite your guest to share their experience. Honest reviews help future travellers know what to expect and give you useful feedback.</p>
   </td></tr>
       
-  <tr><td class="pad" style="padding:16px 40px 0 40px;">
-    <p class="dm-text" style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;color:#334155;line-height:1.7;text-align:left;">Now is a good time to follow up with your guest and invite them to share their experience. Honest reviews help future travellers know what to expect and give you useful feedback to improve the experiences you offer.</p>
+  <tr><td class="pad" style="padding:30px 40px 0 40px;">
+    <h2 class="font-main dm-text" style="margin:0;font-size:18px;font-weight:800;color:#1A2B49;line-height:1.35;letter-spacing:-0.1px;">Review link for {{guestName}}</h2>
   </td></tr>
       
-  <tr><td class="pad" style="padding:28px 40px 4px 40px;">
-    <div class="h2 font-main dm-text" style="font-size:15px;font-weight:800;color:#001F3F;letter-spacing:0.4px;text-transform:uppercase;line-height:1.3;">Review link for {{guestName}}</div>
-  </td></tr>
-      
-  <tr><td class="pad" style="padding:16px 40px 0 40px;">
-    <p class="dm-text" style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;color:#334155;line-height:1.7;text-align:left;">Share the link below with your guest so they can leave a review of their experience.</p>
+  <tr><td class="pad" style="padding:14px 40px 0 40px;">
+    <p class="dm-muted" style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#63687A;line-height:1.68;text-align:left;">Send the link below to your guest. It opens the review form for this booking.</p>
   </td></tr>
       
   <tr><td class="pad" style="padding:12px 40px 0 40px;">
@@ -194,8 +169,12 @@
     </table>
   </td></tr>
       
-  <tr><td class="pad" style="padding:16px 40px 0 40px;">
-    <p class="dm-text" style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;color:#334155;line-height:1.7;text-align:left;">Prefer to check the reservation first? <a href="{{supplierBookingUrl}}" class="dm-accent" style="color:#007A4D;font-weight:700;text-decoration:none;">View booking</a></p>
+  <tr><td class="pad" style="padding:26px 40px 0 40px;" align="center">
+    <table role="presentation" class="btn-wrap" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
+      <tr><td bgcolor="{{accentColor}}" align="center" style="border-radius:999px;background-color:{{accentColor}};">
+        <a href="{{supplierBookingUrl}}" class="btn" style="display:inline-block;padding:14px 28px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;font-weight:700;line-height:1.2;text-decoration:none;border-radius:999px;color:#FFFFFF;">Open booking in portal</a>
+      </td></tr>
+    </table>
   </td></tr>
       {{#if bookingNumber}}
       
@@ -211,33 +190,36 @@
     </table>
   </td></tr>
       {{/if}}
+      <tr><td class="pad" style="padding:22px 40px 0 40px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="border-top:1px solid #E7EAEF;font-size:0;line-height:0;">&nbsp;</td></tr></table></td></tr>
       
-  <tr><td class="pad" style="padding:16px 40px 0 40px;">
-    <p class="dm-muted" style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.7;text-align:left;">Please let your guest share their own experience in their own words. There is no need to suggest a particular rating or response.</p>
+  <tr><td class="pad" style="padding:14px 40px 0 40px;">
+    <p class="dm-muted" style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#63687A;line-height:1.68;text-align:left;">Please let your guest share their own experience in their own words. There is no need to suggest a particular rating or response.</p>
   </td></tr>
       
-  <tr><td class="pad" style="padding:16px 40px 0 40px;">
-    <p class="dm-text" style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;color:#334155;line-height:1.7;text-align:left;">Thank you for delivering memorable experiences with {{brandName}}.</p>
+  <tr><td class="pad" style="padding:14px 40px 0 40px;">
+    <p class="dm-text" style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;color:#3F4A5F;line-height:1.68;text-align:left;">Thank you for delivering memorable experiences with {{brandName}}.</p>
   </td></tr>
     
+                <!-- Footer band -->
+                <tr><td style="padding:34px 0 0 0;">
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#FFF4EC" style="background-color:#FFF4EC;">
+                    <tr><td style="padding:24px 40px 26px 40px;" class="pad">
+                      <div class="dm-text" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:800;color:#1A2B49;line-height:1.4;">Need a hand?</div>
+                      <div class="dm-muted" style="padding-top:5px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#63687A;line-height:1.65;">
+                        We are here to help with this booking at <a href="mailto:{{supportEmail}}" style="color:#1A2B49;text-decoration:underline;font-weight:600;">{{supportEmail}}</a>.
+                      </div>
+                      <div style="padding-top:14px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;line-height:1.8;"><a href="{{dashboardUrl}}" class="dm-accent" style="color:{{accentColor}};text-decoration:none;font-weight:700;">Open dashboard</a><span style="color:#F6E2D2;padding:0 10px;">|</span><a href="mailto:{{supportEmail}}" class="dm-accent" style="color:{{accentColor}};text-decoration:none;font-weight:700;">Contact support</a></div>
+                    </td></tr>
+                  </table>
+                </td></tr>
               </table>
             </td>
           </tr>
-          <!-- Footer -->
           <tr>
-            <td align="center" style="padding:28px 20px 0 20px;">
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-                <tr>
-                  <td align="center" class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.6;padding:0 0 6px 0;">
-                    Need help? <a href="mailto:{{supportEmail}}" class="dm-accent" style="color:#007A4D;text-decoration:none;font-weight:600;">Contact support</a>
-                  </td>
-                </tr>
-                <tr>
-                  <td align="center" class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;color:#475569;line-height:1.6;">
-                    &copy; {{year}} {{brandName}}. All rights reserved.
-                  </td>
-                </tr>
-              </table>
+            <td align="center" style="padding:18px 12px 0 12px;">
+              <div class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:11px;color:#858995;line-height:1.6;">
+                &copy; {{year}} {{brandName}}. All rights reserved.
+              </div>
             </td>
           </tr>
         </table>

@@ -340,20 +340,26 @@ async function finalizeBooking(booking, reason) {
   });
   if (updated.count === 0) return;
 
+  // The automatic sweep is a platform cancellation, not a late customer
+  // cancellation: the card simply was never charged. Pass the explicit
+  // context so both emails say "no payment was taken" instead of "late".
+  const cancellationContext = {
+    cancelledBy: 'SYSTEM',
+    cancelledAt: new Date(),
+    refundAmount: 0,
+    refundStatus: 'NOT_APPLICABLE',
+  };
+
   enqueueEmail({
-    type: 'customer-cancelled-no-refund',
+    type: 'booking-cancellation',
     bookingId: booking.id,
-    data: {
-      cancelledAt: new Date().toISOString(),
-      cancellationFee: booking.grossAmount,
-      refundAmount: 0,
-    },
+    data: cancellationContext,
   }).catch((err) => console.error('[PayLater] Cancellation email failed:', err.message));
 
   enqueueEmail({
-    type: 'supplier-customer-cancelled-free',
+    type: 'supplier-cancellation',
     bookingId: booking.id,
-    data: { cancelledAt: new Date().toISOString() },
+    data: cancellationContext,
   }).catch((err) => console.error('[PayLater] Supplier cancellation email failed:', err.message));
 
   enqueueNotification({

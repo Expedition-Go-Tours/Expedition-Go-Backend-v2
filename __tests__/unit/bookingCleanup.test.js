@@ -35,6 +35,7 @@ jest.mock('../../src/core/services/stripeHelpers', () => {
 jest.mock('../../src/core/services/queue', () => ({
   enqueueNotification: jest.fn(() => Promise.resolve()),
   enqueueEvent: jest.fn(() => Promise.resolve()),
+  enqueueEmail: jest.fn(() => Promise.resolve()),
 }));
 
 jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn(() => Promise.resolve()) }));
@@ -67,6 +68,24 @@ describe('cancelStalePendingBookings', () => {
     const result = await cancelStalePendingBookings();
     expect(result).toEqual({ stale: 0, confirmed: 0, cancelled: 0 });
     expect(getStripe().paymentIntents.retrieve).not.toHaveBeenCalled();
+  });
+
+  it('emails both sides a platform cancellation, never a late notice', async () => {
+    prisma.booking.findMany.mockResolvedValue([
+      pendingBooking({ id: 'b1', stripePaymentIntentId: 'pi_declined' }),
+    ]);
+    getStripe().paymentIntents.retrieve.mockResolvedValue({ status: 'requires_payment_method' });
+
+    const queue = require('../../src/core/services/queue');
+    await cancelStalePendingBookings();
+
+    const expected = expect.objectContaining({
+      cancelledBy: 'SYSTEM',
+      refundAmount: 0,
+      refundStatus: 'NOT_APPLICABLE',
+    });
+    expect(queue.enqueueEmail).toHaveBeenCalledWith(expect.objectContaining({ type: 'booking-cancellation', data: expected }));
+    expect(queue.enqueueEmail).toHaveBeenCalledWith(expect.objectContaining({ type: 'supplier-cancellation', data: expected }));
   });
 
   it('cancels stale bookings whose intent settled but webhook was lost', async () => {

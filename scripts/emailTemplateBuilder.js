@@ -37,6 +37,37 @@ const COLORS = {
 const FONT =
   "'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
+/**
+ * GetYourGuide-inspired palette for the "gyg" shell variant.
+ *
+ * Ink, muted tones, hairlines and bands follow GetYourGuide's transactional
+ * email language (cool navy ink, quiet greys, tinted full-bleed bands, peach
+ * footer). Brand colour is never hard-coded here: primary actions and accent
+ * text use the per-brand {{accentColor}} / {{accentDark}} / {{accentSoft}}
+ * Handlebars variables rendered by each brand's shell config.
+ */
+const GYG = {
+  ink: '#1A2B49',
+  body: '#3F4A5F',
+  muted: '#63687A',
+  faint: '#858995',
+  line: '#E7EAEF',
+  surround: '#F3F4F6',
+  canvas: '#FFFFFF',
+  chip: '#EBEEF1',
+  footer: '#FFF4EC',
+  footerLine: '#F6E2D2',
+  successSoft: '#E9F6F0',
+  successInk: '#06603F',
+  warningSoft: '#FFF7E8',
+  warningInk: '#7A4B00',
+  dangerSoft: '#FEF2F1',
+  dangerInk: '#B42318',
+  infoSoft: '#EEF4FF',
+  infoInk: '#1D4ED8',
+  star: '#F2A900',
+};
+
 const BASE_CSS = `
   body { margin:0; padding:0; width:100% !important; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; background-color:${COLORS.bg}; }
   table, td { mso-table-lspace:0pt; mso-table-rspace:0pt; border-collapse:collapse; }
@@ -156,8 +187,13 @@ function spacer(height) {
 
 /**
  * The email shell. `bodyHtml` is rendered inside the white card.
+ *
+ * Pass `{ variant: 'gyg' }` for the GetYourGuide-inspired layout used by the
+ * cancellation and review emails (600px borderless canvas, small left-aligned
+ * logo, tinted footer band). Everything else keeps the original card shell.
  */
-function shell(title, bodyHtml) {
+function shell(title, bodyHtml, options = {}) {
+  if (options.variant === 'gyg') return gygShell(title, bodyHtml, options);
   return `<!DOCTYPE html>
 <html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>${HEAD_META}<title>${title}</title>
@@ -216,6 +252,347 @@ function shell(title, bodyHtml) {
   </table>
 </body>
 </html>`;
+}
+
+/**
+ * GetYourGuide-inspired shell — 600px borderless white canvas on a quiet grey
+ * surround, small left-aligned logo, tinted footer band. Body rows supply
+ * their own spacing, so the canvas itself has no padding.
+ *
+ * `options.footer`: 'customer' (default) | 'supplier' | 'review' | 'none'.
+ */
+function gygShell(title, bodyHtml, options = {}) {
+  const footer = options.footer || 'customer';
+  const footerLinks = {
+    customer: [
+      { label: 'Manage booking', href: '{{manageUrl}}' },
+      { label: 'Contact support', href: 'mailto:{{supportEmail}}' },
+    ],
+    review: [
+      { label: 'Manage booking', href: '{{manageUrl}}' },
+      { label: 'Contact support', href: 'mailto:{{supportEmail}}' },
+    ],
+    supplier: [
+      { label: 'Open dashboard', href: '{{dashboardUrl}}' },
+      { label: 'Contact support', href: 'mailto:{{supportEmail}}' },
+    ],
+    none: [],
+  }[footer] || [];
+
+  const linkHtml = footerLinks
+    .map((l) => `<a href="${l.href}" class="dm-accent" style="color:{{accentColor}};text-decoration:none;font-weight:700;">${l.label}</a>`)
+    .join(`<span style="color:${GYG.footerLine};padding:0 10px;">|</span>`);
+
+  return `<!DOCTYPE html>
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>${HEAD_META}<title>${title}</title>
+<style>${BASE_CSS}</style>
+</head>
+<body class="dm-bg" style="margin:0;padding:0;background-color:${GYG.surround};">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="${GYG.surround}" class="dm-bg">
+    <tr>
+      <td align="center" style="padding:28px 14px;" class="shell-pad">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="container" style="max-width:600px;">
+          <!-- Preheader (hidden) -->
+          <tr><td style="display:none;max-height:0;overflow:hidden;mso-hide:all;">{{preheader}}</td></tr>
+          <!-- Canvas -->
+          <tr>
+            <td class="dm-card" bgcolor="${GYG.canvas}" style="background-color:${GYG.canvas};border-radius:6px;padding:0;overflow:hidden;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <!-- Logo: centred, with generous top space -->
+                <tr>
+                  <td align="center" style="padding:30px 40px 14px 40px;" class="pad">
+                    <img src="{{logoUrl}}" alt="{{brandName}}" width="180" style="display:block;width:180px;max-width:180px;height:auto;margin:0 auto;border:0;outline:none;">
+                  </td>
+                </tr>
+                ${bodyHtml}
+                <!-- Footer band -->
+                <tr><td style="padding:34px 0 0 0;">
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="${GYG.footer}" style="background-color:${GYG.footer};">
+                    <tr><td style="padding:24px 40px 26px 40px;" class="pad">
+                      <div class="dm-text" style="font-family:${FONT};font-size:14px;font-weight:800;color:${GYG.ink};line-height:1.4;">Need a hand?</div>
+                      <div class="dm-muted" style="padding-top:5px;font-family:${FONT};font-size:13px;color:${GYG.muted};line-height:1.65;">
+                        We are here to help with this booking at <a href="mailto:{{supportEmail}}" style="color:${GYG.ink};text-decoration:underline;font-weight:600;">{{supportEmail}}</a>.
+                      </div>
+                      ${linkHtml ? `<div style="padding-top:14px;font-family:${FONT};font-size:13px;line-height:1.8;">${linkHtml}</div>` : ''}
+                    </td></tr>
+                  </table>
+                </td></tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:18px 12px 0 12px;">
+              <div class="dm-muted" style="font-family:${FONT};font-size:11px;color:${GYG.faint};line-height:1.6;">
+                &copy; {{year}} {{brandName}}. All rights reserved.
+              </div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+/**
+ * Status pill (GYG style): 999px radius, 11px/800 uppercase.
+ * tone: success | danger | warning | info | neutral
+ */
+function statusChip(text, tone = 'neutral', options = {}) {
+  const { align = 'left' } = options;
+  const tones = {
+    neutral: { bg: GYG.chip, ink: GYG.ink },
+    success: { bg: GYG.successSoft, ink: GYG.successInk },
+    danger: { bg: GYG.dangerSoft, ink: GYG.dangerInk },
+    warning: { bg: GYG.warningSoft, ink: GYG.warningInk },
+    info: { bg: GYG.infoSoft, ink: GYG.infoInk },
+  };
+  const t = tones[tone] || tones.neutral;
+  return `<span style="display:inline-block;background-color:${t.bg};color:${t.ink};font-family:${FONT};font-size:11px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;border-radius:999px;padding:7px 13px;line-height:1;${align === 'center' ? 'margin:0 auto;' : ''}">${text}</span>`;
+}
+
+/**
+ * Centred status pill row.
+ */
+function statusRow(text, tone = 'neutral', options = {}) {
+  return `<tr><td class="pad" style="padding:${options.padding || '14px 40px 0 40px'};" align="center">${statusChip(text, tone, { align: 'center' })}</td></tr>`;
+}
+
+/**
+ * Big page heading (GYG: 30px/800 navy ink, sentence case).
+ */
+function displayHeading({ text, subtext, align = 'center', size = 30, padding = '26px 40px 0 40px' }) {
+  return `
+  <tr><td class="pad" style="padding:${padding};">
+    <h1 class="font-main dm-text" style="margin:0;font-size:${size}px;font-weight:800;color:${GYG.ink};line-height:1.22;text-align:${align};letter-spacing:-0.3px;">${text}</h1>
+    ${subtext ? `<p class="font-main dm-muted" style="margin:10px 0 0 0;font-size:16px;color:${GYG.muted};line-height:1.6;text-align:${align};">${subtext}</p>` : ''}
+  </td></tr>`;
+}
+
+/**
+ * Sentence-case section heading (not uppercase, unlike sectionTitle).
+ */
+function sectionHeading(text, options = {}) {
+  const { padding = '30px 40px 0 40px' } = options;
+  return `
+  <tr><td class="pad" style="padding:${padding};">
+    <h2 class="font-main dm-text" style="margin:0;font-size:18px;font-weight:800;color:${GYG.ink};line-height:1.35;letter-spacing:-0.1px;">${text}</h2>
+  </td></tr>`;
+}
+
+/**
+ * GYG body paragraph (16px/1.65).
+ */
+function textBlock(text, options = {}) {
+  const { muted = false, small = false, center = false, padding = '14px 40px 0 40px', bold = false } = options;
+  const size = small ? '13px' : '15px';
+  const color = muted ? GYG.muted : GYG.body;
+  const cls = muted ? 'dm-muted' : 'dm-text';
+  return `
+  <tr><td class="pad" style="padding:${padding};">
+    <p class="${cls}" style="margin:0;font-family:${FONT};font-size:${size};${bold ? 'font-weight:700;' : ''}color:${color};line-height:1.68;text-align:${center ? 'center' : 'left'};">${text}</p>
+  </td></tr>`;
+}
+
+/**
+ * Hairline rule with page gutters.
+ */
+function hairline(options = {}) {
+  const { padding = '22px 40px 0 40px' } = options;
+  return `<tr><td class="pad" style="padding:${padding};"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="border-top:1px solid ${GYG.line};font-size:0;line-height:0;">&nbsp;</td></tr></table></td></tr>`;
+}
+
+/**
+ * Booking summary card: thumbnail, status pill, experience, and the four facts
+ * a traveller or supplier needs at a glance. Borderless-on-white look (1px
+ * hairline border, 12px radius) as GYG uses in its receipts.
+ *
+ * `rows` accepts `{ label, value, if, strong }` entries, same conditional
+ * contract as detailCard.
+ */
+function bookingSummaryCard({ statusText = 'Cancelled', statusTone = 'danger', rows } = {}) {
+  const defaultRows = [
+    { label: 'Booking reference', value: '{{bookingNumber}}' },
+    { label: 'Date', value: '{{dateLabel}}{{#if timeLabel}} &middot; {{timeLabel}}{{/if}}' },
+    { label: 'Travellers', value: '{{travelersLabel}}' },
+    { label: 'Total', value: '{{totalLabel}}', strong: true },
+  ];
+  const body = (rows || defaultRows).map((r) => {
+    if (r.if === false) return '';
+    const ifMatch = typeof r.if === 'string' && r.if.match(/^\{\{\s*([a-zA-Z0-9_]+)\s*\}\}$/);
+    const cond = ifMatch ? ifMatch[1] : null;
+    const row = `
+      <tr>
+        <td class="dm-muted" style="padding:5px 0;font-family:${FONT};font-size:13px;color:${GYG.muted};line-height:1.5;width:46%;vertical-align:top;">${r.label}</td>
+        <td class="dm-text" style="padding:5px 0;font-family:${FONT};font-size:13px;font-weight:${r.strong ? '800' : '600'};color:${GYG.ink};line-height:1.5;text-align:right;">${r.value}</td>
+      </tr>`;
+    return cond ? `{{#if ${cond}}}${row}{{/if}}` : row;
+  }).join('');
+
+  return `
+  <tr><td class="pad" style="padding:28px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid ${GYG.line};border-radius:12px;border-collapse:separate;border-spacing:0;overflow:hidden;">
+      <tr><td style="padding:16px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+          <tr>
+            <td width="88" valign="top" style="width:88px;padding-right:14px;">
+              <div style="width:88px;height:88px;border-radius:8px;overflow:hidden;background-color:{{accentSoft}};">
+                {{#if tourImageUrl}}<img src="{{tourImageUrl}}" width="88" height="88" alt="{{tourTitle}}" style="display:block;width:88px;height:88px;border-radius:8px;object-fit:cover;border:0;outline:none;">{{/if}}
+              </div>
+            </td>
+            <td valign="top">
+              <div style="padding-bottom:8px;">${statusChip(statusText, statusTone)}</div>
+              <div class="font-main dm-text" style="font-family:${FONT};font-size:15px;font-weight:800;color:${GYG.ink};line-height:1.4;">{{tourTitle}}</div>
+              {{#if locationLabel}}<div class="dm-muted" style="padding-top:4px;font-family:${FONT};font-size:13px;color:${GYG.muted};line-height:1.45;">{{locationLabel}}</div>{{/if}}
+            </td>
+          </tr>
+        </table>
+      </td></tr>
+      <tr><td style="padding:0 16px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="border-top:1px solid ${GYG.line};font-size:0;line-height:0;">&nbsp;</td></tr></table></td></tr>
+      <tr><td style="padding:12px 16px 16px 16px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+          ${body}
+        </table>
+      </td></tr>
+    </table>
+  </td></tr>`;
+}
+
+/**
+ * Full-bleed tinted refund band. GYG puts the refund amount on a band that
+ * touches both canvas edges — the single most scannable element in the email.
+ */
+function refundBand({ amount = '{{refundAmountLabel}}', eyebrow = 'Refund', note } = {}) {
+  return `
+  <tr><td style="padding:30px 0 0 0;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:{{accentSoft}};border-top:1px solid {{accentSoft}};border-bottom:1px solid {{accentSoft}};">
+      <tr><td style="padding:22px 40px;" class="pad">
+        <div style="font-family:${FONT};font-size:11px;font-weight:800;letter-spacing:0.9px;text-transform:uppercase;color:{{accentDark}};line-height:1;">${eyebrow}</div>
+        <div class="font-main dm-text" style="padding-top:8px;font-family:${FONT};font-size:32px;font-weight:800;color:${GYG.ink};line-height:1.1;letter-spacing:-0.5px;">${amount}</div>
+        ${note ? `<div class="dm-text" style="padding-top:8px;font-family:${FONT};font-size:13px;color:${GYG.body};line-height:1.6;">${note}</div>` : ''}
+      </td></tr>
+    </table>
+  </td></tr>`;
+}
+
+/**
+ * Policy / status panel — quieter than a callout, used for "No payment was
+ * taken", "This booking is non-refundable" and payout notes.
+ */
+function policyPanel({ title, body, tone = 'neutral' } = {}) {
+  const tones = {
+    neutral: { bg: '#F7F8FA', ink: GYG.body, title: GYG.ink, border: GYG.line },
+    success: { bg: GYG.successSoft, ink: GYG.successInk, title: GYG.successInk, border: '#CBE9DA' },
+    warning: { bg: GYG.warningSoft, ink: GYG.warningInk, title: GYG.warningInk, border: '#F3E2BF' },
+    danger: { bg: GYG.dangerSoft, ink: GYG.dangerInk, title: GYG.dangerInk, border: '#F3D3D0' },
+    info: { bg: GYG.infoSoft, ink: GYG.infoInk, title: GYG.infoInk, border: '#D8E4FB' },
+  };
+  const t = tones[tone] || tones.neutral;
+  return `
+  <tr><td class="pad" style="padding:24px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:${t.bg};border:1px solid ${t.border};border-radius:10px;border-collapse:separate;border-spacing:0;">
+      <tr><td style="padding:16px 18px;font-family:${FONT};font-size:14px;color:${t.ink};line-height:1.65;">
+        ${title ? `<div style="font-weight:800;color:${t.title};padding-bottom:4px;">${title}</div>` : ''}
+        ${body || ''}
+      </td></tr>
+    </table>
+  </td></tr>`;
+}
+
+/**
+ * GYG pill CTA. `kind`: primary (brand fill) | secondary (brand tint) | ghost.
+ */
+function pillButton(label, href, options = {}) {
+  const { kind = 'primary', align = 'center', padding = '26px 40px 0 40px' } = options;
+  const fill = kind === 'primary' ? '{{accentColor}}' : (kind === 'secondary' ? '{{accentSoft}}' : GYG.chip);
+  const ink = kind === 'primary' ? '#FFFFFF' : (kind === 'secondary' ? '{{accentDark}}' : GYG.ink);
+  // No border: the colour lives on the td's bgcolor (Outlook) and on the
+  // anchor (everywhere else), so the pill reads as one shape instead of an
+  // anchor floating on a bordered box.
+  return `
+  <tr><td class="pad" style="padding:${padding};" align="${align}">
+    <table role="presentation" class="btn-wrap" cellspacing="0" cellpadding="0" border="0" style="margin:${align === 'center' ? '0 auto' : '0'};">
+      <tr><td${kind === 'primary' ? ' bgcolor="{{accentColor}}"' : (kind === 'ghost' ? ` bgcolor="${GYG.chip}"` : ' bgcolor="{{accentSoft}}"')} align="center" style="border-radius:999px;background-color:${fill};">
+        <a href="${href}" class="btn" style="display:inline-block;padding:14px 28px;font-family:${FONT};font-size:15px;font-weight:700;line-height:1.2;text-decoration:none;border-radius:999px;color:${ink};">${label}</a>
+      </td></tr>
+    </table>
+  </td></tr>`;
+}
+
+/**
+ * One or two pill CTAs, stacked and centred (GYG never puts two primary
+ * buttons side by side in a transactional email).
+ */
+function pillButtons(items) {
+  return items.map((b) => pillButton(b.label, b.href, {
+    kind: b.kind || 'primary',
+    padding: b.kind === 'secondary' || b.kind === 'ghost' ? '10px 40px 0 40px' : '26px 40px 0 40px',
+  })).join('');
+}
+
+/**
+ * Five tappable stars. `ratingUrls` maps 1..5 to a URL that opens the review
+ * form with that rating pre-selected. Each star is a link, so the review can
+ * be started straight from the inbox.
+ */
+function starRating({ count = 5, urls = ['{{rating1Url}}', '{{rating2Url}}', '{{rating3Url}}', '{{rating4Url}}', '{{rating5Url}}'] } = {}) {
+  const cells = Array.from({ length: count }, (_, i) => `
+        <td style="padding:0 3px;">
+          <a href="${urls[i]}" style="text-decoration:none;color:${GYG.star};font-family:${FONT};font-size:34px;line-height:1;" aria-label="Rate ${i + 1} out of 5">&#9733;</a>
+        </td>`).join('');
+  return `
+  <tr><td class="pad" style="padding:22px 40px 0 40px;" align="center">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
+      <tr>${cells}</tr>
+    </table>
+  </td></tr>`;
+}
+
+/**
+ * Soft help band above the footer (support / next steps).
+ */
+function helpBand({ title = 'Need help with this booking?', body, href = '{{supportUrl}}', label = 'Contact support' } = {}) {
+  return `
+  <tr><td class="pad" style="padding:32px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#F7F8FA;border-radius:10px;border-collapse:separate;border-spacing:0;">
+      <tr><td style="padding:18px 20px;font-family:${FONT};font-size:14px;color:${GYG.body};line-height:1.65;">
+        <div style="font-weight:800;color:${GYG.ink};padding-bottom:4px;">${title}</div>
+        ${body || ''}
+        <div style="padding-top:8px;"><a href="${href}" style="color:{{accentColor}};font-weight:700;text-decoration:none;">${label}</a></div>
+      </td></tr>
+    </table>
+  </td></tr>`;
+}
+
+/**
+ * Full-bleed photo header for the review emails. The photo is a real <img>
+ * (not a CSS background) because Gmail rewrites inline background-image; the
+ * accent-tinted cell underneath is the fallback when no image exists.
+ */
+function photoHeader({ imageVar = 'tourImageUrl', altVar = 'tourTitle', height = 230 } = {}) {
+  return `
+  <tr><td style="padding:0;font-size:0;line-height:0;background-color:{{accentSoft}};">
+    {{#if ${imageVar}}}<img src="{{${imageVar}}}" width="600" alt="{{${altVar}}}" style="display:block;width:100%;max-width:600px;height:${height}px;object-fit:cover;border:0;outline:none;">{{/if}}
+  </td></tr>`;
+}
+
+/**
+ * Static bullet list (no {{#each}} needed) for copy that is fixed per
+ * template, e.g. "what to mention in your review".
+ */
+function staticList(items) {
+  return `
+  <tr><td class="pad" style="padding:10px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+      ${items.map((item) => `
+      <tr>
+        <td class="dm-accent" style="padding:4px 0;font-family:${FONT};font-size:14px;color:{{accentColor}};line-height:1.6;vertical-align:top;width:18px;">&#10003;</td>
+        <td class="dm-text" style="padding:4px 0;font-family:${FONT};font-size:14px;color:${GYG.body};line-height:1.6;">${item}</td>
+      </tr>`).join('')}
+    </table>
+  </td></tr>`;
 }
 
 /**
@@ -1057,6 +1434,7 @@ function payoutPanel({ rows, total, statusLabel }) {
 
 module.exports = {
   COLORS,
+  GYG,
   FONT,
   shell,
   hero,
@@ -1089,4 +1467,20 @@ module.exports = {
   payoutPanel,
   spacer,
   msoSpacer,
+  // GetYourGuide-style components (variant: 'gyg')
+  statusChip,
+  statusRow,
+  displayHeading,
+  sectionHeading,
+  textBlock,
+  hairline,
+  bookingSummaryCard,
+  refundBand,
+  policyPanel,
+  pillButton,
+  pillButtons,
+  starRating,
+  helpBand,
+  photoHeader,
+  staticList,
 };

@@ -38,6 +38,8 @@ jest.mock('../../src/core/services/emailService', () => ({
   resolveEmailBrand: jest.fn(() => 'ghana'),
   sendSupplierCustomerCancelledFreeEmail: jest.fn(() => Promise.resolve()),
   sendSupplierCustomerCancelledLateEmail: jest.fn(() => Promise.resolve()),
+  // cancelBooking picks the supplier template through this router now.
+  sendSupplierCancellationEmail: jest.fn(() => Promise.resolve()),
 }));
 jest.mock('../../src/core/services/discordNotifier', () => ({ notifyDiscord: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../src/core/services/bookingHelpers', () => ({

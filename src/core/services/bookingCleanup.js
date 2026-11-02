@@ -71,6 +71,25 @@ async function expireBooking(booking, reason) {
     data: { bookingId: booking.id },
   }).catch((err) => console.error('[BookingCleanup] notification failed:', err?.message));
 
+  // Same cancellation emails as every other platform cancel: no money moved, so
+  // both sides get the "payment not collected" wording — never a late notice.
+  const cancellationContext = {
+    cancelledBy: 'SYSTEM',
+    cancelledAt: new Date(),
+    refundAmount: 0,
+    refundStatus: 'NOT_APPLICABLE',
+  };
+  enqueueEmail({
+    type: 'booking-cancellation',
+    bookingId: booking.id,
+    data: cancellationContext,
+  }).catch((err) => console.error('[BookingCleanup] cancellation email failed:', err?.message));
+  enqueueEmail({
+    type: 'supplier-cancellation',
+    bookingId: booking.id,
+    data: cancellationContext,
+  }).catch((err) => console.error('[BookingCleanup] supplier cancellation email failed:', err?.message));
+
   enqueueEvent({
     name: 'booking.expired',
     userId: booking.customerId,
@@ -370,12 +389,21 @@ async function cancelStalePendingAfterTravelDate() {
         return { updated, refundAmount };
       });
 
-      // Send email notification to customer
+      // Send email notification to customer. `cancelledBy: 'SYSTEM'` tells the
+      // cancellation router this is a platform auto-cancel — never "late".
       enqueueEmail({
         type: 'booking-auto-cancelled',
         bookingId: booking.id,
         reason: 'Activity date passed without supplier confirmation',
+        data: { cancelledBy: 'SYSTEM' },
       }).catch((err) => console.error('[BookingCleanup] Auto-cancel email failed:', err.message));
+
+      // Supplier notice — same platform-cancel wording, never a customer blame.
+      enqueueEmail({
+        type: 'supplier-cancellation',
+        bookingId: booking.id,
+        data: { cancelledBy: 'SYSTEM' },
+      }).catch((err) => console.error('[BookingCleanup] Supplier auto-cancel email failed:', err.message));
 
       // The system cancel supersedes any pending supplier request for it.
       const { supersedePendingRequests } = require('./cancellationRequestService');

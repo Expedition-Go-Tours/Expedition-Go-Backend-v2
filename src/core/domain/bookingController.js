@@ -1101,8 +1101,19 @@ exports.cancelBooking = catchAsync(async (req, res, next) => {
     }
   }
 
-  // Send cancellation email + notifications through the queue
-  enqueueEmail({ type: 'booking-cancellation', bookingId: booking.id, refundAmount: refundSucceeded ? cancellationCheck.refundAmount : 0 }).catch((err) => console.error('[Email] Booking cancellation email failed:', err.message));
+  // Send cancellation email + notifications through the queue. The explicit
+  // context keeps lateness/refund/payout consistency across both recipients.
+  enqueueEmail({
+    type: 'booking-cancellation',
+    bookingId: booking.id,
+    data: {
+      cancelledBy: 'CUSTOMER',
+      cancelledAt: result.cancelledAt,
+      refundAmount: needsRefund ? cancellationCheck.refundAmount : 0,
+      refundSucceeded: needsRefund ? refundSucceeded : undefined,
+      refundStatus: needsRefund ? (refundSucceeded ? 'SUCCEEDED' : 'FAILED') : 'NOT_APPLICABLE',
+    },
+  }).catch((err) => console.error('[Email] Booking cancellation email failed:', err.message));
 
   enqueueNotification({
     userId: booking.tour.supplier.id,
