@@ -332,23 +332,32 @@ async function materializeHold(draftId, session, paymentIntentId, opts = {}) {
       draftRecord.payload.pickup || null,
       parseBlob(tourRecord.bookingAndTickets) || {}
     );
+    // Guest checkout: no account on the draft, so the contact record rides
+    // as a BookingGuest (the same record a supplier-created walk-in uses).
+    //
+    // Create the guest first and pass its scalar `guestId` into the booking.
+    // Passing `customerId` (even when null) together with a nested `guest`
+    // write makes Prisma select the *unchecked* create input, which has no
+    // `guest` relation and fails with `Unknown argument 'guest'`. That bug
+    // charged guest checkouts without ever materialising their booking.
+    let guestId = null;
+    if (!draftRecord.customerId) {
+      const guest = await tx.bookingGuest.create({
+        data: {
+          name: draftRecord.guestName || draftRecord.payload?.leadTraveler?.name || 'Guest',
+          email: draftRecord.guestEmail || draftRecord.payload?.leadTraveler?.email || null,
+          phone: draftRecord.guestPhone || draftRecord.payload?.leadTraveler?.phone || null,
+        },
+        select: { id: true },
+      });
+      guestId = guest.id;
+    }
+
     const booking = await tx.booking.create({
       data: {
         bookingNumber,
         customerId: draftRecord.customerId,
-        // Guest checkout: no account on the draft, so the contact record rides
-        // as a BookingGuest (the same record a supplier-created walk-in uses).
-        ...(draftRecord.customerId
-          ? {}
-          : {
-              guest: {
-                create: {
-                  name: draftRecord.guestName || draftRecord.payload?.leadTraveler?.name || 'Guest',
-                  email: draftRecord.guestEmail || draftRecord.payload?.leadTraveler?.email || null,
-                  phone: draftRecord.guestPhone || draftRecord.payload?.leadTraveler?.phone || null,
-                },
-              },
-            }),
+        guestId,
         tourId: draftRecord.tourId,
         source,
         ...(materializedOptionId ? { optionId: materializedOptionId, optionTitle: materializedOptionTitle } : {}),

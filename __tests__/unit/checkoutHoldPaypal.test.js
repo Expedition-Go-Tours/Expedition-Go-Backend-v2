@@ -72,6 +72,7 @@ beforeEach(() => {
     },
     $queryRawUnsafe: jest.fn().mockResolvedValue([{ id: 'tour_1' }]),
     tour: { findUnique: jest.fn().mockResolvedValue({ id: 'tour_1', bookingAndTickets: '{}' }) },
+    bookingGuest: { create: jest.fn().mockResolvedValue({ id: 'guest_1' }) },
     booking: { create: jest.fn().mockResolvedValue(BOOKING) },
     cartItem: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
   };
@@ -117,6 +118,28 @@ describe('materializeHold — provider tagging', () => {
     await expect(materializeHold('draft_1', paypalCapture, null, { provider: 'PAYPAL' }))
       .rejects.toThrow(/requires a capture id/);
     expect(tx.booking.create).not.toHaveBeenCalled();
+  });
+
+  it('creates a BookingGuest first for a guest draft and links it via guestId', async () => {
+    tx.checkoutDraft.findUnique.mockResolvedValue({
+      ...DRAFT,
+      customerId: null,
+      guestName: 'Guest One',
+      guestEmail: 'guest@example.com',
+      guestPhone: '+233000000001',
+    });
+
+    const result = await materializeHold('draft_1', stripeSession, 'pi_1');
+
+    expect(result.ok).toBe(true);
+    expect(tx.bookingGuest.create).toHaveBeenCalledWith({
+      data: { name: 'Guest One', email: 'guest@example.com', phone: '+233000000001' },
+      select: { id: true },
+    });
+    const data = tx.booking.create.mock.calls[0][0].data;
+    expect(data.guestId).toBe('guest_1');
+    expect(data.customerId).toBeNull();
+    expect(data).not.toHaveProperty('guest');
   });
 });
 

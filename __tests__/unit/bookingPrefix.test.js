@@ -55,6 +55,7 @@ jest.mock('../../src/core/services/prismaClient', () => {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     tour: { findUnique: jest.fn().mockResolvedValue({ id: 'tour-1', bookingAndTickets: null }) },
+    bookingGuest: { create: jest.fn().mockResolvedValue({ id: 'guest-1' }) },
     booking: { create: jest.fn().mockResolvedValue({ id: 'booking-1' }) },
     bookingCounter: { upsert: jest.fn().mockResolvedValue({ count: 7 }) },
   };
