@@ -1344,6 +1344,7 @@ model Booking {
   supplierCharges    SupplierCharge[]
   disputes           Dispute[]
   refundClaims       RefundClaim[]
+  supplierRefundRequests SupplierRefundRequest[]
   reminders          BookingReminder[]
   changes            BookingChange[]
   cancellationRequests CancellationRequest[]
@@ -3001,6 +3002,68 @@ enum RefundClaimStatus {
   RELEASED // admin executed the refund
   ADMIN_DECLINED // admin declined to release
   WITHDRAWN // customer withdrew (reserved for future)
+}
+
+// Supplier-initiated refund on a delivered trip.
+//
+// The inverse of RefundClaim: the supplier asks, the admin decides, and the
+// supplier's own balance pays for it. Viator's model exactly — the platform is
+// merchant of record and refunds the traveller, then adjusts what it owes the
+// supplier on the next payout.
+//
+// `chargeId` is a soft reference to the SupplierCharge row the execution
+// wrote: that table's OPEN -> SETTLED lifecycle already nets off payout
+// requests and invoices, so this request never touches balances itself.
+model SupplierRefundRequest {
+  id            String @id @default(cuid())
+  requestNumber String @unique // e.g. SR-20261102-4F2A
+
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  // Soft reference, matching CancellationRequest: the supplier is a User, but
+  // no back-relation is declared so the hot User model stays untouched.
+  supplierId String
+
+  status SupplierRefundRequestStatus @default(PENDING_APPROVAL)
+
+  // What the supplier asked for, validated at request time.
+  //   { operated, attended, reasonCode, refundType: PERCENT|AMOUNT, value,
+  //     requestedByEmail, note }
+  payload Json
+
+  // Server-computed at request time and RECOMPUTED at approval. Never trusted
+  // from the payload: requested/proposed/charge/currency/commissionRate.
+  preview Json?
+
+  // Admin decision
+  decidedBy    String?
+  decidedAt    DateTime?
+  decisionNote String? // required on REJECTED
+
+  // Execution (money moved)
+  executedBy      String?
+  executedAt      DateTime?
+  refundReference String? // Stripe refund id or PayPal refund id
+  refundedAmount  Decimal? @db.Decimal(10, 2)
+  chargeId        String? // SupplierCharge row: the balance deduction
+  failureReason   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt]) // admin queue ordering
+  @@index([bookingId, status]) // one-pending-per-booking dedupe
+  @@index([supplierId, createdAt]) // supplier's own list
+}
+
+enum SupplierRefundRequestStatus {
+  PENDING_APPROVAL // supplier asked, awaiting an admin decision
+  EXECUTING // admin approved; refund in flight (crash-safe checkpoint)
+  COMPLETED // refund issued and charge raised
+  REJECTED // admin declined
+  WITHDRAWN // supplier withdrew before a decision
+  FAILED // execution failed; safe to retry
 }
 
 /// Audit trail of cookie-consent decisions.
