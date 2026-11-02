@@ -34,6 +34,11 @@ jobs:
   # ── Lint (every push) ──────────────────────────────────────────────
   lint:
     runs-on: ubuntu-latest
+    # A wedged service-container pull must fail, not hang for the 360-minute
+    # default. Observed 2026-11-02: smoke-test sat in "Initialize containers"
+    # for 25+ minutes on a bad runner while the same images started fine in
+    # integration-tests on another runner.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -56,6 +61,11 @@ jobs:
   # ── Unit tests (every push) ────────────────────────────────────────
   unit-tests:
     runs-on: ubuntu-latest
+    # A wedged service-container pull must fail, not hang for the 360-minute
+    # default. Observed 2026-11-02: smoke-test sat in "Initialize containers"
+    # for 25+ minutes on a bad runner while the same images started fine in
+    # integration-tests on another runner.
+    timeout-minutes: 20
     env:
       JEST_JUNIT_OUTPUT_DIR: reports/junit
       JEST_JUNIT_OUTPUT_NAME: unit.xml
@@ -98,6 +108,11 @@ jobs:
   # ── Integration tests (every push) ─────────────────────────────────
   integration-tests:
     runs-on: ubuntu-latest
+    # A wedged service-container pull must fail, not hang for the 360-minute
+    # default. Observed 2026-11-02: smoke-test sat in "Initialize containers"
+    # for 25+ minutes on a bad runner while the same images started fine in
+    # integration-tests on another runner.
+    timeout-minutes: 20
     services:
       postgis:
         image: postgis/postgis:16-3.4
@@ -191,6 +206,11 @@ jobs:
   startup-check:
     if: github.event_name == 'pull_request' || github.ref_name == 'main' || github.ref_name == 'master'
     runs-on: ubuntu-latest
+    # A wedged service-container pull must fail, not hang for the 360-minute
+    # default. Observed 2026-11-02: smoke-test sat in "Initialize containers"
+    # for 25+ minutes on a bad runner while the same images started fine in
+    # integration-tests on another runner.
+    timeout-minutes: 10
     services:
       postgis:
         image: postgis/postgis:16-3.4
@@ -299,6 +319,11 @@ jobs:
   zap-scan:
     if: github.event_name == 'pull_request' || github.ref_name == 'main' || github.ref_name == 'master'
     runs-on: ubuntu-latest
+    # A wedged service-container pull must fail, not hang for the 360-minute
+    # default. Observed 2026-11-02: smoke-test sat in "Initialize containers"
+    # for 25+ minutes on a bad runner while the same images started fine in
+    # integration-tests on another runner.
+    timeout-minutes: 25
     services:
       postgis:
         image: postgis/postgis:16-3.4
@@ -402,6 +427,11 @@ jobs:
   smoke-test:
     if: github.event_name == 'pull_request' || github.ref_name == 'main' || github.ref_name == 'master'
     runs-on: ubuntu-latest
+    # A wedged service-container pull must fail, not hang for the 360-minute
+    # default. Observed 2026-11-02: smoke-test sat in "Initialize containers"
+    # for 25+ minutes on a bad runner while the same images started fine in
+    # integration-tests on another runner.
+    timeout-minutes: 20
     services:
       postgis:
         image: postgis/postgis:16-3.4
@@ -516,6 +546,11 @@ jobs:
   e2e-tests:
     if: github.event_name == 'pull_request' || github.ref_name == 'main' || github.ref_name == 'master'
     runs-on: ubuntu-latest
+    # A wedged service-container pull must fail, not hang for the 360-minute
+    # default. Observed 2026-11-02: smoke-test sat in "Initialize containers"
+    # for 25+ minutes on a bad runner while the same images started fine in
+    # integration-tests on another runner.
+    timeout-minutes: 20
     env:
       JEST_JUNIT_OUTPUT_DIR: reports/junit
       JEST_JUNIT_OUTPUT_NAME: e2e.xml
@@ -559,6 +594,11 @@ jobs:
   coverage:
     if: github.event_name == 'pull_request' || github.ref_name == 'main' || github.ref_name == 'master'
     runs-on: ubuntu-latest
+    # A wedged service-container pull must fail, not hang for the 360-minute
+    # default. Observed 2026-11-02: smoke-test sat in "Initialize containers"
+    # for 25+ minutes on a bad runner while the same images started fine in
+    # integration-tests on another runner.
+    timeout-minutes: 25
     env:
       # Same reason as integration-tests: this job provides PostGIS, so a DB
       # probe that comes back empty means the gated suites silently vanished
@@ -633,6 +673,11 @@ jobs:
       - e2e-tests
       - coverage
     runs-on: ubuntu-latest
+    # A wedged service-container pull must fail, not hang for the 360-minute
+    # default. Observed 2026-11-02: smoke-test sat in "Initialize containers"
+    # for 25+ minutes on a bad runner while the same images started fine in
+    # integration-tests on another runner.
+    timeout-minutes: 20
     environment: production
     outputs:
       sha: ${{ github.sha }}
@@ -909,6 +954,11 @@ jobs:
     if: github.ref_name == 'main'
     needs: deploy
     runs-on: ubuntu-latest
+    # A wedged service-container pull must fail, not hang for the 360-minute
+    # default. Observed 2026-11-02: smoke-test sat in "Initialize containers"
+    # for 25+ minutes on a bad runner while the same images started fine in
+    # integration-tests on another runner.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -1015,6 +1065,11 @@ jobs:
       - deploy
       - deploy-verify
     runs-on: ubuntu-latest
+    # A wedged service-container pull must fail, not hang for the 360-minute
+    # default. Observed 2026-11-02: smoke-test sat in "Initialize containers"
+    # for 25+ minutes on a bad runner while the same images started fine in
+    # integration-tests on another runner.
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
