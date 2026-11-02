@@ -53,6 +53,7 @@ const {
   sendCustomerCancelledUnpaidEmail,
   sendCustomerCancelledNonRefundableEmail,
   sendSupplierCustomerCancelledUnpaidEmail,
+  sendSupplierPlatformCancelledEmail,
   sendSupplierReviewInviteEmail,
   sendReviewRequestEmail,
 } = require('../../src/core/services/emailService');
@@ -390,6 +391,42 @@ describe('brand and storefront resolution', () => {
     expect(payload.html).not.toContain('Travio Africa');
     expect(payload.html).toContain('travioghana.com');
     expect(payload.html).not.toContain('travioafrica.com');
+    expectRenderedCleanly(payload.html);
+  });
+
+  it('names the booking brand in a platform-cancellation subject', async () => {
+    await sendSupplierPlatformCancelledEmail(booking({ status: 'CANCELLED' }), {
+      reason: 'Capacity exceeded',
+    });
+    expect(__send.mock.calls[0][0].subject).toBe('Booking cancelled by Travio Ghana');
+
+    __send.mockClear();
+    const expedition = await supplierEmail(
+      booking({
+        source: 'EXPEDITION',
+        clientOrigin: 'https://www.expeditiongotours.com',
+        status: 'CANCELLED',
+        cancellationOrigin: 'ADMIN',
+      }),
+      { cancelledBy: 'ADMIN', reason: 'Capacity exceeded' },
+    );
+    expect(expedition.subject).toBe('Booking cancelled by Expedition-Go Tours');
+  });
+
+  it('still names Travio Africa for a Travio Africa booking', async () => {
+    const payload = await supplierEmail(
+      booking({
+        source: 'TRAVIO_AFRICA',
+        clientOrigin: 'https://travioafrica.com',
+        status: 'CANCELLED',
+        cancellationOrigin: 'ADMIN',
+      }),
+      { cancelledBy: 'ADMIN', reason: 'Capacity exceeded' },
+    );
+
+    expect(payload.subject).toBe('Booking cancelled by Travio Africa');
+    expect(payload.html).toContain('Travio Africa');
+    expect(payload.html).not.toContain('travioghana.com');
     expectRenderedCleanly(payload.html);
   });
 });

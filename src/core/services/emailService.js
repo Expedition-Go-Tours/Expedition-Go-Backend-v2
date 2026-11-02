@@ -563,6 +563,12 @@ async function buildBookingBase(booking, opts = {}) {
     // Which brand identity this email renders as. Read by renderTemplate /
     // sendRendered (opts.brandKey wins) so callers don't have to thread it.
     brandKey,
+    // Exposed on the data as well as the shell: some call sites build a subject
+    // (or plain-text body) before renderTemplate injects the shell vars, and a
+    // missing name there silently fell back to "Travio Africa".
+    brandName: shell.brandName,
+    supportEmail: shell.supportEmail,
+    logoUrl: shell.logoUrl,
     poweredByLabel: shell.poweredByLabel || '',
     // identity — account holder (the recipient / addressee of emails)
     customerName: customer.name || 'Guest',
