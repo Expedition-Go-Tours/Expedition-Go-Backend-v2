@@ -49,7 +49,7 @@ function brandBookingWhere(extra = {}) {
  * Only suppliers with at least one paid booking in the window are returned, so
  * a supplier that has never sold anything is never ranked as "top".
  */
-function topSuppliersSince(since) {
+function topSuppliersSince(since, until) {
   return prisma.$queryRaw`
     SELECT
       u.id,
@@ -69,7 +69,7 @@ function topSuppliersSince(since) {
              MODE() WITHIN GROUP (ORDER BY bo.currency) AS currency
       FROM "Booking" bo
       JOIN "Tour" t ON t.id = bo."tourId"
-      WHERE bo."paymentStatus" = 'SUCCEEDED' AND bo."paidAt" >= ${since}
+      WHERE bo."paymentStatus" = 'SUCCEEDED' AND bo."paidAt" >= ${since} AND bo."paidAt" < ${until}
         AND (bo."source"::text = ${BRAND.source} OR EXISTS (
           SELECT 1 FROM "User" _u WHERE _u.id = t."supplierId" AND ${BRAND.role} = ANY(_u."roles"::text[])
         ))
@@ -91,25 +91,54 @@ function topSuppliersSince(since) {
  * Ghana-specific dashboard snapshot: revenue, bookings, users, tours.
  */
 controller.getOverview = catchAsync(async (req, res, next) => {
-  const period = req.query.period || 'today';
-  const periodMap = { today: 0, last_week: 7, last_month: 30, last_quarter: 90 };
-  const periodDays = periodMap[period] ?? 7;
+  const requestedPeriod = String(req.query.period || 'this_month');
+  const period = ['today', 'this_month', 'last_month', 'last_quarter'].includes(requestedPeriod)
+    ? requestedPeriod
+    : 'this_month';
 
   const now = new Date();
   const bucket = Math.floor(now.getTime() / 120000);
-  const cacheKey = `${BRAND.cachePrefix}admin:overview:${bucket}:${periodDays}`;
+  const cacheKey = `${BRAND.cachePrefix}admin:overview:${bucket}:${period}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const currentPeriodStart = period === 'today'
-      ? todayStart
-      : new Date(now.getTime() - periodDays * 24 * 60 * 60 * 1000);
-    const previousPeriodStart = period === 'today'
-      ? new Date(todayStart.getTime() - 24 * 60 * 60 * 1000)
-      : new Date(currentPeriodStart.getTime() - periodDays * 24 * 60 * 60 * 1000);
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const monthBeforeStart = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+    const quarterIndex = Math.floor(now.getMonth() / 3);
+    const quarterStart = new Date(now.getFullYear(), quarterIndex * 3, 1);
+    const previousQuarterStart = new Date(now.getFullYear(), quarterIndex * 3 - 3, 1);
+    const quarterBeforeStart = new Date(now.getFullYear(), quarterIndex * 3 - 6, 1);
+
+    const windows = (() => {
+      switch (period) {
+        case 'today': {
+          const start = todayStart;
+          const end = now;
+          const previousStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
+          return { start, end, previousStart, previousEnd: new Date(previousStart.getTime() + (end - start)) };
+        }
+        case 'last_month':
+          return { start: previousMonthStart, end: monthStart, previousStart: monthBeforeStart, previousEnd: previousMonthStart };
+        case 'last_quarter':
+          return { start: previousQuarterStart, end: quarterStart, previousStart: quarterBeforeStart, previousEnd: previousQuarterStart };
+        case 'this_month':
+        default: {
+          const start = monthStart;
+          const end = now;
+          const previousStart = previousMonthStart;
+          return { start, end, previousStart, previousEnd: new Date(previousStart.getTime() + (end - start)) };
+        }
+      }
+    })();
+
+    const currentPeriodStart = windows.start;
+    const currentPeriodEnd = windows.end;
+    const previousPeriodStart = windows.previousStart;
+    const previousPeriodEnd = windows.previousEnd;
+
     const weekStart = new Date(todayStart);
     weekStart.setDate(weekStart.getDate() - weekStart.getDay());
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const yearStart = new Date(now.getFullYear(), 0, 1);
     const scanStart = new Date(Math.min(
       currentPeriodStart.getTime(), previousPeriodStart.getTime(),
@@ -129,23 +158,23 @@ controller.getOverview = catchAsync(async (req, res, next) => {
       // Revenue + booking volume (Ghana only)
       prisma.$queryRaw`
         SELECT
-          COALESCE(SUM("total") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${currentPeriodStart}), 0)::float AS "todayRevenue",
-          COALESCE(SUM("total") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${previousPeriodStart} AND "paidAt" < ${currentPeriodStart}), 0)::float AS "yesterdayRevenue",
+          COALESCE(SUM("total") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${currentPeriodStart} AND "paidAt" < ${currentPeriodEnd}), 0)::float AS "todayRevenue",
+          COALESCE(SUM("total") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${previousPeriodStart} AND "paidAt" < ${previousPeriodEnd}), 0)::float AS "yesterdayRevenue",
           COALESCE(SUM("total") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${weekStart}), 0)::float AS "weekRevenue",
           COALESCE(SUM("total") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${monthStart}), 0)::float AS "monthRevenue",
           COALESCE(SUM("total") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${yearStart}), 0)::float AS "ytdRevenue",
-          COALESCE(SUM("supplierPayout") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${currentPeriodStart}), 0)::float AS "todayPayout",
-          COALESCE(SUM("supplierPayout") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${previousPeriodStart} AND "paidAt" < ${currentPeriodStart}), 0)::float AS "yesterdayPayout",
+          COALESCE(SUM("supplierPayout") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${currentPeriodStart} AND "paidAt" < ${currentPeriodEnd}), 0)::float AS "todayPayout",
+          COALESCE(SUM("supplierPayout") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${previousPeriodStart} AND "paidAt" < ${previousPeriodEnd}), 0)::float AS "yesterdayPayout",
           COALESCE(SUM("supplierPayout") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${weekStart}), 0)::float AS "weekPayout",
           COALESCE(SUM("supplierPayout") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${monthStart}), 0)::float AS "monthPayout",
           COALESCE(SUM("supplierPayout") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${yearStart}), 0)::float AS "ytdPayout",
-          COALESCE(SUM("commissionAmount") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${currentPeriodStart}), 0)::float AS "todayCommission",
-          COALESCE(SUM("commissionAmount") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${previousPeriodStart} AND "paidAt" < ${currentPeriodStart}), 0)::float AS "yesterdayCommission",
+          COALESCE(SUM("commissionAmount") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${currentPeriodStart} AND "paidAt" < ${currentPeriodEnd}), 0)::float AS "todayCommission",
+          COALESCE(SUM("commissionAmount") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${previousPeriodStart} AND "paidAt" < ${previousPeriodEnd}), 0)::float AS "yesterdayCommission",
           COALESCE(SUM("commissionAmount") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${weekStart}), 0)::float AS "weekCommission",
           COALESCE(SUM("commissionAmount") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${monthStart}), 0)::float AS "monthCommission",
           COALESCE(SUM("commissionAmount") FILTER (WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${yearStart}), 0)::float AS "ytdCommission",
-          COUNT(*) FILTER (WHERE "createdAt" >= ${currentPeriodStart})::int AS "todayBookings",
-          COUNT(*) FILTER (WHERE "createdAt" >= ${previousPeriodStart} AND "createdAt" < ${currentPeriodStart})::int AS "yesterdayBookings",
+          COUNT(*) FILTER (WHERE "createdAt" >= ${currentPeriodStart} AND "createdAt" < ${currentPeriodEnd})::int AS "todayBookings",
+          COUNT(*) FILTER (WHERE "createdAt" >= ${previousPeriodStart} AND "createdAt" < ${previousPeriodEnd})::int AS "yesterdayBookings",
           COUNT(*) FILTER (WHERE "createdAt" >= ${weekStart})::int AS "weekBookings",
           COUNT(*) FILTER (WHERE "createdAt" >= ${monthStart})::int AS "monthBookings",
           COUNT(*) FILTER (WHERE "createdAt" >= ${yearStart})::int AS "ytdBookings"
@@ -160,62 +189,85 @@ controller.getOverview = catchAsync(async (req, res, next) => {
       // Ghana user signups + active users
       prisma.$queryRaw`
         SELECT
-          COUNT(*) FILTER (WHERE "createdAt" >= ${currentPeriodStart})::int AS "signupsToday",
-          COUNT(*) FILTER (WHERE "createdAt" >= ${previousPeriodStart} AND "createdAt" < ${currentPeriodStart})::int AS "signupsYesterday",
+          COUNT(*) FILTER (WHERE "createdAt" >= ${currentPeriodStart} AND "createdAt" < ${currentPeriodEnd})::int AS "signupsToday",
+          COUNT(*) FILTER (WHERE "createdAt" >= ${previousPeriodStart} AND "createdAt" < ${previousPeriodEnd})::int AS "signupsYesterday",
           COUNT(*) FILTER (WHERE "createdAt" >= ${weekStart})::int AS "signupsWeek",
           COUNT(*) FILTER (WHERE "createdAt" >= ${monthStart})::int AS "signupsMonth",
           COUNT(*) FILTER (WHERE "createdAt" >= ${yearStart})::int AS "signupsYtd",
-          COUNT(*) FILTER (WHERE "lastLoginAt" >= ${currentPeriodStart} AND "active" = true)::int AS "activeToday",
-          COUNT(*) FILTER (WHERE "lastLoginAt" >= ${previousPeriodStart} AND "lastLoginAt" < ${currentPeriodStart} AND "active" = true)::int AS "activePrevious",
+          COUNT(*) FILTER (WHERE "lastLoginAt" >= ${currentPeriodStart} AND "lastLoginAt" < ${currentPeriodEnd} AND "active" = true)::int AS "activeToday",
+          COUNT(*) FILTER (WHERE "lastLoginAt" >= ${previousPeriodStart} AND "lastLoginAt" < ${previousPeriodEnd} AND "active" = true)::int AS "activePrevious",
           (SELECT COUNT(*) FROM "Event" e JOIN "User" u ON u.id = e."userId" WHERE ${BRAND.role} = ANY(u."roles"::text[]))::int AS "totalEvents"
         FROM "User"
         WHERE ${BRAND.role} = ANY("roles"::text[])
           AND ("createdAt" >= ${scanStart} OR "lastLoginAt" >= ${scanStart})
       `,
 
-      // Weekly booking volume (Ghana only, period-aware)
-      periodDays > 31
+      // Booking volume for the selected window. Granularity follows the
+      // window: four-hour buckets for today, days for a month, weeks for a
+      // quarter. This keeps the chart's total equal to the KPI total.
+      period === 'today'
         ? prisma.$queryRaw`
             SELECT
-              TO_CHAR(date_trunc('week', d.date), 'Mon DD') AS day,
+              TO_CHAR(d.bucket, 'HH24') || ':00' AS day,
               COALESCE(SUM(b.count), 0)::int AS count
             FROM generate_series(
-              date_trunc('week', CURRENT_DATE - (${periodDays - 1} || ' days')::interval),
-              date_trunc('week', CURRENT_DATE),
-              '1 week'
-            ) d(date)
+              ${currentPeriodStart},
+              GREATEST(${currentPeriodStart}, ${new Date(currentPeriodEnd.getTime() - 60_000)}),
+              interval '4 hours'
+            ) d(bucket)
             LEFT JOIN (
-              SELECT "createdAt"::date AS date, COUNT(*)::int AS count
+              SELECT date_trunc('hour', "createdAt") AS bucket, COUNT(*)::int AS count
               FROM "Booking"
               WHERE ("source"::text = ${BRAND.source} OR EXISTS (
                 SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
                 WHERE _t.id = "Booking"."tourId" AND ${BRAND.role} = ANY(_u."roles"::text[])
               ))
-                AND "createdAt" >= CURRENT_DATE - (${periodDays - 1} || ' days')::interval
-              GROUP BY "createdAt"::date
-            ) b ON b.date >= d.date AND b.date < d.date + INTERVAL '7 days'
-            GROUP BY date_trunc('week', d.date), d.date
-            ORDER BY d.date ASC
+                AND "createdAt" >= ${currentPeriodStart} AND "createdAt" < ${currentPeriodEnd}
+              GROUP BY 1
+            ) b ON b.bucket >= d.bucket AND b.bucket < d.bucket + interval '4 hours'
+            GROUP BY d.bucket
+            ORDER BY d.bucket ASC
+          `
+        : period === 'last_quarter'
+        ? prisma.$queryRaw`
+            SELECT
+              TO_CHAR(d.bucket, 'DD Mon') AS day,
+              COALESCE(COUNT(b.id), 0)::int AS count
+            FROM generate_series(
+              ${currentPeriodStart},
+              GREATEST(${currentPeriodStart}, ${new Date(currentPeriodEnd.getTime() - 1_000)}),
+              interval '7 days'
+            ) d(bucket)
+            LEFT JOIN "Booking" b
+              ON b."createdAt" >= GREATEST(d.bucket, ${currentPeriodStart})
+             AND b."createdAt" < LEAST(d.bucket + interval '7 days', ${currentPeriodEnd})
+             AND (b."source"::text = ${BRAND.source} OR EXISTS (
+                SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
+                WHERE _t.id = b."tourId" AND ${BRAND.role} = ANY(_u."roles"::text[])
+             ))
+            GROUP BY d.bucket
+            ORDER BY d.bucket ASC
           `
         : prisma.$queryRaw`
             SELECT
-              TO_CHAR(d.date, ${periodDays > 7 ? 'MM/DD' : 'Dy'}) AS day,
+              TO_CHAR(d.day, 'DD Mon') AS day,
               COALESCE(b.count, 0)::int AS count
             FROM generate_series(
-              CURRENT_DATE - (${Math.min(periodDays || 7, 30) - 1} || ' days')::interval,
-              CURRENT_DATE, '1 day'
-            ) d(date)
+              ${currentPeriodStart}::date,
+              ${new Date(currentPeriodEnd.getTime() - 1_000)}::date,
+              interval '1 day'
+            ) d(day)
             LEFT JOIN (
-              SELECT "createdAt"::date AS date, COUNT(*)::int AS count
+              SELECT "createdAt"::date AS day, COUNT(*)::int AS count
               FROM "Booking"
               WHERE ("source"::text = ${BRAND.source} OR EXISTS (
                 SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
                 WHERE _t.id = "Booking"."tourId" AND ${BRAND.role} = ANY(_u."roles"::text[])
               ))
-                AND "createdAt" >= CURRENT_DATE - (${Math.min(periodDays || 7, 30) - 1} || ' days')::interval
+                AND "createdAt" >= ${currentPeriodStart} AND "createdAt" < ${currentPeriodEnd}
               GROUP BY "createdAt"::date
-            ) b ON d.date = b.date
-            ORDER BY d.date ASC
+            ) b ON b.day = d.day::date
+            ORDER BY d.day ASC
           `,
 
       // Top 10 Ghana tours by period revenue (confirmed bookings)
@@ -234,7 +286,7 @@ controller.getOverview = catchAsync(async (req, res, next) => {
         JOIN (
           SELECT "tourId", COUNT(*)::int AS booking_count, SUM(total)::float AS total_revenue
           FROM "Booking"
-          WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${currentPeriodStart}
+          WHERE "paymentStatus" = 'SUCCEEDED' AND "paidAt" >= ${currentPeriodStart} AND "paidAt" < ${currentPeriodEnd}
           GROUP BY "tourId"
         ) b ON b."tourId" = t.id
         LEFT JOIN (
@@ -298,9 +350,9 @@ controller.getOverview = catchAsync(async (req, res, next) => {
     // Top suppliers for the selected period. On a quiet period (no paid sales)
     // fall back to the all-time leaders so the card still shows who the top
     // suppliers are instead of an empty state.
-    let topSuppliers = await topSuppliersSince(currentPeriodStart);
+    let topSuppliers = await topSuppliersSince(currentPeriodStart, currentPeriodEnd);
     if (topSuppliers.length === 0) {
-      topSuppliers = await topSuppliersSince(new Date(0));
+      topSuppliers = await topSuppliersSince(new Date(0), now);
     }
 
     const round2 = (v) => Math.round(parseFloat(v || 0) * 100) / 100;

@@ -1218,7 +1218,7 @@ describe('supplierController', () => {
       // earnings reflects the LIVE sum over real bookings, not the cached column
       expect(prisma.booking.aggregate).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { tour: { supplierId: 'u-1' }, isSimulated: false },
+          where: { tour: { supplierId: 'u-1' }, isSimulated: false, status: 'COMPLETED' },
           _sum: { platformCommission: true, supplierPayout: true },
         })
       );
@@ -1248,9 +1248,8 @@ describe('supplierController', () => {
         {
           id: 't1',
           title: 'Tour 1',
-          _count: { bookings: 2 },
+          _count: { bookings: 1 },
           bookings: [
-            { platformCommission: '30', grossAmount: '200', status: 'CONFIRMED' },
             { platformCommission: '20', grossAmount: '150', status: 'COMPLETED' },
           ],
         },
@@ -1258,9 +1257,19 @@ describe('supplierController', () => {
 
       await controller.getSupplierOverview(req, res, next);
 
+      // The per-tour breakdown must use the same delivered-booking basis as
+      // the KPI totals, otherwise the table contradicts the headline figures.
+      expect(prisma.tour.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({
+            _count: { select: { bookings: { where: { isSimulated: false, status: 'COMPLETED' } } } },
+          }),
+        })
+      );
+
       const body = res.json.mock.calls[0][0];
       expect(body.data.tourCommissions).toEqual([
-        { id: 't1', title: 'Tour 1', bookings: 2, commission: 50, revenue: 350 },
+        { id: 't1', title: 'Tour 1', bookings: 1, commission: 20, revenue: 150 },
       ]);
     });
 
