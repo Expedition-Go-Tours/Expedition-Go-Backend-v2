@@ -218,6 +218,11 @@ async function main() {
 
   for (const [name, fn, extras] of queue) {
     const booking = BASE_VARIANTS[name] || mockBooking();
+    // Resend allows 10 requests/second; the full catalog bursts well past that
+    // and some sends come back 429. Space them out unless told otherwise.
+    if (ok + failed > 0) {
+      await new Promise((r) => setTimeout(r, Number(process.env.EMAIL_SIM_DELAY_MS || 150)));
+    }
     try {
       // Payout senders take { booking, payout, ... } as a single object;
       // booking senders take (booking, extras).
