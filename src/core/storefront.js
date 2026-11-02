@@ -3020,12 +3020,24 @@ controller.cancelBooking = catchAsync(async (req, res, next) => {
       refundSucceeded = true;
       await prisma.booking.update({
         where: { id },
-        data: { paymentStatus: 'REFUNDED', refundAmount, refundedAt: new Date() },
+        data: { paymentStatus: 'REFUNDED', refundAmount, refundedAt: new Date(), refundStatus: 'SUCCEEDED' },
       });
     } catch (refundErr) {
       console.error(`[Expedition] Stripe refund failed for booking ${id}:`, refundErr.message);
       // Booking is already CANCELLED but paymentStatus stays SUCCEEDED so
-      // the refund can be retried manually from the admin dashboard.
+      // the refund can be retried manually from the admin dashboard —
+      // refundStatus FAILED records the attempt honestly + alerts admin.
+      await prisma.booking.update({
+        where: { id },
+        data: { refundStatus: 'FAILED' },
+      }).catch(() => {});
+      const { notifyAdmin } = require('./services/adminNotificationService');
+      notifyAdmin({
+        type: 'REFUND_NEEDS_ATTENTION',
+        title: 'Customer-cancel refund failed',
+        message: `Refund for booking ${booking.bookingNumber} failed at Stripe and needs a manual retry.`,
+        data: { bookingId: booking.id },
+      }).catch(() => {});
     }
   }
 

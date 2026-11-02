@@ -987,6 +987,10 @@ async function processStripeWebhook(event) {
               : { paymentStatus: 'REFUNDED' }),
             refundAmount: amountRefunded > 0 ? Number((amountRefunded / 100).toFixed(2)) : undefined,
             refundedAt: new Date(),
+            // The cancellation flow writes PENDING when Stripe returns the
+            // refund as pending; this event is the confirmation that it
+            // settled. Without this the row stayed PENDING forever.
+            refundStatus: 'SUCCEEDED',
             payoutStatus: 'CANCELLED',
           },
         });

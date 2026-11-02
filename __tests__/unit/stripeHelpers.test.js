@@ -46,6 +46,8 @@ jest.mock('stripe', () => {
     accountLinks: { create: jest.fn() },
     customers: { create: jest.fn(), list: jest.fn() },
     paymentIntents: { create: jest.fn(), retrieve: jest.fn(), update: jest.fn(), cancel: jest.fn() },
+    charges: { retrieve: jest.fn() },
+    refunds: { list: jest.fn(async () => ({ data: [] })), create: jest.fn() },
     checkout: { sessions: { create: jest.fn() } },
     customerSessions: { create: jest.fn() },
   };
@@ -353,6 +355,29 @@ describe('processStripeWebhook', () => {
     await processStripeWebhook(stripeEvent);
 
     expect(tx.booking.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('marks a refund settled on charge.refunded', async () => {
+    mockStripeInstance.charges.retrieve.mockResolvedValue({ payment_intent: 'pi_123' });
+    const stripeEvent = mockStripeEvent('charge.refunded', {
+      id: 'ch_1',
+      payment_intent: 'pi_123',
+      amount_refunded: 18000,
+      amount_captured: 18000,
+    });
+
+    await processStripeWebhook(stripeEvent);
+
+    expect(tx.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'REFUNDED',
+          paymentStatus: 'REFUNDED',
+          refundStatus: 'SUCCEEDED',
+          refundAmount: 180,
+        }),
+      }),
+    );
   });
 
   it('handles checkout.session.completed by attaching the PI and settling the booking', async () => {
