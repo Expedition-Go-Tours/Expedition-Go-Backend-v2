@@ -2572,6 +2572,17 @@ function initialsOf(name) {
 
 /** Role data the invite template renders as chips + capability lines. */
 function teamRoleView(roles) {
+  // Custom roles are passed as { key, label, summary } objects. Built-in roles
+  // are passed as strings, as they always were.
+  if (Array.isArray(roles) && roles[0] && typeof roles[0] === 'object') {
+    return roles.map((role) => ({
+      key: role.key || role.slug || role.name,
+      label: role.label || role.name || role.key || 'Custom role',
+      summary: role.summary || role.description || '',
+      bg: TEAM_ROLE_CHIP.editor.bg,
+      fg: TEAM_ROLE_CHIP.editor.fg,
+    }));
+  }
   const { toRoleArray, TEAM_ROLE_LABELS, TEAM_ROLE_SUMMARIES } = require('../../../config/teamPermissions');
   const list = toRoleArray(roles);
   return list.map((role) => ({

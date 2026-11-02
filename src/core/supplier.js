@@ -14,6 +14,8 @@ const prisma = require('./services/prismaClient');
 const AppError = require('./services/appError');
 const catchAsync = require('./services/catchAsync');
 const cache = require('./services/cacheHelper');
+const { scopeSettings } = require('./services/supplierFieldAccess');
+const { notificationTypesForCategories, NOTIFICATION_CATEGORY_KEYS, hasPermissionInSet } = require('../../config/permissions');
 const { invalidateKeys } = require('./services/cacheHelper');
 const { computeOfferStatus } = require('./services/offerStatus');
 const { getBrand } = require('../../config/brands');
@@ -373,7 +375,7 @@ controller.getSettings = catchAsync(async (req, res) => {
     },
   });
 
-  res.json({ status: 'success', data: { supplier } });
+  res.json({ status: 'success', data: { supplier: scopeSettings(req, supplier) } });
 });
 
 /**
@@ -383,6 +385,17 @@ controller.updateSettings = catchAsync(async (req, res) => {
   const { businessName, description, phone, website, notificationPreferences, bookingRules } = req.body;
 
   const updates = [];
+  const allowed = (key) => hasPermissionInSet(req.teamPermissions || [], key);
+
+  if ((businessName !== undefined || description !== undefined || phone !== undefined || website !== undefined) && !allowed('settings.business')) {
+    return res.status(403).json({ status: 'fail', message: 'You do not have permission to edit the business profile' });
+  }
+  if (notificationPreferences !== undefined && !allowed('settings.notifications')) {
+    return res.status(403).json({ status: 'fail', message: 'You do not have permission to edit notification preferences' });
+  }
+  if (bookingRules !== undefined && !allowed('settings.bookings')) {
+    return res.status(403).json({ status: 'fail', message: 'You do not have permission to edit booking rules' });
+  }
 
   if (businessName !== undefined || description !== undefined || phone !== undefined || website !== undefined) {
     const existing = await prisma.supplierProfile.findUnique({
@@ -570,14 +583,30 @@ controller.getNotifications = catchAsync(async (req, res) => {
   const skip = (parseInt(page) - 1) * Math.min(parseInt(limit), 50);
   const take = Math.min(parseInt(limit), 50);
 
+  // The role decides which inbox categories the member may see. The owner
+  // holds every category. A requested subset is intersected with the allowed
+  // set, so a hand-crafted query cannot widen access.
+  const allowedCategories = req.teamContext?.notificationCategories?.length
+    ? req.teamContext.notificationCategories
+    : NOTIFICATION_CATEGORY_KEYS;
+  const requested = typeof req.query.categories === 'string'
+    ? req.query.categories.split(',').map((value) => value.trim()).filter(Boolean)
+    : allowedCategories;
+  const categories = requested.filter((category) => allowedCategories.includes(category));
+  const types = notificationTypesForCategories(categories);
+  const where = {
+    userId: req.user.id,
+    ...(types.length ? { type: { in: types } } : {}),
+  };
+
   const [notifications, unreadCount] = await Promise.all([
     prisma.notification.findMany({
-      where: { userId: req.user.id },
+      where,
       skip,
       take,
       orderBy: { createdAt: 'desc' },
     }),
-    prisma.notification.count({ where: { userId: req.user.id, readAt: null } }),
+    prisma.notification.count({ where: { ...where, readAt: null } }),
   ]);
 
   res.json({

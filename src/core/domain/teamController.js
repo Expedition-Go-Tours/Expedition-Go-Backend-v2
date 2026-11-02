@@ -16,7 +16,21 @@ const {
   permissionsForRoles,
   describeRoles,
   toRoleArray,
+  TEAM_ROLE_LABELS,
+  TEAM_ROLE_SUMMARIES,
+  TEAM_ROLE_PERMISSIONS,
+  VALID_TEAM_ROLES,
 } = require('../../../config/teamPermissions');
+const {
+  PERMISSIONS,
+  PERMISSION_GROUPS,
+  NOTIFICATION_CATEGORIES,
+  normalizePermissions,
+  normalizeNotificationCategories,
+  canGrantPermissions,
+  permissionsForMember,
+  roleNamesForMember,
+} = require('../../../config/permissions');
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_TEAM_SIZE = parseInt(process.env.MAX_TEAM_SIZE, 10) || 50;
@@ -118,17 +132,55 @@ function rolesOf(member) {
   return roles.length ? roles : toRoleArray(member?.role);
 }
 
+function customRolesOf(member) {
+  return (member?.customRoles || [])
+    .map((link) => link?.role)
+    .filter((role) => role && !role.isArchived);
+}
+
+function roleViewsFor(systemRoles, customRoles) {
+  return [
+    ...toRoleArray(systemRoles).map((role) => ({
+      key: role,
+      label: TEAM_ROLE_LABELS[role] || role,
+      summary: TEAM_ROLE_SUMMARIES[role] || '',
+    })),
+    ...(customRoles || []).map((role) => ({
+      key: `custom:${role.id}`,
+      label: role.name,
+      summary: role.description || 'Custom access',
+    })),
+  ];
+}
+
 /**
  * The member shape every endpoint returns. `role` stays for older clients that
- * have not shipped multi-role support yet; `roles` is what new code reads.
+ * have not shipped multi-role support yet; `roles` and `customRoles` are what
+ * new code reads.
  */
 function memberPayload(member) {
   const roles = rolesOf(member);
+  const customRoles = customRolesOf(member);
+  const permissions = permissionsForMember(
+    roles,
+    customRoles.map((role) => role.permissions),
+  );
   return {
     id: member.id,
     email: member.email,
-    role: roles[0] || null,
+    role: roles[0] || customRoles[0]?.slug || null,
     roles,
+    customRoles: customRoles.map((role) => ({
+      id: role.id,
+      name: role.name,
+      slug: role.slug,
+      description: role.description || null,
+    })),
+    roleNames: roleNamesForMember(roles, customRoles),
+    permissions,
+    landingPath: member.landingPath || customRoles.find((role) => role.landingPath)?.landingPath || null,
+    notificationCategories: normalizeNotificationCategories(member.notificationCategories),
+    uiPreferences: member.uiPreferences || null,
     status: member.status,
     acceptedAt: member.acceptedAt ?? null,
     createdAt: member.createdAt,
@@ -178,89 +230,43 @@ exports.cleanupExpiredInvites = catchAsync(async (req, res) => {
 });
 
 exports.getMyTeamRole = catchAsync(async (req, res) => {
-  if (req.user.roles.includes('admin')) {
-    return res.status(200).json({
-      status: 'success',
-      data: {
-        role: 'admin',
-        roles: ['admin'],
-        permissions: ['*'],
-        isOwner: true,
-        storefronts: [],
-        // Internal admin, not a supplier: no brand to enable a brand-scoped
-        // feature for, so the dashboard shows nothing that would 403.
-        supplierCreatedBookings: false,
-      },
-    });
-  }
+  const context = await require('../../../middleware/teamRoleMiddleware').getTeamContextForUser(req.user);
 
-  const supplier = await prisma.supplierProfile.findFirst({
-    where: { userId: req.user.id },
-    select: { id: true },
-  });
-
-  if (supplier) {
-    return res.status(200).json({
-      status: 'success',
-      data: {
-        role: 'admin',
-        roles: ['admin'],
-        permissions: ['*'],
-        isOwner: true,
-        supplierId: supplier.id,
-        // This branch resolved SupplierProfile by userId: req.user IS the
-        // owner, so their own roles are the business's storefronts.
-        storefronts: storefrontsFor(req.user.roles),
-        supplierCreatedBookings: await supplierCreatedBookingsFor(req.user.roles),
-      },
-    });
-  }
-
-  const teamMember = await prisma.teamMember.findFirst({
-    where: {
-      email: req.user.email,
-      status: 'ACCEPTED',
-    },
-    orderBy: { createdAt: 'desc' },
-    // `supplier` resolves TeamMember.supplierId (a User id) to the OWNER, so
-    // their brand roles arrive in this same query — no second round trip, and
-    // no confusion with the owner branch's SupplierProfile id above.
-    select: {
-      roles: true,
-      role: true,
-      supplierId: true,
-      supplier: { select: { roles: true } },
-    },
-  });
-
-  if (!teamMember) {
+  if (!context) {
     return res.status(200).json({
       status: 'success',
       data: {
         role: null,
+        roles: [],
+        customRoles: [],
+        roleNames: [],
         permissions: [],
         isOwner: false,
         storefronts: [],
         supplierCreatedBookings: false,
+        landingPath: null,
+        notificationCategories: [],
+        uiPreferences: {},
       },
     });
   }
 
-  const roles = rolesOf(teamMember);
+  const data = {
+    role: context.systemRoles[0] || context.customRoles[0]?.slug || null,
+    roles: context.systemRoles,
+    customRoles: context.customRoles,
+    roleNames: context.roleNames,
+    permissions: context.permissions,
+    isOwner: context.isOwner,
+    supplierId: context.supplierId,
+    landingPath: context.landingPath,
+    notificationCategories: context.notificationCategories,
+    uiPreferences: context.uiPreferences,
+    storefronts: storefrontsFor(context.supplierRoles),
+    supplierCreatedBookings: await supplierCreatedBookingsFor(context.supplierRoles),
+  };
 
-  res.status(200).json({
-    status: 'success',
-    data: {
-      role: roles[0] || null,
-      roles,
-      permissions: permissionsForRoles(roles),
-      isOwner: false,
-      supplierId: teamMember.supplierId,
-      storefronts: storefrontsFor(teamMember.supplier?.roles),
-      // Inherited from the OWNER's brand roles, never the member's own.
-      supplierCreatedBookings: await supplierCreatedBookingsFor(teamMember.supplier?.roles),
-    },
-  });
+  res.status(200).json({ status: 'success', data });
 });
 
 exports.getMembers = catchAsync(async (req, res) => {
@@ -286,8 +292,18 @@ exports.getMembers = catchAsync(async (req, res) => {
         status: true,
         invitedById: true,
         acceptedAt: true,
+        landingPath: true,
+        notificationCategories: true,
+        uiPreferences: true,
         createdAt: true,
         updatedAt: true,
+        customRoles: {
+          select: {
+            role: {
+              select: { id: true, name: true, slug: true, description: true, permissions: true, landingPath: true, notificationCategories: true, uiPreferences: true, isArchived: true },
+            },
+          },
+        },
       },
     }),
     prisma.teamMember.count({ where }),
@@ -297,7 +313,7 @@ exports.getMembers = catchAsync(async (req, res) => {
     status: 'success',
     results: members.length,
     data: {
-      members,
+      members: members.map(memberPayload),
       pagination: {
         currentPage: page,
         totalPages: Math.ceil(totalCount / limit),
@@ -308,6 +324,170 @@ exports.getMembers = catchAsync(async (req, res) => {
   });
 });
 
+const RESERVED_ROLE_SLUGS = new Set([...VALID_TEAM_ROLES, 'owner', 'system', 'member', 'custom']);
+
+function slugifyRoleName(name) {
+  return String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+}
+
+function uniqueStrings(values) {
+  return Array.from(new Set((Array.isArray(values) ? values : [])
+    .filter((value) => typeof value === 'string')
+    .map((value) => value.trim())
+    .filter(Boolean)));
+}
+
+async function loadCustomRoles(supplierId, ids) {
+  const unique = uniqueStrings(ids);
+  if (!unique.length) return [];
+  return prisma.teamRole.findMany({
+    where: { supplierId, id: { in: unique }, isArchived: false },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      description: true,
+      permissions: true,
+      landingPath: true,
+      notificationCategories: true,
+      uiPreferences: true,
+    },
+  });
+}
+
+/**
+ * Validate a system-role + custom-role assignment.
+ *
+ * The union of every role must be grantable by the actor. Owners bypass the
+ * subset check; delegated managers may not hand out access they do not hold.
+ */
+async function normalizeAssignment({ supplierId, body, actorContext, allowEmpty = false }) {
+  const rawRoles = toRoleArray(body?.roles !== undefined && body?.roles !== null ? body.roles : body?.role);
+  const customRoleIds = uniqueStrings(body?.customRoleIds);
+
+  if (!allowEmpty && rawRoles.length === 0 && customRoleIds.length === 0) {
+    return { error: 'Select at least one role' };
+  }
+  if (rawRoles.length + customRoleIds.length > MAX_TEAM_ROLES) {
+    return { error: `A team member can hold at most ${MAX_TEAM_ROLES} roles` };
+  }
+
+  let systemRoles = [];
+  if (rawRoles.length) {
+    const normalized = normalizeTeamRoles({ roles: rawRoles });
+    if (normalized.error) return { error: normalized.error };
+    systemRoles = normalized.roles;
+  }
+
+  if (systemRoles.includes('admin') && customRoleIds.length) {
+    return { error: 'Admin already includes every permission, so it cannot be combined with a custom role' };
+  }
+
+  const customRoles = await loadCustomRoles(supplierId, customRoleIds);
+  if (customRoles.length !== customRoleIds.length) {
+    return { error: 'One or more selected roles no longer exist. Refresh the page and try again.' };
+  }
+
+  const requestedPermissions = [
+    ...systemRoles.flatMap((role) => permissionsForRoles([role])),
+    ...customRoles.flatMap((role) => role.permissions || []),
+  ];
+
+  const grant = canGrantPermissions(actorContext?.permissions || [], requestedPermissions, {
+    isOwner: Boolean(actorContext?.isOwner),
+  });
+  if (!grant.ok) return { error: grant.error };
+
+  return { systemRoles, customRoles, customRoleIds };
+}
+
+async function syncMemberCustomRoles(tx, memberId, customRoleIds) {
+  await tx.teamMemberRole.deleteMany({ where: { memberId } });
+  if (customRoleIds.length) {
+    await tx.teamMemberRole.createMany({
+      data: customRoleIds.map((roleId) => ({ memberId, roleId })),
+    });
+  }
+}
+
+const MEMBER_PAYLOAD_SELECT = {
+  id: true,
+  email: true,
+  role: true,
+  roles: true,
+  status: true,
+  invitedById: true,
+  acceptedAt: true,
+  landingPath: true,
+  notificationCategories: true,
+  uiPreferences: true,
+  createdAt: true,
+  updatedAt: true,
+  customRoles: {
+    select: {
+      role: {
+        select: {
+          id: true, name: true, slug: true, description: true, permissions: true,
+          landingPath: true, notificationCategories: true, uiPreferences: true, isArchived: true,
+        },
+      },
+    },
+  },
+};
+
+async function reloadMember(memberId) {
+  return prisma.teamMember.findUnique({ where: { id: memberId }, select: MEMBER_PAYLOAD_SELECT });
+}
+
+async function invalidateMemberContext(email) {
+  if (!email) return;
+  await Promise.all([
+    cache.invalidateKey(`team:context:email:${email}`).catch(() => {}),
+    cache.invalidateKey(`team:member:email:${email}`).catch(() => {}),
+  ]);
+}
+
+function emitTeamSocketEvent(userIds, event) {
+  if (!Array.isArray(userIds) || !userIds.length) return;
+  try {
+    const app = require('../../../app');
+    const io = app.get('io');
+    if (!io) return;
+    for (const userId of userIds) {
+      io.to(`user:${userId}`).emit(event);
+    }
+  } catch {
+    // Socket is best-effort; the next focus/visibility refetch still applies.
+  }
+}
+
+async function userIdsForSupplierMembers(supplierId) {
+  const members = await prisma.teamMember.findMany({
+    where: { supplierId, status: 'ACCEPTED' },
+    select: { email: true },
+  });
+  const emails = members.map((member) => member.email).filter(Boolean);
+  if (!emails.length) return [];
+  const users = await prisma.user.findMany({
+    where: { email: { in: emails } },
+    select: { id: true },
+  });
+  return users.map((user) => user.id);
+}
+
+async function invalidateSupplierContexts(supplierId) {
+  const members = await prisma.teamMember.findMany({
+    where: { supplierId },
+    select: { email: true },
+  });
+  await Promise.all(members.map((member) => invalidateMemberContext(member.email)));
+}
+
 exports.inviteMember = catchAsync(async (req, res, next) => {
   const { email, directAdd } = req.body;
 
@@ -316,18 +496,17 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
     return exports.directAddMember(req, res, next);
   }
 
-  if (!email) {
-    return next(new AppError('Email is required', 400));
-  }
+  if (!email) return next(new AppError('Email is required', 400));
+  if (!EMAIL_REGEX.test(email)) return next(new AppError('Please provide a valid email address', 400));
 
-  if (!EMAIL_REGEX.test(email)) {
-    return next(new AppError('Please provide a valid email address', 400));
-  }
+  const assignment = await normalizeAssignment({
+    supplierId: req.supplierId,
+    body: req.body,
+    actorContext: req.teamContext,
+  });
+  if (assignment.error) return next(new AppError(assignment.error, 400));
 
-  const { roles, error: rolesError } = normalizeTeamRoles(req.body);
-  if (rolesError) {
-    return next(new AppError(rolesError, 400));
-  }
+  const { systemRoles, customRoles, customRoleIds } = assignment;
 
   const member = await prisma.$transaction(async (tx) => {
     const [acceptedCount, pendingCount] = await Promise.all([
@@ -340,104 +519,58 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
     }
 
     const existing = await tx.teamMember.findUnique({
-      where: {
-        supplierId_email: { supplierId: req.supplierId, email },
-      },
+      where: { supplierId_email: { supplierId: req.supplierId, email } },
     });
 
     if (existing) {
-      if (existing.status === 'PENDING') {
-        throw new AppError('An invitation has already been sent to this email', 400);
-      }
-      if (existing.status === 'ACCEPTED') {
-        throw new AppError('This user is already a team member', 400);
-      }
-    }
-
-    if (directAdd) {
-      const memberData = {
-        supplierId: req.supplierId,
-        email,
-        roles,
-        role: roles[0],
-        status: 'ACCEPTED',
-        acceptedAt: new Date(),
-        invitedById: req.user.id,
-      };
-      if (existing) {
-        return tx.teamMember.update({
-          where: { id: existing.id },
-          data: { ...memberData, inviteToken: null, tokenExpiresAt: null },
-        });
-      }
-      return tx.teamMember.create({ data: memberData });
+      if (existing.status === 'PENDING') throw new AppError('An invitation has already been sent to this email', 400);
+      if (existing.status === 'ACCEPTED') throw new AppError('This user is already a team member', 400);
     }
 
     const token = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + INVITE_TTL_HOURS * 60 * 60 * 1000);
 
-    if (existing) {
-      return tx.teamMember.update({
+    const row = existing
+      ? await tx.teamMember.update({
         where: { id: existing.id },
         data: {
-          roles,
-          role: roles[0],
+          roles: systemRoles,
+          role: systemRoles[0] || null,
           status: 'PENDING',
           invitedById: req.user.id,
           inviteToken: token,
           tokenExpiresAt: expiresAt,
         },
+      })
+      : await tx.teamMember.create({
+        data: {
+          supplierId: req.supplierId,
+          email,
+          roles: systemRoles,
+          role: systemRoles[0] || null,
+          invitedById: req.user.id,
+          inviteToken: token,
+          tokenExpiresAt: expiresAt,
+        },
       });
-    }
 
-    return tx.teamMember.create({
-      data: {
-        supplierId: req.supplierId,
-        email,
-        roles,
-        role: roles[0],
-        invitedById: req.user.id,
-        inviteToken: token,
-        tokenExpiresAt: expiresAt,
-      },
-    });
+    await syncMemberCustomRoles(tx, row.id, customRoleIds);
+    return row;
   });
 
-  if (directAdd) {
-    await logActivity({
-      userId: req.user.id,
-      action: 'team.member_added',
-      resource: 'TeamMember',
-      resourceId: member.id,
-      metadata: { email, roles: rolesOf(member), method: 'direct_add' },
-      source: 'web',
-    });
-
-    return res.status(201).json({
-      status: 'success',
-      message: `${email} added as a team member`,
-      data: { member: memberPayload(member) },
-    });
-  }
-
-  // Brand-aware invite link: Ghana suppliers' team members accept on the
-  // Ghana dashboard, everyone else on the default one.
+  const saved = await reloadMember(member.id);
   const inviteUrl = `${emailUrls.dashboardBaseForUser(req.user)}/team/invite?token=${member.inviteToken}`;
-
   const supplier = await prisma.user.findUnique({
     where: { id: req.user.id },
     select: { name: true },
   });
 
-  // The invitation row already exists, so a mail failure must not 500 the
-  // request (which would leave the owner retrying an "already sent" invite).
-  // Report it instead and let Resend re-issue a fresh token.
   let emailSent = true;
   try {
     await sendTeamInviteEmail({
       to: email,
       supplierName: supplier?.name || 'A supplier',
-      roles: rolesOf(member),
+      roles: roleViewsFor(systemRoles, customRoles),
       inviteUrl,
       invitedBy: req.user.name || 'Your supplier',
       invitedByEmail: req.user.email,
@@ -449,12 +582,19 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
     logger.error(`[team] invite email failed for ${email}:`, error?.message);
   }
 
+  await invalidateMemberContext(email);
+
   await logActivity({
     userId: req.user.id,
     action: 'team.invite_sent',
     resource: 'TeamMember',
     resourceId: member.id,
-    metadata: { email, roles: rolesOf(member), emailSent },
+    metadata: {
+      email,
+      roles: systemRoles,
+      customRoles: customRoles.map((role) => ({ id: role.id, name: role.name })),
+      emailSent,
+    },
     source: 'web',
   });
 
@@ -463,10 +603,7 @@ exports.inviteMember = catchAsync(async (req, res, next) => {
     message: emailSent
       ? `Invitation sent to ${email}`
       : `Invitation created for ${email}, but the email could not be sent. Use Resend to try again.`,
-    data: {
-      emailSent,
-      member: memberPayload(member),
-    },
+    data: { emailSent, member: memberPayload(saved || member) },
   });
 });
 
@@ -479,6 +616,13 @@ exports.getInviteDetails = catchAsync(async (req, res, next) => {
       supplier: {
         select: { name: true, email: true },
       },
+      customRoles: {
+        select: {
+          role: {
+            select: { id: true, name: true, slug: true, description: true, permissions: true, isArchived: true },
+          },
+        },
+      },
     },
   });
 
@@ -489,13 +633,23 @@ exports.getInviteDetails = catchAsync(async (req, res, next) => {
   const stateError = inviteStateError(member);
   if (stateError) return next(stateError);
 
+  const systemRoles = rolesOf(member);
+  const customRoles = customRolesOf(member);
+
   res.status(200).json({
     status: 'success',
     data: {
       supplierName: member.supplier.name,
-      // `role` is the legacy single value; `roles` is the full set.
-      role: rolesOf(member)[0] || null,
-      roles: rolesOf(member),
+      role: systemRoles[0] || customRoles[0]?.slug || null,
+      roles: systemRoles,
+      customRoles: customRoles.map((role) => ({
+        id: role.id,
+        name: role.name,
+        slug: role.slug,
+        description: role.description || null,
+      })),
+      roleNames: roleNamesForMember(systemRoles, customRoles),
+      roleViews: roleViewsFor(systemRoles, customRoles),
       invitedEmail: member.email,
       status: member.status,
     },
@@ -507,6 +661,15 @@ exports.acceptInvite = catchAsync(async (req, res, next) => {
 
   const member = await prisma.teamMember.findUnique({
     where: { inviteToken: token },
+    include: {
+      customRoles: {
+        select: {
+          role: {
+            select: { id: true, name: true, slug: true, description: true, permissions: true, isArchived: true },
+          },
+        },
+      },
+    },
   });
 
   if (!member) {
@@ -518,6 +681,18 @@ exports.acceptInvite = catchAsync(async (req, res, next) => {
 
   if (req.user.email !== member.email) {
     return next(new AppError(`This invitation was sent to ${member.email}. Please sign in with that email address.`, 403));
+  }
+
+  const systemRoles = rolesOf(member);
+  const customRoles = customRolesOf(member);
+  if (systemRoles.length === 0 && customRoles.length === 0) {
+    return next(new AppError('The role assigned to this invitation no longer exists. Ask the business owner to send a new invitation.', 409));
+  }
+  const archivedCustomRole = (member.customRoles || [])
+    .map((link) => link.role)
+    .find((role) => role?.isArchived);
+  if (archivedCustomRole) {
+    return next(new AppError('A role assigned to this invitation has been archived. Ask the business owner to send a new invitation.', 409));
   }
 
   const updated = await prisma.teamMember.update({
@@ -543,23 +718,26 @@ exports.acceptInvite = catchAsync(async (req, res, next) => {
     userId: member.supplierId,
     type: 'TEAM_INVITE_ACCEPTED',
     title: 'Team Invitation Accepted',
-    message: `${req.user.email} has accepted their invitation as ${describeRoles(rolesOf(member))}`,
-    data: { memberId: member.id, email: req.user.email, roles: rolesOf(member) },
+    message: `${req.user.email} has accepted their invitation as ${roleNamesForMember(systemRoles, customRoles).join(' + ')}`,
+    data: { memberId: member.id, email: req.user.email, roles: systemRoles, customRoles: customRoles.map((role) => role.name) },
   }).catch((err) => logger.warn('[team] enqueueNotification failed:', err?.message));
+
+  await invalidateMemberContext(member.email);
 
   await logActivity({
     userId: req.user.id,
     action: 'team.invite_accepted',
     resource: 'TeamMember',
     resourceId: member.id,
-    metadata: { email: member.email, roles: rolesOf(member) },
+    metadata: { email: member.email, roles: systemRoles, customRoles: customRoles.map((role) => role.name) },
     source: 'web',
   });
 
+  const saved = await reloadMember(updated.id);
   res.status(200).json({
     status: 'success',
     message: 'Invitation accepted successfully',
-    data: { member: memberPayload(updated) },
+    data: { member: memberPayload(saved || updated) },
   });
 });
 
@@ -623,6 +801,13 @@ exports.resendInvite = catchAsync(async (req, res, next) => {
     },
     include: {
       supplier: { select: { name: true, email: true } },
+      customRoles: {
+        select: {
+          role: {
+            select: { id: true, name: true, slug: true, description: true, permissions: true, isArchived: true },
+          },
+        },
+      },
     },
   });
 
@@ -659,7 +844,7 @@ exports.resendInvite = catchAsync(async (req, res, next) => {
     await sendTeamInviteEmail({
       to: email,
       supplierName: existing.supplier.name || 'A supplier',
-      roles: rolesOf(existing),
+      roles: roleViewsFor(rolesOf(existing), customRolesOf(existing)),
       inviteUrl,
       invitedBy: req.user.name || 'Your supplier',
       invitedByEmail: req.user.email,
@@ -676,7 +861,7 @@ exports.resendInvite = catchAsync(async (req, res, next) => {
     action: 'team.invite_resend',
     resource: 'TeamMember',
     resourceId: existing.id,
-    metadata: { email, roles: rolesOf(existing), emailSent },
+    metadata: { email, roles: rolesOf(existing), customRoles: customRolesOf(existing).map((role) => role.name), emailSent },
     source: 'web',
   });
 
@@ -694,6 +879,15 @@ exports.revokeInvite = catchAsync(async (req, res, next) => {
 
   const member = await prisma.teamMember.findFirst({
     where: { id: memberId, supplierId: req.supplierId },
+    include: {
+      customRoles: {
+        select: {
+          role: {
+            select: { id: true, name: true, slug: true, description: true, permissions: true, isArchived: true },
+          },
+        },
+      },
+    },
   });
 
   if (!member) {
@@ -721,7 +915,7 @@ exports.revokeInvite = catchAsync(async (req, res, next) => {
   sendTeamInviteRevokedEmail({
     to: member.email,
     supplierName: supplier?.name || 'A supplier',
-    roles: rolesOf(member),
+    roles: roleViewsFor(rolesOf(member), customRolesOf(member)),
     invitedBy: req.user.name || 'Your supplier',
     brandKey: resolveEmailBrand({ user: req.user }),
   }).catch((err) => logger.warn('[team] sendTeamInviteRevokedEmail failed:', err?.message));
@@ -731,7 +925,7 @@ exports.revokeInvite = catchAsync(async (req, res, next) => {
     action: 'team.invite_revoked',
     resource: 'TeamMember',
     resourceId: member.id,
-    metadata: { email: member.email, roles: rolesOf(member) },
+    metadata: { email: member.email, roles: rolesOf(member), customRoles: customRolesOf(member).map((role) => role.name) },
     source: 'web',
   });
 
@@ -744,21 +938,21 @@ exports.revokeInvite = catchAsync(async (req, res, next) => {
 exports.directAddMember = catchAsync(async (req, res, next) => {
   const { email } = req.body;
 
-  if (!email) {
-    return next(new AppError('Email is required', 400));
-  }
+  if (!email) return next(new AppError('Email is required', 400));
+  if (!EMAIL_REGEX.test(email)) return next(new AppError('Please provide a valid email address', 400));
 
-  if (!EMAIL_REGEX.test(email)) {
-    return next(new AppError('Please provide a valid email address', 400));
-  }
-  const { roles, error: rolesError } = normalizeTeamRoles(req.body);
-  if (rolesError) {
-    return next(new AppError(rolesError, 400));
-  }
+  const assignment = await normalizeAssignment({
+    supplierId: req.supplierId,
+    body: req.body,
+    actorContext: req.teamContext,
+  });
+  if (assignment.error) return next(new AppError(assignment.error, 400));
 
-  // Direct add bypasses the accept step, so it only makes sense for someone who
-  // already has an account. Without this check the owner could create an
-  // "Active" member that has no login and therefore no access to anything.
+  const { systemRoles, customRoles, customRoleIds } = assignment;
+
+  // Direct add bypasses the accept step, so the invitee must already have an
+  // account. Without this check the owner could create an "Active" member that
+  // has no login and therefore no access to anything.
   const user = await prisma.user.findFirst({
     where: { email },
     select: { id: true },
@@ -778,9 +972,7 @@ exports.directAddMember = catchAsync(async (req, res, next) => {
     }
 
     const existing = await tx.teamMember.findUnique({
-      where: {
-        supplierId_email: { supplierId: req.supplierId, email },
-      },
+      where: { supplierId_email: { supplierId: req.supplierId, email } },
     });
 
     if (existing) {
@@ -788,11 +980,11 @@ exports.directAddMember = catchAsync(async (req, res, next) => {
         throw new AppError('This user is already a team member', 400);
       }
 
-      return tx.teamMember.update({
+      const row = await tx.teamMember.update({
         where: { id: existing.id },
         data: {
-          roles,
-          role: roles[0],
+          roles: systemRoles,
+          role: systemRoles[0] || null,
           status: 'ACCEPTED',
           acceptedAt: new Date(),
           invitedById: req.user.id,
@@ -800,37 +992,48 @@ exports.directAddMember = catchAsync(async (req, res, next) => {
           tokenExpiresAt: null,
         },
       });
+      await syncMemberCustomRoles(tx, row.id, customRoleIds);
+      return row;
     }
 
-    return tx.teamMember.create({
+    const row = await tx.teamMember.create({
       data: {
         supplierId: req.supplierId,
         email,
-        roles,
-        role: roles[0],
+        roles: systemRoles,
+        role: systemRoles[0] || null,
         status: 'ACCEPTED',
         acceptedAt: new Date(),
         invitedById: req.user.id,
       },
     });
+    await syncMemberCustomRoles(tx, row.id, customRoleIds);
+    return row;
   });
 
   // They skipped the accept step, so grant the dashboard roles here.
   await grantMemberRoles({ userId: user.id, supplierId: req.supplierId, email });
+  await invalidateMemberContext(email);
 
   await logActivity({
     userId: req.user.id,
     action: 'team.member_added',
     resource: 'TeamMember',
     resourceId: member.id,
-    metadata: { email, roles, method: 'direct_add' },
+    metadata: {
+      email,
+      roles: systemRoles,
+      customRoles: customRoles.map((role) => ({ id: role.id, name: role.name })),
+      method: 'direct_add',
+    },
     source: 'web',
   });
 
+  const saved = await reloadMember(member.id);
   res.status(201).json({
     status: 'success',
     message: `${email} added as a team member`,
-    data: { member: memberPayload(member) },
+    data: { member: memberPayload(saved || member) },
   });
 });
 
@@ -853,7 +1056,8 @@ exports.removeMember = catchAsync(async (req, res, next) => {
   if (removedUser) {
     await revokeMemberRoles({ userId: removedUser.id, email: member.email });
   }
-  await cache.invalidateKey(`team:member:email:${member.email}`).catch(() => {});
+  await invalidateMemberContext(member.email);
+  emitTeamSocketEvent(removedUser ? [removedUser.id] : [], 'team:removed');
 
   await logActivity({
     userId: req.user.id,
@@ -873,44 +1077,66 @@ exports.removeMember = catchAsync(async (req, res, next) => {
 exports.updateMemberRole = catchAsync(async (req, res, next) => {
   const { id } = req.params;
 
-  const { roles, error: rolesError } = normalizeTeamRoles(req.body);
-  if (rolesError) {
-    return next(new AppError(rolesError, 400));
-  }
+  const assignment = await normalizeAssignment({
+    supplierId: req.supplierId,
+    body: req.body,
+    actorContext: req.teamContext,
+  });
+  if (assignment.error) return next(new AppError(assignment.error, 400));
 
   const member = await prisma.teamMember.findFirst({
     where: { id, supplierId: req.supplierId },
+    include: {
+      customRoles: {
+        select: {
+          role: {
+            select: { id: true, name: true, slug: true, description: true, permissions: true, isArchived: true },
+          },
+        },
+      },
+    },
   });
 
-  if (!member) {
-    return next(new AppError('Team member not found', 404));
-  }
-
+  if (!member) return next(new AppError('Team member not found', 404));
   if (member.email === req.user.email) {
     return next(new AppError('You cannot change your own roles', 403));
   }
 
   const previousRoles = rolesOf(member);
-  const updated = await prisma.teamMember.update({
-    where: { id },
-    data: { roles, role: roles[0] },
+  const previousCustomRoles = customRolesOf(member).map((role) => ({ id: role.id, name: role.name }));
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.teamMember.update({
+      where: { id },
+      data: { roles: assignment.systemRoles, role: assignment.systemRoles[0] || null },
+    });
+    await syncMemberCustomRoles(tx, id, assignment.customRoleIds);
+    return row;
   });
 
-  // requireTeamRole/requireTeamPermission cache the member row per email.
-  await cache.invalidateKey(`team:member:email:${member.email}`).catch(() => {});
+  await invalidateMemberContext(member.email);
+  const changedUser = await prisma.user.findFirst({ where: { email: member.email }, select: { id: true } });
+  emitTeamSocketEvent(changedUser ? [changedUser.id] : [], 'team:access-changed');
 
   await logActivity({
     userId: req.user.id,
     action: 'team.role_changed',
     resource: 'TeamMember',
     resourceId: id,
-    metadata: { email: member.email, previousRoles, newRoles: roles },
+    metadata: {
+      email: member.email,
+      previousRoles,
+      newRoles: assignment.systemRoles,
+      previousCustomRoles,
+      newCustomRoles: assignment.customRoles.map((role) => ({ id: role.id, name: role.name })),
+    },
     source: 'web',
   });
 
+  const saved = await reloadMember(id);
   res.status(200).json({
     status: 'success',
-    data: { member: memberPayload(updated) },
+    data: { member: memberPayload(saved || updated) },
   });
 });
 
@@ -919,17 +1145,7 @@ exports.getMemberById = catchAsync(async (req, res, next) => {
 
   const member = await prisma.teamMember.findFirst({
     where: { id, supplierId: req.supplierId },
-    select: {
-      id: true,
-      email: true,
-      role: true,
-      roles: true,
-      status: true,
-      invitedById: true,
-      acceptedAt: true,
-      createdAt: true,
-      updatedAt: true,
-    },
+    select: MEMBER_PAYLOAD_SELECT,
   });
 
   if (!member) {
@@ -938,6 +1154,329 @@ exports.getMemberById = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    data: { member: { ...member, roles: rolesOf(member) } },
+    data: { member: memberPayload(member) },
   });
+});
+
+// ---------------------------------------------------------------------------
+// Custom roles (Ghana supplier dashboard)
+// ---------------------------------------------------------------------------
+
+function normalizeRoleName(value) {
+  const name = String(value || '').trim().replace(/\s+/g, ' ');
+  if (!name) return { error: 'Role name is required' };
+  if (name.length > 50) return { error: 'Role name must be 50 characters or fewer' };
+  return { name };
+}
+
+function normalizeLandingPath(value) {
+  if (value === undefined || value === null || value === '') return { value: null };
+  if (typeof value !== 'string') return { error: 'Landing page must be a path' };
+  const path = value.trim();
+  if (!path.startsWith('/') || path.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(path)) {
+    return { error: 'Landing page must be an internal dashboard path' };
+  }
+  if (path.length > 200) return { error: 'Landing page path is too long' };
+  return { value: path };
+}
+
+function normalizeUiPreferences(value) {
+  if (value === undefined || value === null) return { value: null };
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    return { error: 'UI preferences must be an object' };
+  }
+  const serialized = JSON.stringify(value);
+  if (serialized.length > 20000) return { error: 'UI preferences are too large' };
+  return { value };
+}
+
+function assertOwner(req) {
+  if (!req.isOwner) {
+    const error = new AppError('Only the business owner can manage roles', 403);
+    error.code = 'OWNER_ONLY';
+    return error;
+  }
+  return null;
+}
+
+exports.getPermissionCatalog = catchAsync(async (req, res) => {
+  res.status(200).json({
+    status: 'success',
+    data: {
+      permissions: PERMISSIONS,
+      groups: PERMISSION_GROUPS,
+      notificationCategories: NOTIFICATION_CATEGORIES,
+      systemRoles: VALID_TEAM_ROLES.map((role) => ({
+        key: role,
+        label: TEAM_ROLE_LABELS[role] || role,
+        summary: TEAM_ROLE_SUMMARIES[role] || '',
+        permissions: TEAM_ROLE_PERMISSIONS[role]?.permissions || [],
+      })),
+      maxRoles: MAX_TEAM_ROLES,
+    },
+  });
+});
+
+exports.getRoles = catchAsync(async (req, res) => {
+  const roles = await prisma.teamRole.findMany({
+    where: { supplierId: req.supplierId, isArchived: false },
+    orderBy: [{ name: 'asc' }],
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      description: true,
+      permissions: true,
+      landingPath: true,
+      notificationCategories: true,
+      uiPreferences: true,
+      version: true,
+      createdAt: true,
+      updatedAt: true,
+      _count: { select: { members: true } },
+    },
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      roles: roles.map((role) => ({
+        ...role,
+        memberCount: role._count?.members || 0,
+        _count: undefined,
+      })),
+    },
+  });
+});
+
+exports.createRole = catchAsync(async (req, res, next) => {
+  const ownerError = assertOwner(req);
+  if (ownerError) return next(ownerError);
+
+  const nameResult = normalizeRoleName(req.body.name);
+  if (nameResult.error) return next(new AppError(nameResult.error, 400));
+
+  const slug = slugifyRoleName(nameResult.name);
+  if (!slug) return next(new AppError('Role name must contain letters or numbers', 400));
+  if (RESERVED_ROLE_SLUGS.has(slug)) {
+    return next(new AppError('That role name is reserved. Choose a different name.', 409));
+  }
+
+  const permissionResult = normalizePermissions(req.body.permissions, { allowOwnerOnly: false });
+  if (permissionResult.error) return next(new AppError(permissionResult.error, 400));
+  if (!permissionResult.permissions.length) {
+    return next(new AppError('Select at least one permission for this role', 400));
+  }
+
+  const landing = normalizeLandingPath(req.body.landingPath);
+  if (landing.error) return next(new AppError(landing.error, 400));
+
+  const uiPreferences = normalizeUiPreferences(req.body.uiPreferences);
+  if (uiPreferences.error) return next(new AppError(uiPreferences.error, 400));
+
+  const description = req.body.description ? String(req.body.description).trim().slice(0, 200) : null;
+
+  const role = await prisma.teamRole.create({
+    data: {
+      supplierId: req.supplierId,
+      name: nameResult.name,
+      slug,
+      description,
+      permissions: permissionResult.permissions,
+      landingPath: landing.value,
+      notificationCategories: normalizeNotificationCategories(req.body.notificationCategories),
+      uiPreferences: uiPreferences.value,
+      createdById: req.user.id,
+    },
+    select: {
+      id: true, name: true, slug: true, description: true, permissions: true,
+      landingPath: true, notificationCategories: true, uiPreferences: true, version: true,
+      createdAt: true, updatedAt: true,
+    },
+  }).catch((error) => {
+    if (error?.code === 'P2002') throw new AppError('A role with that name already exists', 409);
+    throw error;
+  });
+
+  await logActivity({
+    userId: req.user.id,
+    action: 'team.role_created',
+    resource: 'TeamRole',
+    resourceId: role.id,
+    metadata: { name: role.name, permissions: role.permissions },
+    source: 'web',
+  });
+
+  res.status(201).json({ status: 'success', data: { role: { ...role, memberCount: 0 } } });
+});
+
+exports.updateRole = catchAsync(async (req, res, next) => {
+  const ownerError = assertOwner(req);
+  if (ownerError) return next(ownerError);
+
+  const { id } = req.params;
+  const existing = await prisma.teamRole.findFirst({
+    where: { id, supplierId: req.supplierId, isArchived: false },
+  });
+  if (!existing) return next(new AppError('Role not found', 404));
+
+  if (req.body.version !== undefined && Number(req.body.version) !== existing.version) {
+    return next(new AppError('This role changed in another tab. Refresh and try again.', 409));
+  }
+
+  const nameResult = normalizeRoleName(req.body.name ?? existing.name);
+  if (nameResult.error) return next(new AppError(nameResult.error, 400));
+  const slug = slugifyRoleName(nameResult.name);
+  if (!slug) return next(new AppError('Role name must contain letters or numbers', 400));
+  if (RESERVED_ROLE_SLUGS.has(slug) && slug !== existing.slug) {
+    return next(new AppError('That role name is reserved. Choose a different name.', 409));
+  }
+
+  const permissionResult = normalizePermissions(
+    req.body.permissions !== undefined ? req.body.permissions : existing.permissions,
+    { allowOwnerOnly: false },
+  );
+  if (permissionResult.error) return next(new AppError(permissionResult.error, 400));
+  if (!permissionResult.permissions.length) {
+    return next(new AppError('Select at least one permission for this role', 400));
+  }
+
+  const landing = normalizeLandingPath(req.body.landingPath !== undefined ? req.body.landingPath : existing.landingPath);
+  if (landing.error) return next(new AppError(landing.error, 400));
+
+  const uiPreferences = normalizeUiPreferences(
+    req.body.uiPreferences !== undefined ? req.body.uiPreferences : existing.uiPreferences,
+  );
+  if (uiPreferences.error) return next(new AppError(uiPreferences.error, 400));
+
+  const role = await prisma.teamRole.update({
+    where: { id },
+    data: {
+      name: nameResult.name,
+      slug,
+      description: req.body.description !== undefined
+        ? (req.body.description ? String(req.body.description).trim().slice(0, 200) : null)
+        : existing.description,
+      permissions: permissionResult.permissions,
+      landingPath: landing.value,
+      notificationCategories: req.body.notificationCategories !== undefined
+        ? normalizeNotificationCategories(req.body.notificationCategories)
+        : existing.notificationCategories,
+      uiPreferences: uiPreferences.value,
+      version: { increment: 1 },
+    },
+    select: {
+      id: true, name: true, slug: true, description: true, permissions: true,
+      landingPath: true, notificationCategories: true, uiPreferences: true, version: true,
+      createdAt: true, updatedAt: true,
+      _count: { select: { members: true } },
+    },
+  }).catch((error) => {
+    if (error?.code === 'P2002') throw new AppError('A role with that name already exists', 409);
+    throw error;
+  });
+
+  // Every member holding this role must re-resolve immediately. The 30s cache
+  // otherwise leaves the old permission set live after the owner saves.
+  await invalidateSupplierContexts(req.supplierId);
+  emitTeamSocketEvent(await userIdsForSupplierMembers(req.supplierId), 'team:access-changed');
+
+  await logActivity({
+    userId: req.user.id,
+    action: 'team.role_updated',
+    resource: 'TeamRole',
+    resourceId: role.id,
+    metadata: { name: role.name, permissions: role.permissions, version: role.version },
+    source: 'web',
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { role: { ...role, memberCount: role._count?.members || 0, _count: undefined } },
+  });
+});
+
+exports.archiveRole = catchAsync(async (req, res, next) => {
+  const ownerError = assertOwner(req);
+  if (ownerError) return next(ownerError);
+
+  const { id } = req.params;
+  const role = await prisma.teamRole.findFirst({
+    where: { id, supplierId: req.supplierId, isArchived: false },
+    include: { _count: { select: { members: true } } },
+  });
+  if (!role) return next(new AppError('Role not found', 404));
+  if ((role._count?.members || 0) > 0) {
+    return next(new AppError('Reassign the members using this role before archiving it', 409));
+  }
+
+  await prisma.teamRole.update({
+    where: { id },
+    data: { isArchived: true, version: { increment: 1 } },
+  });
+  await invalidateSupplierContexts(req.supplierId);
+  emitTeamSocketEvent(await userIdsForSupplierMembers(req.supplierId), 'team:access-changed');
+
+  await logActivity({
+    userId: req.user.id,
+    action: 'team.role_deleted',
+    resource: 'TeamRole',
+    resourceId: id,
+    metadata: { name: role.name },
+    source: 'web',
+  });
+
+  res.status(200).json({ status: 'success', message: 'Role archived' });
+});
+
+exports.updateMemberAccess = catchAsync(async (req, res, next) => {
+  const ownerError = assertOwner(req);
+  if (ownerError) return next(ownerError);
+
+  const { id } = req.params;
+  const member = await prisma.teamMember.findFirst({
+    where: { id, supplierId: req.supplierId },
+    include: {
+      customRoles: {
+        select: { role: { select: { id: true, name: true, permissions: true, landingPath: true, notificationCategories: true, uiPreferences: true, isArchived: true } } },
+      },
+    },
+  });
+  if (!member) return next(new AppError('Team member not found', 404));
+
+  const landing = normalizeLandingPath(req.body.landingPath);
+  if (landing.error) return next(new AppError(landing.error, 400));
+  const uiPreferences = normalizeUiPreferences(req.body.uiPreferences);
+  if (uiPreferences.error) return next(new AppError(uiPreferences.error, 400));
+
+  const updated = await prisma.teamMember.update({
+    where: { id },
+    data: {
+      landingPath: landing.value,
+      notificationCategories: req.body.notificationCategories !== undefined
+        ? normalizeNotificationCategories(req.body.notificationCategories)
+        : member.notificationCategories,
+      uiPreferences: uiPreferences.value,
+    },
+  });
+
+  await invalidateMemberContext(member.email);
+  const accessUser = await prisma.user.findFirst({ where: { email: member.email }, select: { id: true } });
+  emitTeamSocketEvent(accessUser ? [accessUser.id] : [], 'team:access-changed');
+
+  await logActivity({
+    userId: req.user.id,
+    action: 'team.access_updated',
+    resource: 'TeamMember',
+    resourceId: id,
+    metadata: {
+      email: member.email,
+      landingPath: updated.landingPath,
+      notificationCategories: updated.notificationCategories,
+    },
+    source: 'web',
+  });
+
+  const saved = await reloadMember(id);
+  res.status(200).json({ status: 'success', data: { member: memberPayload(saved || updated) } });
 });

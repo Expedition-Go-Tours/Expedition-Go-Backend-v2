@@ -11,6 +11,7 @@ const catchAsync = require('../services/catchAsync');
 const cache = require('../services/cacheHelper');
 const AppError = require('../services/appError');
 const { logActivity } = require('../services/auditLogger');
+const { scopeDashboard } = require('../services/supplierFieldAccess');
 const { sendSupplierStatusEmail } = require('../services/emailService');
 const { notifyAdmin } = require('../services/adminNotificationService');
 const { enqueueNotification } = require('../services/queue');
@@ -562,7 +563,12 @@ exports.getDashboard = catchAsync(async (req, res, next) => {
     return next(new AppError('Supplier profile not found', 404));
   }
 
-  res.status(200).json(result);
+  // The cache stores the full owner view; each member receives only the
+  // fields their role can read.
+  res.status(200).json({
+    ...result,
+    data: scopeDashboard(req, result.data),
+  });
 });
 
 /**

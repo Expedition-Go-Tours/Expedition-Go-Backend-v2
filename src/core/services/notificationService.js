@@ -13,6 +13,11 @@
  */
 
 const prisma = require('./prismaClient');
+const {
+  notificationCategoryForType,
+  permissionsForMember,
+  hasPermissionInSet,
+} = require('../../../config/permissions');
 const { sendEmail, resolveEmailBrand } = require('./emailService');
 const { categoryForType } = require('./notificationCategories');
 const { resolveRecipients } = require('./notificationRecipientService');
@@ -22,6 +27,99 @@ const emailUrls = require('../../../config/emailUrls');
  * Send notification to user
  * Supports WebSocket real-time delivery and database storage
  */
+/**
+ * Copy an operational notification into the inbox of every accepted team
+ * member whose role includes the notification category and notifications.view.
+ * The owner keeps the canonical row and the email; member copies are in-app
+ * only, so a role filter cannot silently stop an email to the business.
+ */
+async function fanOutToTeamMembers({ userId, type, title, message, data, dedupeKey }) {
+  try {
+    if (!prisma.supplierProfile || !prisma.teamMember || !prisma.user) return;
+    const profile = await prisma.supplierProfile.findFirst({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!profile) return;
+
+    const members = await prisma.teamMember.findMany({
+      where: { supplierId: userId, status: 'ACCEPTED' },
+      select: {
+        email: true,
+        roles: true,
+        role: true,
+        notificationCategories: true,
+        customRoles: {
+          select: {
+            role: {
+              select: { permissions: true, notificationCategories: true, isArchived: true },
+            },
+          },
+        },
+      },
+    });
+    if (!members.length) return;
+
+    const emails = members.map((member) => member.email).filter(Boolean);
+    const users = await prisma.user.findMany({
+      where: { email: { in: emails } },
+      select: { id: true, email: true },
+    });
+    const userByEmail = new Map(users.map((user) => [user.email, user]));
+
+    const category = notificationCategoryForType(type);
+    for (const member of members) {
+      const user = userByEmail.get(member.email);
+      if (!user) continue;
+
+      const customRoles = (member.customRoles || [])
+        .map((link) => link.role)
+        .filter((role) => role && !role.isArchived);
+      const roles = Array.isArray(member.roles) && member.roles.length ? member.roles : [member.role].filter(Boolean);
+      const permissions = permissionsForMember(
+        roles,
+        customRoles.map((role) => role.permissions || []),
+      );
+      if (!hasPermissionInSet(permissions, 'notifications.view')) continue;
+
+      const roleCategories = customRoles.flatMap((role) => role.notificationCategories || []);
+      const allowed = (member.notificationCategories || []).length
+        ? member.notificationCategories
+        : roleCategories;
+      if (allowed.length && !allowed.includes(category)) continue;
+
+      try {
+        const copy = await prisma.notification.create({
+          data: {
+            userId: user.id,
+            type,
+            title,
+            message,
+            data,
+            ...(dedupeKey ? { dedupeKey } : {}),
+            emailSent: false,
+            pushSent: false,
+          },
+        });
+        await sendWebSocketNotification(user.id, {
+          id: copy.id,
+          type,
+          title,
+          message,
+          data,
+          createdAt: copy.createdAt,
+        });
+      } catch (error) {
+        if (error?.code !== 'P2002') {
+          console.error('[Notification] Team fan-out failed:', error?.message);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[Notification] Team fan-out lookup failed:', error?.message);
+  }
+}
+
 async function sendNotification({
   userId,
   type,
@@ -91,6 +189,9 @@ async function sendNotification({
       data,
       createdAt: notification.createdAt
     });
+
+    // In-app copies for teammates whose role allows this category.
+    await fanOutToTeamMembers({ userId, type, title, message, data, dedupeKey });
 
     // Send email notification if requested
     if (shouldSendEmail && user.email) {
@@ -315,12 +416,13 @@ async function markNotificationAsRead(notificationId, userId) {
 /**
  * Mark all notifications as read for user
  */
-async function markAllNotificationsAsRead(userId) {
+async function markAllNotificationsAsRead(userId, types = null) {
   try {
     const result = await prisma.notification.updateMany({
       where: {
         userId,
-        read: false
+        read: false,
+        ...(Array.isArray(types) && types.length ? { type: { in: types } } : {}),
       },
       data: {
         read: true,

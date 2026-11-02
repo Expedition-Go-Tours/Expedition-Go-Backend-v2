@@ -77,7 +77,7 @@ describe('notificationController', () => {
   describe('markAllAsRead', () => {
     it('marks all notifications as read', async () => {
       await controller.markAllAsRead(req, res, next);
-      expect(notifService.markAllNotificationsAsRead).toHaveBeenCalledWith('u-1');
+      expect(notifService.markAllNotificationsAsRead).toHaveBeenCalledWith('u-1', expect.any(Array));
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ message: '3 notifications marked as read' }));
     });

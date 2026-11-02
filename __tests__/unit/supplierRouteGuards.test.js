@@ -175,7 +175,15 @@ const ALL_STATEMENTS = ROUTE_FILES.flatMap(routeStatements);
 /** Jest's expect takes one argument, so the location goes in the failure text. */
 function expectGuard(statement, guard) {
   const where = `${statement.file}:${statement.line} ${statement.method} ${statement.path}`;
-  if (!statement.statement.includes(guard)) {
+  const permission = guard.match(/requireTeamPermission\('([^']+)'\)/)?.[1];
+  if (!permission) {
+    if (!statement.statement.includes(guard)) throw new Error(`${where} is missing ${guard}`);
+    return;
+  }
+  // Multi-permission guards are allowed: `requireTeamPermission('a', 'b')`
+  // still grants `a` and `b`.
+  const pattern = new RegExp(`requireTeamPermission\\([^)]*['"]${permission}['"]`);
+  if (!pattern.test(statement.statement)) {
     throw new Error(`${where} is missing ${guard}`);
   }
 }

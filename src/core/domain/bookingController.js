@@ -22,6 +22,7 @@ const { resolveAllowedClientUrl } = require('../services/clientOrigin');
 const { generateBookingNumber, validateTravelerInfo, evaluateCancellationPolicy } = require('../services/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice } = require('../services/tourHelpers');
 const { Prisma } = require('@prisma/client');
+const { scopeBooking, scopeBookings, can } = require('../services/supplierFieldAccess');
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob, cutoffAnchorUtc } = require('../services/availabilityCore');
 const { enqueueNotification, enqueueEmail, enqueueEvent } = require('../services/queue');
 const { resolvePickupSelection, pickupStatus, isPickupIncomplete } = require('../services/geoUtils');
@@ -1229,17 +1230,24 @@ exports.getSupplierBookings = catchAsync(async (req, res, next) => {
   const { pendingRequestsForBookingIds } = require('../services/cancellationRequestService');
   const pendingMap = await pendingRequestsForBookingIds(bookings.map((b) => b.id));
 
+  const summary = {
+    totalRevenue: Number(aggregates._sum.grossAmount || 0),
+    totalSupplierPayout: Number(aggregates._sum.supplierPayout || 0),
+    totalCommission: Number(aggregates._sum.platformCommission || 0),
+  };
+  if (!can(req, 'bookings.revenue.view') && !can(req, 'earnings.view')) {
+    delete summary.totalRevenue;
+    delete summary.totalSupplierPayout;
+    delete summary.totalCommission;
+  }
+
   res.status(200).json({
     status: 'success',
     data: {
-      bookings: sanitizeBookingPaymentInternals(
+      bookings: scopeBookings(req, sanitizeBookingPaymentInternals(
         bookings.map((b) => ({ ...b, pendingCancellation: pendingMap.get(b.id) || null })),
-      ),
-      summary: {
-        totalRevenue: Number(aggregates._sum.grossAmount || 0),
-        totalSupplierPayout: Number(aggregates._sum.supplierPayout || 0),
-        totalCommission: Number(aggregates._sum.platformCommission || 0),
-      },
+      )),
+      summary,
       pagination: {
         currentPage: parseInt(page),
         totalPages,
@@ -1451,9 +1459,12 @@ exports.getPickupPlanner = catchAsync(async (req, res, next) => {
   // back carry the relay address (see services/supplierContact). The driver
   // needs the phone and the name; not the guest's inbox.
   const contacts = await supplierContact.contactAddressesForBookings(bookings, supplierId);
-  const maskedBookings = bookings.map((b) =>
-    supplierContact.withSupplierContact(b, contacts.get(b.id) || null),
-  );
+  const maskedBookings = bookings.map((b) => {
+    const next = scopeBooking(req, supplierContact.withSupplierContact(b, contacts.get(b.id) || null), {
+      contactPermission: 'pickup.contact.view',
+    });
+    return next;
+  });
 
   res.status(200).json({
     status: 'success',

@@ -2,156 +2,85 @@ const prisma = require('../src/core/services/prismaClient');
 const catchAsync = require('../src/core/services/catchAsync');
 const AppError = require('../src/core/services/appError');
 const cache = require('../src/core/services/cacheHelper');
-const { hasTeamPermission, toRoleArray } = require('../config/teamPermissions');
+const { toRoleArray } = require('../config/teamPermissions');
+const {
+  NOTIFICATION_CATEGORY_KEYS,
+  normalizeNotificationCategories,
+  permissionsForMember,
+  roleNamesForMember,
+  hasPermissionInSet,
+} = require('../config/permissions');
 
 const SUPPLIER_CACHE_TTL = 30;
 
-/**
- * A member's roles as an array. `roles` is the source of truth; `role` is the
- * deprecated mirror kept for older rows/deploys.
- */
 function memberRolesOf(teamMember) {
   const roles = toRoleArray(teamMember?.roles);
   if (roles.length) return roles;
   return toRoleArray(teamMember?.role);
 }
 
-/**
- * Accepted team membership for an email.
- *
- * ALL middleware reads membership through here so the shared cache entry always
- * carries the same fields. Caching a narrower select under this key made a
- * member's permissions depend on which middleware ran first on a route —
- * `resolveSupplier` cached { supplierId } and the role checks then saw no roles.
- */
-const TEAM_MEMBER_SELECT = { roles: true, role: true, supplierId: true };
-
-function lookupTeamMember(email) {
-  // Membership is keyed by email. Prisma drops `undefined` from a where-clause,
-  // so an email-less lookup would match the FIRST accepted member in the table —
-  // never fall through to the query without an address to match on.
-  if (!email || typeof email !== 'string') return Promise.resolve(null);
-
-  return cache.getOrSet(`team:member:email:${email}`, async () => {
-    return prisma.teamMember.findFirst({
-      where: { email, status: 'ACCEPTED' },
-      select: TEAM_MEMBER_SELECT,
-    });
-  }, SUPPLIER_CACHE_TTL);
+function mergeUiPreferences(rolePrefs, memberPrefs) {
+  const base = rolePrefs && typeof rolePrefs === 'object' ? rolePrefs : {};
+  const override = memberPrefs && typeof memberPrefs === 'object' ? memberPrefs : {};
+  const merged = { ...base, ...override };
+  for (const section of ['dashboard', 'bookings']) {
+    if (base[section] || override[section]) {
+      merged[section] = { ...(base[section] || {}), ...(override[section] || {}) };
+    }
+  }
+  return merged;
 }
 
-exports.requireTeamRole = (...allowedRoles) => {
-  return catchAsync(async (req, res, next) => {
-    if (!req.user) {
-      return next(new AppError('Not authenticated', 401));
-    }
-
-    if (req.user.roles.includes('admin')) {
-      return next();
-    }
-
-    const supplierProfile = await cache.getOrSet(`supplier:profile:userId:${req.user.id}`, async () => {
-      return prisma.supplierProfile.findFirst({
-        where: { userId: req.user.id },
-        select: { id: true },
-      });
-    }, SUPPLIER_CACHE_TTL);
-
-    if (supplierProfile) {
-      req.teamRoles = ['admin'];
-      req.teamRole = 'admin';
-      req.teamSupplierId = supplierProfile.id;
-      req.isOwner = true;
-      return next();
-    }
-
-    const teamMember = await lookupTeamMember(req.user.email);
-
-    if (!teamMember) {
-      return next(new AppError('You are not a team member', 403));
-    }
-
-    // Members can hold up to two roles; any one of them can satisfy the route.
-    const memberRoles = memberRolesOf(teamMember);
-    req.teamRoles = memberRoles;
-    req.teamRole = memberRoles[0] || null;
-    req.teamSupplierId = teamMember.supplierId;
-
-    if (allowedRoles.length > 0 && !memberRoles.some((role) => allowedRoles.includes(role))) {
-      return next(new AppError('You do not have permission for this action', 403));
-    }
-
-    next();
-  });
-};
-
-exports.requireTeamPermission = (...permissionKeys) => {
-  return catchAsync(async (req, res, next) => {
-    if (!req.user) {
-      return next(new AppError('Not authenticated', 401));
-    }
-
-    if (req.user.roles.includes('admin')) {
-      return next();
-    }
-
-    const supplierProfile = await cache.getOrSet(`supplier:profile:userId:${req.user.id}`, async () => {
-      return prisma.supplierProfile.findFirst({
-        where: { userId: req.user.id },
-        select: { id: true },
-      });
-    }, SUPPLIER_CACHE_TTL);
-
-    if (supplierProfile) {
-      req.teamRoles = ['admin'];
-      req.teamRole = 'admin';
-      req.teamSupplierId = supplierProfile.id;
-      req.isOwner = true;
-      return next();
-    }
-
-    const teamMember = await lookupTeamMember(req.user.email);
-
-    if (!teamMember) {
-      return next(new AppError('You are not a team member', 403));
-    }
-
-    const memberRoles = memberRolesOf(teamMember);
-    req.teamRoles = memberRoles;
-    req.teamRole = memberRoles[0] || null;
-    req.teamSupplierId = teamMember.supplierId;
-
-    const hasPermission = permissionKeys.some((key) =>
-      hasTeamPermission(memberRoles, key)
-    );
-
-    if (!hasPermission) {
-      return next(new AppError('You do not have permission for this action', 403));
-    }
-
-    next();
-  });
-};
+function contextForOwner(user, supplierId, supplierProfileId = null) {
+  return {
+    supplierProfileId,
+    isOwner: true,
+    isPlatformAdmin: false,
+    supplierId,
+    systemRoles: ['admin'],
+    customRoles: [],
+    roleNames: ['Admin'],
+    permissions: ['*'],
+    landingPath: '/',
+    notificationCategories: [...NOTIFICATION_CATEGORY_KEYS],
+    uiPreferences: {},
+    supplierRoles: Array.isArray(user?.roles) ? user.roles : [],
+  };
+}
 
 /**
- * The supplier account id behind a user: their own id when they own a supplier
- * profile (or are an admin operating one), the owner's id when they are an
- * accepted team member, and `null` for everyone else (customers, unlinked
- * users). Best-effort and cached, so it is safe to call from non-blocking
- * middleware — `resolveSupplier` turns a `null` into the 403 the guarded
- * routes expect.
+ * Resolve a user's supplier access once per request.
+ *
+ * Owner → ['*'].
+ * Accepted member → system-role permissions ∪ custom-role permissions.
+ *
+ * The full context is cached for 30s. Role edits and membership changes must
+ * invalidate it; teamController does that explicitly.
  */
-async function resolveSupplierIdForUser(user) {
+async function getTeamContextForUser(user) {
   if (!user) return null;
 
-  const roles = Array.isArray(user.roles) ? user.roles : [];
-
-  if (roles.includes('admin')) {
-    const adminProfile = await prisma.supplierProfile.findFirst({
+  if (Array.isArray(user.roles) && user.roles.includes('admin')) {
+    const profile = await prisma.supplierProfile.findFirst({
       where: { userId: user.id },
       select: { id: true },
     });
-    return adminProfile ? user.id : null;
+    if (!profile) {
+      return {
+        isOwner: true,
+        isPlatformAdmin: true,
+        supplierId: null,
+        systemRoles: ['admin'],
+        customRoles: [],
+        roleNames: ['Admin'],
+        permissions: ['*'],
+        landingPath: '/',
+        notificationCategories: [...NOTIFICATION_CATEGORY_KEYS],
+        uiPreferences: {},
+        supplierRoles: user.roles,
+      };
+    }
+    return contextForOwner(user, user.id, profile.id);
   }
 
   const profile = await cache.getOrSet(`supplier:profile:userId:${user.id}`, async () => {
@@ -161,78 +90,201 @@ async function resolveSupplierIdForUser(user) {
     });
   }, SUPPLIER_CACHE_TTL);
 
-  if (profile) return user.id;
+  if (profile) return contextForOwner(user, user.id, profile.id);
 
-  const member = await lookupTeamMember(user.email);
-  return member ? member.supplierId : null;
+  if (!user.email) return null;
+
+  return cache.getOrSet(`team:context:email:${user.email}`, async () => {
+    const member = await prisma.teamMember.findFirst({
+      where: { email: user.email, status: 'ACCEPTED' },
+      select: {
+        supplierId: true,
+        roles: true,
+        role: true,
+        landingPath: true,
+        notificationCategories: true,
+        uiPreferences: true,
+        customRoles: {
+          select: {
+            role: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                permissions: true,
+                landingPath: true,
+                notificationCategories: true,
+                uiPreferences: true,
+                isArchived: true,
+              },
+            },
+          },
+        },
+        supplier: { select: { roles: true } },
+      },
+    });
+
+    if (!member) return null;
+
+    const systemRoles = memberRolesOf(member);
+    const activeCustomRoles = (member.customRoles || [])
+      .map((link) => link.role)
+      .filter((role) => role && !role.isArchived);
+
+    const permissions = permissionsForMember(
+      systemRoles,
+      activeCustomRoles.map((role) => role.permissions),
+    );
+
+    const memberCategories = normalizeNotificationCategories(member.notificationCategories);
+    const roleCategories = activeCustomRoles
+      .flatMap((role) => normalizeNotificationCategories(role.notificationCategories));
+    const notificationCategories = memberCategories.length
+      ? memberCategories
+      : (roleCategories.length ? Array.from(new Set(roleCategories)) : [...NOTIFICATION_CATEGORY_KEYS]);
+
+    const rolePrefs = activeCustomRoles.find((role) => role.uiPreferences)?.uiPreferences || null;
+
+    return {
+      isOwner: false,
+      isPlatformAdmin: false,
+      supplierId: member.supplierId,
+      supplierProfileId: null,
+      systemRoles,
+      customRoles: activeCustomRoles.map((role) => ({
+        id: role.id,
+        name: role.name,
+        slug: role.slug,
+        permissions: role.permissions,
+        landingPath: role.landingPath,
+        notificationCategories: role.notificationCategories,
+      })),
+      roleNames: roleNamesForMember(systemRoles, activeCustomRoles),
+      permissions,
+      landingPath: member.landingPath || activeCustomRoles.find((role) => role.landingPath)?.landingPath || null,
+      notificationCategories,
+      uiPreferences: mergeUiPreferences(rolePrefs, member.uiPreferences),
+      supplierRoles: Array.isArray(member.supplier?.roles) ? member.supplier.roles : [],
+    };
+  }, SUPPLIER_CACHE_TTL);
 }
 
-exports.resolveSupplierIdForUser = resolveSupplierIdForUser;
+function attachContext(req, context) {
+  req.teamContext = context;
+  req.teamPermissions = context.permissions;
+  req.teamRoles = context.systemRoles;
+  req.customRoles = context.customRoles;
+  req.isOwner = context.isOwner;
+  if (context.supplierId) {
+    req.supplierId = context.supplierId;
+    req.teamSupplierId = context.isOwner ? (context.supplierProfileId || context.supplierId) : context.supplierId;
+  }
+  return context;
+}
+
+exports.getTeamContextForUser = getTeamContextForUser;
+exports.attachContext = attachContext;
 
 /**
- * What a realtime chat connection may do, resolved once at connect time.
- *
- * The HTTP chat routes refuse a member without `chat.view` (routes/chatRoutes.js),
- * so the socket has to agree or it becomes a way around that gate: `chat:join`
- * subscribes to a conversation room and every message in it is pushed there.
- *
- * Only someone acting THROUGH a membership is restricted. Customers, the owner
- * and platform admins are themselves and keep full access.
+ * Legacy role-name guard. New code must use requireTeamPermission. Kept for
+ * callers that still pass one of the built-in role names.
  */
-async function resolveChatAccessForUser(user) {
-  const supplierId = await resolveSupplierIdForUser(user);
-  const viaMembership = Boolean(supplierId) && supplierId !== user?.id;
-  if (!viaMembership) return { supplierId, viaMembership: false, canChat: true };
+exports.requireTeamRole = (...allowedRoles) => {
+  return catchAsync(async (req, res, next) => {
+    if (!req.user) return next(new AppError('Not authenticated', 401));
 
-  const member = await lookupTeamMember(user?.email);
-  return {
-    supplierId,
-    viaMembership: true,
-    canChat: Boolean(member) && hasTeamPermission(memberRolesOf(member), 'chat.view'),
-  };
-}
+    const context = req.teamContext || await getTeamContextForUser(req.user);
+    if (!context || !context.supplierId) {
+      return next(new AppError('You are not a team member', 403));
+    }
+    attachContext(req, context);
 
-exports.resolveChatAccessForUser = resolveChatAccessForUser;
+    if (context.isOwner) return next();
 
-exports.isSupplierOwner = catchAsync(async (req, res, next) => {
-  if (!req.user) {
-    return next(new AppError('Not authenticated', 401));
-  }
+    if (allowedRoles.length > 0 && !context.systemRoles.some((role) => allowedRoles.includes(role))) {
+      return next(new AppError('You do not have permission for this action', 403));
+    }
+    next();
+  });
+};
 
-  if (req.user.roles.includes('admin')) {
-    return next();
-  }
+exports.requireTeamPermission = (...permissionKeys) => {
+  return catchAsync(async (req, res, next) => {
+    if (!req.user) return next(new AppError('Not authenticated', 401));
 
-  const supplier = await cache.getOrSet(`supplier:profile:userId:${req.user.id}`, async () => {
-    return prisma.supplierProfile.findFirst({
-      where: { userId: req.user.id },
-      select: { id: true },
-    });
-  }, SUPPLIER_CACHE_TTL);
+    const context = req.teamContext || await getTeamContextForUser(req.user);
+    if (!context || !context.supplierId) {
+      return next(new AppError('You are not a team member', 403));
+    }
+    attachContext(req, context);
 
-  if (!supplier) {
-    return next(new AppError('No supplier profile found', 403));
-  }
+    if (permissionKeys.length === 0) return next();
 
-  req.isOwner = true;
-  req.supplierId = supplier.id;
-  next();
-});
+    const allowed = permissionKeys.some((key) => hasPermissionInSet(context.permissions, key));
+    if (!allowed) {
+      return next(new AppError('You do not have permission for this action', 403));
+    }
+    next();
+  });
+};
 
+/**
+ * Attach the supplier id and the full team context. This is the single place
+ * that resolves owner/member, so every downstream controller can use
+ * req.teamPermissions without another query.
+ */
 exports.resolveSupplier = catchAsync(async (req, res, next) => {
-  if (!req.user) {
-    return next(new AppError('Not authenticated', 401));
-  }
+  if (!req.user) return next(new AppError('Not authenticated', 401));
 
-  const supplierId = await resolveSupplierIdForUser(req.user);
+  const context = await getTeamContextForUser(req.user);
 
-  if (!supplierId) {
-    if (req.user.roles.includes('admin')) {
+  if (!context || !context.supplierId) {
+    if (Array.isArray(req.user.roles) && req.user.roles.includes('admin')) {
       return next(new AppError('No supplier profile linked to this admin account', 403));
     }
     return next(new AppError('Supplier access required', 403));
   }
 
-  req.supplierId = supplierId;
+  attachContext(req, context);
   next();
 });
+
+exports.isSupplierOwner = catchAsync(async (req, res, next) => {
+  if (!req.user) return next(new AppError('Not authenticated', 401));
+
+  const context = req.teamContext || await getTeamContextForUser(req.user);
+  if (!context || !context.isOwner) {
+    return next(new AppError('No supplier profile found', 403));
+  }
+
+  attachContext(req, context);
+  next();
+});
+
+async function resolveSupplierIdForUser(user) {
+  if (!user) return null;
+  const context = await getTeamContextForUser(user);
+  return context?.supplierId || null;
+}
+
+exports.resolveSupplierIdForUser = resolveSupplierIdForUser;
+
+/**
+ * Realtime chat access must use the same context as HTTP. Otherwise a custom
+ * role could be denied chat API calls but still subscribe to conversation
+ * rooms over the socket.
+ */
+async function resolveChatAccessForUser(user) {
+  const context = await getTeamContextForUser(user);
+  if (!context) return { supplierId: null, viaMembership: false, canChat: true };
+  if (context.isOwner) {
+    return { supplierId: context.supplierId, viaMembership: false, canChat: true };
+  }
+  return {
+    supplierId: context.supplierId,
+    viaMembership: true,
+    canChat: hasPermissionInSet(context.permissions, 'chat.view'),
+  };
+}
+
+exports.resolveChatAccessForUser = resolveChatAccessForUser;

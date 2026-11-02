@@ -8,6 +8,7 @@
 
 const catchAsync = require('../services/catchAsync');
 const AppError = require('../services/appError');
+const { notificationTypesForCategories, NOTIFICATION_CATEGORY_KEYS } = require('../../../config/permissions');
 const {
   getUserNotifications,
   markNotificationAsRead,
@@ -58,8 +59,16 @@ exports.markAsRead = catchAsync(async (req, res, next) => {
  */
 exports.markAllAsRead = catchAsync(async (req, res, next) => {
   const userId = req.user.id;
+  const allowedCategories = req.teamContext?.notificationCategories?.length
+    ? req.teamContext.notificationCategories
+    : NOTIFICATION_CATEGORY_KEYS;
+  const requested = typeof req.query.categories === 'string'
+    ? req.query.categories.split(',').map((value) => value.trim()).filter(Boolean)
+    : allowedCategories;
+  const categories = requested.filter((category) => allowedCategories.includes(category));
+  const types = notificationTypesForCategories(categories);
 
-  const result = await markAllNotificationsAsRead(userId);
+  const result = await markAllNotificationsAsRead(userId, types);
 
   if (!result.success) {
     return next(new AppError(result.error, 500));

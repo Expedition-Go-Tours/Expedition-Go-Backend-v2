@@ -32,6 +32,7 @@ const { logActivity } = require('../../core/services/auditLogger');
 const { shouldCountTourView } = require('../../core/services/viewTracking');
 const eventEmitter = require('../../core/services/eventEmitter');
 const { sanitizeBookingPaymentInternals } = require('../../core/services/sanitizeBookings');
+const { scopeBooking, scopeBookings, can, canAny } = require('../../core/services/supplierFieldAccess');
 const { bookingRefundState } = require('../../core/services/bookingRefundState');
 const { attachBookingAttention } = require('../../core/services/bookingAttentionService');
 const paymentLinkService = require('../../core/services/paymentLinkService');
@@ -2228,29 +2229,35 @@ const getSupplierBookings = catchAsync(async (req, res, next) => {
     flags,
   });
 
+  const summary = {
+    totalRevenue: parseFloat(revenueAgg._sum.grossAmount || 0),
+    totalEarnings: parseFloat(revenueAgg._sum.supplierPayout || 0),
+    totalBookings: revenueAgg._count,
+    counts,
+  };
+  if (!can(req, 'bookings.revenue.view') && !can(req, 'earnings.view')) {
+    delete summary.totalRevenue;
+    delete summary.totalEarnings;
+  }
+
   res.status(200).json({
     status: 'success',
     data: {
-      bookings: sanitizeBookingPaymentInternals(
+      bookings: scopeBookings(req, sanitizeBookingPaymentInternals(
         bookingsWithAttention.map((b) =>
           supplierContact.withSupplierContact(
             { ...b, pendingCancellation: pendingMap.get(b.id) || null },
             contacts.get(b.id) || null,
           ),
         ),
-      ),
+      )),
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(totalCount / take),
         totalCount,
         limit: take,
       },
-      summary: {
-        totalRevenue: parseFloat(revenueAgg._sum.grossAmount || 0),
-        totalEarnings: parseFloat(revenueAgg._sum.supplierPayout || 0),
-        totalBookings: revenueAgg._count,
-        counts,
-      },
+      summary,
     },
   });
 });
@@ -2312,6 +2319,9 @@ const exportSupplierBookings = catchAsync(async (req, res, next) => {
     prisma.booking.count({ where }),
   ]);
 
+  const includeContact = can(req, 'bookings.contact.view');
+  const includeMoney = can(req, 'bookings.revenue.view') || can(req, 'earnings.view');
+
   const header = [
     'Reference',
     'Storefront',
@@ -2323,18 +2333,17 @@ const exportSupplierBookings = catchAsync(async (req, res, next) => {
     'Activity time',
     'Tour',
     'Booked by',
-    // RELAY addresses, not the customer's real inbox: a spreadsheet is the
-    // easiest place for a contact list to leak out of the platform.
-    'Customer contact',
-    'Customer phone',
-    'Lead traveller',
-    'Lead traveller contact',
-    'Lead traveller phone',
+    ...(includeContact ? [
+      // RELAY addresses, not the customer's real inbox: a spreadsheet is the
+      // easiest place for a contact list to leak out of the platform.
+      'Customer contact',
+      'Customer phone',
+      'Lead traveller',
+      'Lead traveller contact',
+      'Lead traveller phone',
+    ] : []),
     'Travellers',
-    'Currency',
-    'Subtotal',
-    'Discount',
-    'Total charged',
+    ...(includeMoney ? ['Currency', 'Subtotal', 'Discount', 'Total charged'] : []),
     'Special requests',
     'Supplier notes',
   ];
@@ -2342,7 +2351,10 @@ const exportSupplierBookings = catchAsync(async (req, res, next) => {
   const isoDate = (value) => (value ? new Date(value).toISOString().slice(0, 10) : '');
 
   // Contact columns carry the relay address (see services/supplierContact).
-  const contacts = await supplierContact.contactAddressesForBookings(rows, supplierId);
+  // Do not even load them when the role cannot see contact details.
+  const contacts = includeContact
+    ? await supplierContact.contactAddressesForBookings(rows, supplierId)
+    : new Map();
 
   const lines = [header.join(',')];
   for (const row of rows) {
@@ -2364,26 +2376,32 @@ const exportSupplierBookings = catchAsync(async (req, res, next) => {
       row.selectedTime || '',
       row.tour?.title || '',
       row.customer?.name || '',
-      contact,
-      row.customer?.phone || '',
-      row.leadTravelerName || row.customer?.name || '',
-      contact,
-      row.leadTravelerPhone || row.customer?.phone || '',
+      ...(includeContact ? [
+        contact,
+        row.customer?.phone || '',
+        row.leadTravelerName || row.customer?.name || '',
+        contact,
+        row.leadTravelerPhone || row.customer?.phone || '',
+      ] : []),
       travelerCount,
-      row.currency,
-      Number(row.subtotal || 0),
-      Number(row.discounts || 0),
-      Number(row.grossAmount || 0),
+      ...(includeMoney ? [
+        row.currency,
+        Number(row.subtotal || 0),
+        Number(row.discounts || 0),
+        Number(row.grossAmount || 0),
+      ] : []),
       row.specialRequests || '',
       row.supplierNotes || '',
     ].map(csvCell).join(','));
   }
 
-  lines.push('');
-  lines.push(csvCell(
-    'NOTE: the contact columns are reply addresses that reach the guest '
-    + '(by email and in the app). The customer\'s real email address is never exported.',
-  ));
+  if (includeContact) {
+    lines.push('');
+    lines.push(csvCell(
+      'NOTE: the contact columns are reply addresses that reach the guest '
+      + '(by email and in the app). The customer\'s real email address is never exported.',
+    ));
+  }
 
   // Honest truncation: a file that stops at the cap without saying so reads as
   // "these are all my bookings".
@@ -2512,12 +2530,12 @@ const getSupplierBookingDetail = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: {
-      booking: sanitizeBookingPaymentInternals(
+      booking: scopeBooking(req, sanitizeBookingPaymentInternals(
         supplierContact.withSupplierContact(
           { ...bookingWithAttention, pendingCancellation: pendingMap.get(booking.id) || null },
           contact,
         ),
-      ),
+      )),
     },
   });
 });

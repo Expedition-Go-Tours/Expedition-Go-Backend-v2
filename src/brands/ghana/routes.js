@@ -1197,7 +1197,7 @@ router.post('/reviews', protect, restrictTo('customer'), uploadReviewPhotos, rev
 router.get('/supplier/bookings', protect, resolveSupplier, requireTeamPermission('bookings.view'), validate(getSupplierBookingsSchema), travioGhanaController.getSupplierBookings);
 // `export` is a literal path, so it is registered BEFORE `/:id` — otherwise
 // "export" would be read as a booking id and 404.
-router.get('/supplier/bookings/export', protect, resolveSupplier, requireTeamPermission('bookings.view'), validate(getSupplierBookingsSchema), travioGhanaController.exportSupplierBookings);
+router.get('/supplier/bookings/export', protect, resolveSupplier, requireTeamPermission('bookings.export'), validate(getSupplierBookingsSchema), travioGhanaController.exportSupplierBookings);
 router.post('/supplier/bookings/:id/reschedule', protect, resolveSupplier, requireTeamPermission('bookings.manage'), validate(rescheduleBookingSchema), travioGhanaController.rescheduleSupplierBooking);
 router.get('/supplier/bookings/:id', protect, resolveSupplier, requireTeamPermission('bookings.view'), validate(supplierBookingParamsSchema), travioGhanaController.getSupplierBookingDetail);
 router.post('/supplier/bookings/:id/payment-link', protect, resolveSupplier, requireTeamPermission('bookings.manage'), paymentLinkLimiter, validate(supplierPaymentLinkSchema), travioGhanaController.sendSupplierPaymentLink);

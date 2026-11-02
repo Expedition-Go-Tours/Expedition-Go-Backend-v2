@@ -497,6 +497,7 @@ model User {
   cartItems                    CartItem[]
   teamMembers                  TeamMember[]              @relation("SupplierTeam")
   teamInvitations              TeamMember[]              @relation("TeamInviter")
+  teamRoles                    TeamRole[]                @relation("SupplierTeamRoles")
   notificationRecipients        SupplierNotificationRecipient[] @relation("SupplierNotificationRecipients")
   invitedNotificationRecipients SupplierNotificationRecipient[] @relation("NotificationRecipientInviter")
   chatParticipants             ConversationParticipant[]
@@ -2512,6 +2513,12 @@ model TeamMember {
   inviteToken    String?   @unique
   tokenExpiresAt DateTime?
   acceptedAt     DateTime?
+  // Custom roles are additive to `roles`; a member still holds at most two
+  // roles in total. Member-level overrides are set by the owner.
+  customRoles    TeamMemberRole[]
+  landingPath    String?
+  notificationCategories String[] @default([])
+  uiPreferences  Json?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -2519,6 +2526,41 @@ model TeamMember {
   @@index([supplierId])
   @@index([email])
   @@index([inviteToken])
+}
+
+// Supplier-defined roles. Built-in roles remain code-defined in
+// config/teamPermissions.js; these are the owner's custom permission sets.
+model TeamRole {
+  id            String   @id @default(cuid())
+  supplierId    String
+  supplier      User     @relation("SupplierTeamRoles", fields: [supplierId], references: [id], onDelete: Cascade)
+  name          String
+  slug          String
+  description   String?
+  permissions   String[]
+  landingPath   String?
+  notificationCategories String[] @default([])
+  uiPreferences Json?
+  isArchived    Boolean  @default(false)
+  version       Int      @default(1)
+  createdById   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  members TeamMemberRole[]
+
+  @@unique([supplierId, slug])
+  @@index([supplierId, isArchived])
+}
+
+model TeamMemberRole {
+  memberId String
+  member   TeamMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  roleId   String
+  role     TeamRole   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([memberId, roleId])
+  @@index([roleId])
 }
 
 // Additional email addresses that receive a supplier's email notifications.

@@ -94,7 +94,7 @@ const controller = require('../../src/brands/ghana/controller');
 const supplierContact = require('../../src/core/services/supplierContact');
 
 async function invoke(query = {}) {
-  const req = { supplierId: 'supplier-1', query, user: { id: 'user-1' } };
+  const req = { supplierId: 'supplier-1', query, user: { id: 'user-1' }, teamPermissions: ['*'] };
   const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
   const next = jest.fn();
   await controller.getSupplierBookings(req, res, next);
@@ -167,7 +167,7 @@ describe('the detail endpoint behind the panel', () => {
   it('404s for a booking on someone else’s tour', async () => {
     prisma.booking.findFirst.mockResolvedValue(null);
 
-    const req = { supplierId: 'supplier-1', params: { id: 'b-foreign' }, user: { id: 'user-1' } };
+    const req = { supplierId: 'supplier-1', params: { id: 'b-foreign' }, user: { id: 'user-1' }, teamPermissions: ['*'] };
     const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
     const next = jest.fn();
 
@@ -191,7 +191,7 @@ describe('the detail endpoint behind the panel', () => {
     };
     prisma.booking.findFirst.mockResolvedValue(row);
 
-    const req = { supplierId: 'supplier-1', params: { id: 'b-1' }, user: { id: 'user-1' } };
+    const req = { supplierId: 'supplier-1', params: { id: 'b-1' }, user: { id: 'user-1' }, teamPermissions: ['*'] };
     const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
     const next = jest.fn();
 
@@ -229,7 +229,7 @@ describe('the detail endpoint behind the panel', () => {
 
 describe('the CSV export', () => {
   async function invokeExport(query = {}) {
-    const req = { supplierId: 'supplier-1', query, user: { id: 'user-1' } };
+    const req = { supplierId: 'supplier-1', query, user: { id: 'user-1' }, teamPermissions: ['*'] };
     const res = {
       status: jest.fn().mockReturnThis(),
       setHeader: jest.fn(),
