@@ -17,7 +17,7 @@
 
 const express = require('express');
 const { createLimiter } = require('../../../middleware/dynamicRateLimiter');
-const { protect, restrictTo } = require('../../../middleware/authMiddleware');
+const { protect, restrictTo, optionalAuth } = require('../../../middleware/authMiddleware');
 // Supplier-scoped routes resolve the supplier through the team membership
 // (`resolveSupplier`), not through `restrictTo('supplier')`: a team member's own
 // account carries `roles: ['customer']` — the supplier they work for is reached
@@ -104,6 +104,45 @@ router.post('/checkout/confirm', confirmLimiter, protect, restrictTo('customer')
 // ── Wishlist (customer) ──────────────────────────────────────────────
 router.get('/wishlist', protect, restrictTo('customer'), travioAfricaController.getWishlist);
 router.patch('/wishlist/:tourId', protect, restrictTo('customer'), validate(tourIdParamSchema), travioAfricaController.toggleWishlist);
+// Public write/read surfaces added in Sprint 1: a waitlist join writes a row
+// from an anonymous request, and a share token is enumerable-looking enough
+// to be worth throttling even though it is opaque.
+const waitlistLimiter = createLimiter({
+  name: 'waitlist',
+  defaultMax: 10,
+  defaultWindowMs: 15 * 60 * 1000,
+  message: {
+    status: 'fail',
+    message: 'Too many waitlist requests from this IP, please try again later.',
+  },
+});
+const wishlistShareLimiter = createLimiter({
+  name: 'wishlist-share',
+  defaultMax: 30,
+  defaultWindowMs: 15 * 60 * 1000,
+  message: {
+    status: 'fail',
+    message: 'Too many requests from this IP, please try again later.',
+  },
+});
+
+// ── Sprint 1: shareable wishlist ────────────────────────────────────────────
+// POST  /wishlist/share         mint (or reuse) the owner's link
+// DELETE /wishlist/share        revoke it — an old URL stops working at once
+// GET   /wishlist/shared/:token public read; revoked/unknown tokens are 404
+router.post('/wishlist/share', protect, restrictTo('customer'), travioAfricaController.createWishlistShare);
+router.delete('/wishlist/share', protect, restrictTo('customer'), travioAfricaController.revokeWishlistShare);
+router.get('/wishlist/shared/:token', wishlistShareLimiter, travioAfricaController.getSharedWishlist);
+
+// ── Sprint 1: waitlist for a sold-out date ──────────────────────────────────
+// Guests may join (optionalAuth): no account is required to be told a date
+// reopened, exactly as no account is required to book one.
+router.post('/waitlist', waitlistLimiter, optionalAuth, travioAfricaController.joinWaitlist);
+router.delete('/waitlist', waitlistLimiter, optionalAuth, travioAfricaController.leaveWaitlist);
+
+// ── Sprint 1: trust facts next to the price ────────────────────────────────
+router.get('/tours/:id/trust', travioAfricaController.getTourTrust);
+
 
 // ── Bookings (customer) ──────────────────────────────────────────────
 router.get('/bookings', protect, restrictTo('customer'), validate(getBookingsSchema), travioAfricaController.getMyBookings);

@@ -304,6 +304,8 @@ enum NotificationType {
   INVOICE_GENERATED // Finance v3: a payout-window invoice was generated
   INVOICE_PAID // Finance v3: finance recorded the bank reference (payment sent)
   INVOICE_APPROVED // Finance v3: finance approved the invoice (transfer authorized)
+  PRICE_DROP // A wishlisted experience dropped in price
+  WAITLIST_OPEN // A sold-out date on the waitlist became bookable again
 }
 
 // Lifecycle of an additional notification email address. PENDING until the
@@ -511,6 +513,8 @@ model User {
   articles                     Article[]
   keywordRequests              KeywordRequest[]
   wishlistItems                WishlistItem[]
+  wishlistShares               WishlistShare[]
+  waitlistEntries              WaitlistEntry[]
   checkoutDrafts               CheckoutDraft[]
   stayProperties               StayProperty[]
   stayOffers                   StayOffer[]
@@ -547,9 +551,82 @@ model WishlistItem {
   tour    Tour     @relation(fields: [tourId], references: [id], onDelete: Cascade)
   addedAt DateTime @default(now())
 
+  // Price the ADULT starting price resolved to when the item was saved. Written
+  // server-side from the same cheapestRetailPrice() the listing cards use, so a
+  // later drop is measured against what the traveller actually saw. Nullable:
+  // rows saved before this shipped have no baseline and are never alerted on.
+  priceAtSave Decimal? @db.Decimal(10, 2)
+  currency    String?
+  // Last time a price-drop email/notification went out for this row. The sweep
+  // uses it as a 30-day cooldown so a permanently cheaper tour cannot spam.
+  lastPriceAlertAt DateTime?
+
   @@unique([userId, tourId])
   @@index([userId, addedAt])
   @@index([tourId])
+  @@index([lastPriceAlertAt])
+}
+
+// A shareable, revocable link to a customer's wishlist.
+//
+// The token is opaque and random - never an encoded list of tour ids, which
+// would leak catalogue structure and let anyone enumerate other people's lists.
+// Only the owner can mint one, and revoking is a soft delete so a link that
+// leaked can be killed without touching the wishlist itself.
+model WishlistShare {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String    @unique
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+  expiresAt DateTime?
+
+  @@index([userId, revokedAt])
+}
+
+// "Tell me if this sold-out date opens up."
+//
+// One row per (tour, date, email) so the same person cannot stack entries.
+// `userId` is optional: a guest can join from the storefront without an
+// account, exactly like a guest checkout. `notifiedAt` is the idempotency
+// guard for the sweep - at-least-once delivery must never send twice.
+model WaitlistEntry {
+  id         String    @id @default(cuid())
+  tourId     String
+  tour       Tour      @relation(fields: [tourId], references: [id], onDelete: Cascade)
+  travelDate DateTime  @map("selectedDate")
+  userId     String?
+  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  email      String
+  createdAt  DateTime  @default(now())
+  notifiedAt DateTime?
+  cancelledAt DateTime?
+
+  @@unique([tourId, travelDate, email])
+  @@index([tourId, travelDate, notifiedAt])
+  @@index([userId])
+}
+
+// Guest checkout access.
+//
+// A guest has no account, so nothing else can authorize them. This table maps
+// an opaque bearer token (stored hashed) to the draft or booking it opened —
+// the pay-now token is minted at confirm and re-pointed at the booking once
+// the webhook materializes it. Ids are plain strings rather than relations on
+// purpose: the row must outlive a draft that gets cleaned up, and it must be
+// revocable independently of either resource.
+model GuestAccess {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  draftId   String?
+  bookingId String?
+  createdAt DateTime  @default(now())
+  expiresAt DateTime
+
+  @@index([draftId])
+  @@index([bookingId])
+  @@index([expiresAt])
 }
 
 model SupplierProfile {
@@ -864,6 +941,7 @@ model Tour {
   travioAfricaTour    TravioAfricaTour?
   articles            ArticleTour[]
   wishlistItems       WishlistItem[]
+  waitlistEntries     WaitlistEntry[]
   checkoutDrafts      CheckoutDraft[]
   dailyStats          DailyTourStats[]
   imageAnalyses       TourImageAnalysis[]
@@ -1478,8 +1556,18 @@ model BookingChange {
 // released by the expired-session webhook or the expire-checkout-holds sweep.
 model CheckoutDraft {
   id         String @id @default(cuid())
-  customerId String
-  customer   User   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  // Optional from Sprint 1: a guest can hold seats and pay without creating an
+  // account. `bookingId`/`guestId` on the materialised Booking carry the
+  // identity instead; see Booking.customerId's comment for the same rule.
+  customerId String?
+  customer   User?  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  // Guest identity captured on the checkout page. Never used to auto-link an
+  // existing account by email — that is a separate, verified claim. Access to
+  // the draft after that is granted by GuestAccess, not by these columns.
+  guestName  String?
+  guestEmail String?
+  guestPhone String?
   tourId     String
   tour       Tour   @relation(fields: [tourId], references: [id], onDelete: Cascade)
 
@@ -1517,12 +1605,19 @@ model CheckoutDraft {
   expiresAt       DateTime
   bookingId       String? // Set when materialized (PAID/REFUNDED bookkeeping)
 
+  // Abandoned-checkout recovery: set once, the first time the recovery sweep
+  // emails this draft. The column (not a queue dedupe key) is the source of
+  // truth, so a retried job can never send a second email.
+  abandonedNotifiedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([tourId, travelDate, status]) // Hold-aware capacity checks
   @@index([status, expiresAt]) // Expiry sweep
   @@index([customerId]) // "My checkouts" + dedup guard
+  @@index([guestEmail]) // Guest retry/dedup guard
+  @@index([abandonedNotifiedAt]) // Recovery sweep
   @@index([optionId]) // Per-option hold lookups
 }
 

@@ -184,6 +184,13 @@ const SAMPLE = {
   cancellationUrl: 'https://travioghana.com/bookings/cmv2v1rxj0200i4nqlq9n1fau/cancellation',
   browseUrl: 'https://travioghana.com/tours',
   supportUrl: 'https://travioghana.com/support',
+  // Conversion-email links and price facts (Sprint 1).
+  resumeUrl: 'https://travioghana.com/tour/cmv2v1rxj0200i4nqlq9n1fau/accra-flying-dress-experience?date=2026-11-04',
+  placeLabel: 'Accra, Ghana',
+  oldPriceLabel: '$85.00',
+  newPriceLabel: '$68.00',
+  savingsLabel: '$17.00',
+  priceLabel: '$68.00',
   supplierBookingUrl: 'https://supplier.travioghana.com/bookings?bookingId=cmv2v1rxj0200i4nqlq9n1fau',
   supplierPayoutUrl: 'https://supplier.travioghana.com/finance',
   dashboardUrl: 'https://supplier.travioghana.com/',
@@ -312,6 +319,17 @@ const SAMPLE_OVERRIDES = {
     cancelledAtLabel: '4 Nov 2026, 08:01 GMT',
   },
   'supplier-platform-cancelled': { payoutAmountLabel: '$0.00' },
+
+  // Sprint 1 conversion emails. Same fabricated booking, different intent.
+  'checkout-abandoned': {
+    preheader: 'Your seats for Accra Flying Dress Experience were released',
+  },
+  'wishlist-price-drop': {
+    preheader: 'Accra Flying Dress Experience is now $68.00, down from $85.00',
+  },
+  'waitlist-open': {
+    preheader: 'Accra Flying Dress Experience has availability on Wed, 4 Nov 2026',
+  },
 };
 
 function renderTemplateDoc(key) {

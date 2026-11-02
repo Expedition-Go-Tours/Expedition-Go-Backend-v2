@@ -41,6 +41,7 @@ const { notifyDiscord } = require('./services/discordNotifier');
 const { salesBookingCancelled } = require('./services/channelEmbeds');
 
 const { getBrand, eventNamespaceForSource } = require('../../config/brands');
+const { isEnabled } = require('./services/featureFlags');
 function makeStorefrontController(brandKey) {
   const BRAND = getBrand(brandKey);
 
@@ -2512,6 +2513,29 @@ controller.toggleWishlist = catchAsync(async (req, res, next) => {
     return next(new AppError(`Tour not available on ${BRAND.brandName}`, 404));
   }
 
+  // Price baseline for the price-drop alert: captured server-side from the
+  // same cheapestRetailPrice() the listing cards quote, so a later alert is
+  // measured against what the traveller actually saw. Never read from the
+  // request body — a client-supplied baseline would make any drop look real.
+  const priceSource = await prisma.tour.findUnique({
+    where: { id: tourId },
+    select: { schedulesAndPricing: true },
+  });
+  let priceAtSave = null;
+  let currency = null;
+  try {
+    const parsed = priceSource?.schedulesAndPricing
+      ? (typeof priceSource.schedulesAndPricing === 'string'
+          ? JSON.parse(priceSource.schedulesAndPricing)
+          : priceSource.schedulesAndPricing)
+      : null;
+    priceAtSave = parsed ? cheapestRetailPrice(parsed) : null;
+    currency = parsed?.pricingSchedules?.currency || null;
+  } catch {
+    priceAtSave = null;
+  }
+  if (priceAtSave != null && !Number.isFinite(Number(priceAtSave))) priceAtSave = null;
+
   const existing = await prisma.wishlistItem.findUnique({
     where: { userId_tourId: { userId: req.user.id, tourId } },
     select: { id: true },
@@ -2534,7 +2558,13 @@ controller.toggleWishlist = catchAsync(async (req, res, next) => {
     });
   }
 
-  await prisma.wishlistItem.create({ data: { userId: req.user.id, tourId } });
+  await prisma.wishlistItem.create({
+    data: {
+      userId: req.user.id,
+      tourId,
+      ...(priceAtSave != null ? { priceAtSave, currency } : {}),
+    },
+  });
 
   await logActivity({
     userId: req.user.id,
@@ -2548,6 +2578,201 @@ controller.toggleWishlist = catchAsync(async (req, res, next) => {
     status: 'success',
     data: { isWishlisted: true },
   });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Sprint 1: shareable wishlists, sold-out waitlist, trust signals.
+//
+// All three live on the shared controller so every storefront gets them from
+// one implementation. The wishlist itself is account-scoped and shared across
+// storefronts; the share token is the only thing that exposes it publicly.
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Mint (or reuse) the owner's shareable wishlist link.
+ *
+ * Reusing the live token means a repeated click never accumulates dead links,
+ * and revoking is a soft delete so an old URL stops working immediately.
+ */
+controller.createWishlistShare = catchAsync(async (req, res, next) => {
+  if (!isEnabled('wishlistShare')) {
+    return next(new AppError('Wishlist sharing is not available right now', 503));
+  }
+
+  const existing = await prisma.wishlistShare.findFirst({
+    where: { userId: req.user.id, revokedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  let token = existing?.token;
+  if (!token) {
+    token = crypto.randomBytes(24).toString('base64url');
+    await prisma.wishlistShare.create({ data: { userId: req.user.id, token } });
+  }
+
+  const origin = resolveAllowedClientUrl(req);
+  res.status(200).json({
+    status: 'success',
+    data: { token, url: `${origin}/wishlist/shared/${encodeURIComponent(token)}` },
+  });
+});
+
+/** Kill the owner's live share link. Idempotent. */
+controller.revokeWishlistShare = catchAsync(async (req, res, next) => {
+  if (!isEnabled('wishlistShare')) {
+    return next(new AppError('Wishlist sharing is not available right now', 503));
+  }
+
+  const revoked = await prisma.wishlistShare.updateMany({
+    where: { userId: req.user.id, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+
+  res.status(200).json({ status: 'success', data: { revoked: revoked.count > 0 } });
+});
+
+/**
+ * Public read of someone's shared wishlist.
+ *
+ * Opaque token, no PII, only tours that are still live on this storefront.
+ * A revoked or expired token answers 404 — indistinguishable from a typo, so
+ * a leaked link cannot be probed for existence.
+ */
+controller.getSharedWishlist = catchAsync(async (req, res, next) => {
+  if (!isEnabled('wishlistShare')) {
+    return next(new AppError('Wishlist sharing is not available right now', 503));
+  }
+
+  const token = String(req.params.token || '').trim();
+  if (!token || token.length > 128) return next(new AppError('That wishlist link is not valid', 404));
+
+  const share = await prisma.wishlistShare.findUnique({
+    where: { token },
+    select: { userId: true, revokedAt: true, expiresAt: true },
+  });
+  if (!share || share.revokedAt || (share.expiresAt && share.expiresAt < new Date())) {
+    return next(new AppError('That wishlist link is no longer available', 404));
+  }
+
+  const owned = await prisma.wishlistItem.findMany({
+    where: {
+      userId: share.userId,
+      tour: {
+        status: { not: 'DRAFT' },
+        [BRAND.listingModel]: { isActive: true },
+      },
+    },
+    orderBy: { addedAt: 'desc' },
+    include: { tour: { select: WISHLIST_TOUR_SELECT } },
+  });
+
+  const tours = owned
+    .filter((i) => i.tour)
+    .map((i) => ({ ...transformForListing(i.tour), addedAt: i.addedAt }));
+
+  res.status(200).json({
+    status: 'success',
+    results: tours.length,
+    data: { tours },
+  });
+});
+
+/**
+ * Join the waitlist for a date that is currently full.
+ */
+controller.joinWaitlist = catchAsync(async (req, res, next) => {
+  if (!isEnabled('waitlist')) return next(new AppError('The waitlist is not available right now', 503));
+
+  const { joinWaitlist } = require('./services/waitlistService');
+  const tourId = String(req.body.tourId || '').trim();
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const travelDate = req.body.travelDate;
+
+  const result = await joinWaitlist({
+    tourId,
+    travelDate,
+    email,
+    userId: req.user ? req.user.id : null,
+  });
+
+  if (!result.ok) return next(new AppError(result.reason, 400));
+
+  res.status(result.alreadyJoined ? 200 : 201).json({
+    status: 'success',
+    data: { alreadyJoined: !!result.alreadyJoined, email },
+  });
+});
+
+/** Leave the waitlist (email link, or the form on the tour page). */
+controller.leaveWaitlist = catchAsync(async (req, res, next) => {
+  if (!isEnabled('waitlist')) return next(new AppError('The waitlist is not available right now', 503));
+
+  const { leaveWaitlist } = require('./services/waitlistService');
+  const result = await leaveWaitlist({
+    entryId: req.body.entryId || null,
+    email: req.body.email || null,
+  });
+
+  if (!result.ok) return next(new AppError(result.reason, 400));
+
+  res.status(200).json({ status: 'success', data: { left: !!result.left } });
+});
+
+/**
+ * Trust facts shown next to the price.
+ *
+ * Everything here is derived from real rows: reviews that came from an actual
+ * booking, and bookings placed in the last week. Nothing is estimated, and
+ * anything below `MIN_SAMPLE` is reported as null so the storefront hides the
+ * stat instead of showing a number that would embarrass the tour.
+ */
+controller.getTourTrust = catchAsync(async (req, res, next) => {
+  if (!isEnabled('trustSignals')) return next(new AppError('Not available', 404));
+
+  const param = String(req.params.id || '').trim();
+  if (!param) return next(new AppError('A tour is required', 400));
+
+  const where = isTourIdParam(param) ? { id: param } : { slug: param };
+  const tour = await prisma.tour.findFirst({
+    where: { ...where, status: { not: 'DRAFT' } },
+    select: { id: true, averageRating: true, reviewCount: true },
+  });
+  if (!tour) return next(new AppError('Tour not found', 404));
+
+  const cacheKey = `${CACHE_PREFIX}trust:${tour.id}`;
+  const payload = await cache.getOrSet(cacheKey, async () => {
+    const MIN_SAMPLE = 3;
+    const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+
+    const [verifiedReviews, totalReviews, recentBookings] = await Promise.all([
+      prisma.review.count({
+        where: { tourId: tour.id, status: 'APPROVED', bookingId: { not: null } },
+      }),
+      prisma.review.count({ where: { tourId: tour.id, status: 'APPROVED' } }),
+      prisma.booking.count({
+        where: {
+          tourId: tour.id,
+          isSimulated: false,
+          status: { in: ['CONFIRMED', 'COMPLETED'] },
+          createdAt: { gte: weekAgo },
+        },
+      }),
+    ]);
+
+    // Anything below the sample size is reported as null so the storefront
+    // hides the stat rather than printing "1 traveller booked this week".
+    return {
+      status: 'success',
+      data: {
+        verifiedReviewCount: verifiedReviews >= MIN_SAMPLE ? verifiedReviews : null,
+        totalReviewCount: totalReviews,
+        bookingsLast7Days: recentBookings >= MIN_SAMPLE ? recentBookings : null,
+        averageRating: tour.averageRating ?? null,
+      },
+    };
+  }, 600);
+
+  res.status(200).json(payload);
 });
 
 controller.getMyBookings = catchAsync(async (req, res, next) => {

@@ -23,6 +23,7 @@ const { refundCancelledBooking, rescheduleBookingBySupplier } = require('../../c
 const supplierContact = require('../../core/services/supplierContact');
 const { resolveAllowedClientUrl } = require('../../core/services/clientOrigin');
 const { acquireHold, releaseHold } = require('../../core/services/checkoutHold');
+const { guestCheckoutEnabled, issueGuestAccess, bindGuestAccessToBooking, ownsGuest } = require('../../core/services/guestAccess');
 const { notifyAdmin } = require('../../core/services/adminNotificationService');
 const getConfig = require('../../core/services/getConfig');
 const { detachBookingFromActiveRequests } = require('../../core/services/financeHelpers');
@@ -39,6 +40,35 @@ const { tourMatchWhere, isTourIdParam } = require('../../core/services/tourLooku
 
 const { getBrand, eventNamespaceForSource } = require('../../../config/brands');
 const BRAND = getBrand('ghana');
+
+/**
+ * Ownership check for the draft/booking routes a guest also has to reach.
+ *
+ * A signed-in customer must own the resource outright — their session is the
+ * credential, and a guest token can never open somebody else's draft. A guest
+ * (no session) must present a GuestAccess token bound to that exact resource;
+ * the middleware has already validated and attached it.
+ *
+ * Every route below used to be `where: { id, customerId: req.user.id }`, which
+ * silently 404'd a guest. The lookup now finds the row and asks this instead,
+ * so one function decides access for both kinds of caller.
+ */
+function requestOwnsDraft(req, draft) {
+  if (!draft) return false;
+  // The guest token is a bearer credential: checked first so a guest who then
+  // signs in mid-flow (or a refresh that restored both) still resolves. It
+  // only ever matches the one resource it was minted for.
+  if (ownsGuest(req, { draftId: draft.id })) return true;
+  if (req.user) return draft.customerId === req.user.id;
+  return false;
+}
+
+function requestOwnsBooking(req, booking) {
+  if (!booking) return false;
+  if (ownsGuest(req, { bookingId: booking.id })) return true;
+  if (req.user) return booking.customerId === req.user.id;
+  return false;
+}
 
 const CACHE_PREFIX = BRAND.cachePrefix;
 const LIST_CACHE_KEY = `${CACHE_PREFIX}tours:list`;
@@ -621,7 +651,15 @@ const getTourBySlug = catchAsync(async (req, res, next) => {
 });
 
 const confirmBooking = catchAsync(async (req, res, next) => {
-  const customerId = req.user.id;
+  // Guest checkout (Sprint 1): no account, no session. Everything downstream
+  // keys off `customerId === null` plus the lead-traveller contact the
+  // storefront already collects, and the caller gets an opaque GuestAccess
+  // token so it can still reach the draft/booking it just created.
+  const guestMode = !req.user;
+  if (guestMode && !guestCheckoutEnabled()) {
+    return next(new AppError('Please sign in to book this experience', 401));
+  }
+  const customerId = req.user ? req.user.id : null;
   const {
     tourId,
     travelDate,
@@ -666,6 +704,11 @@ const confirmBooking = catchAsync(async (req, res, next) => {
   const leadPhone = typeof leadTraveler?.phone === 'string' ? leadTraveler.phone.trim() : '';
   if (leadName && !isValidEmail(leadEmail)) {
     return next(new AppError('A valid leadTraveler.email is required when a lead traveler name is provided', 400));
+  }
+  // A guest has no account to fall back on: the lead traveller IS the contact
+  // record, so all three fields are mandatory rather than optional.
+  if (guestMode && (!leadName || !isValidEmail(leadEmail) || !leadPhone)) {
+    return next(new AppError('Your name, email and phone are required to book without an account', 400));
   }
 
   const travelerValidation = validateTravelerInfo(travelers, pickup ? { requireLocation: false } : undefined);
@@ -796,7 +839,13 @@ const confirmBooking = catchAsync(async (req, res, next) => {
   // Dedup: prevent duplicate bookings on retry (slot-scoped when one is chosen)
   const existingBooking = await prisma.booking.findFirst({
     where: {
-      customerId,
+      // A guest has no customerId, so the same tour/date/time has to be
+      // deduped on the lead traveller's email instead. Scoping it to
+      // `customerId: null` alone would let ONE guest's retry be blocked by a
+      // DIFFERENT guest who booked the same slot.
+      ...(customerId
+        ? { customerId }
+        : { customerId: null, leadTravelerEmail: leadEmail }),
       tourId,
       travelDate: new Date(travelDate),
       ...(selectedTime ? { selectedTime } : {}),
@@ -917,6 +966,19 @@ const confirmBooking = catchAsync(async (req, res, next) => {
       data: {
         bookingNumber,
         customerId,
+        // Guest booking: no account, so the contact record is a BookingGuest
+        // rather than an invented User (see Booking.customerId's comment).
+        ...(customerId
+          ? {}
+          : {
+              guest: {
+                create: {
+                  name: leadName || 'Guest',
+                  email: leadEmail || null,
+                  phone: leadPhone || null,
+                },
+              },
+            }),
         tourId,
         source: 'GHANA',
         ...(optionRef ? { optionId: optionRef.optionId, optionTitle: optionRef.optionTitle } : {}),
@@ -982,11 +1044,13 @@ const confirmBooking = catchAsync(async (req, res, next) => {
     }
 
     // Clean up any cart items for this tour+date+customer
-    prisma.cartItem
-      .deleteMany({
-        where: { customerId, tourId, travelDate: new Date(travelDate) },
-      })
-      .catch(() => {});
+    if (customerId) {
+      prisma.cartItem
+        .deleteMany({
+          where: { customerId, tourId, travelDate: new Date(travelDate) },
+        })
+        .catch(() => {});
+    }
 
     enqueueNotification({
       userId: tour.supplierId,
@@ -1047,6 +1111,11 @@ const confirmBooking = catchAsync(async (req, res, next) => {
       status: 'success',
       data: {
         booking: result,
+        // Guest checkout: the token the browser keeps so it can read this
+        // booking from the confirmation page without an account.
+        ...(customerId
+          ? {}
+          : { guestToken: (await issueGuestAccess({ bookingId: result.id })).token }),
         checkout: null,
         message: 'Your spot is reserved. Payment will be collected before the activity.',
       },
@@ -1063,6 +1132,9 @@ const confirmBooking = catchAsync(async (req, res, next) => {
   try {
     holdResult = await acquireHold({
       customerId,
+      ...(customerId
+        ? {}
+        : { guest: { name: leadName, email: leadEmail, phone: leadPhone } }),
       tourId,
       tour,
       travelDate: new Date(travelDate),
@@ -1099,6 +1171,13 @@ const confirmBooking = catchAsync(async (req, res, next) => {
   if (!holdResult.ok) {
     return next(new AppError(holdResult.reason || 'No longer available', 409));
   }
+
+  // Guest checkout: hand the browser an opaque token for this draft. It is
+  // the only credential a guest has — the draft read, release and PayPal
+  // capture routes all authorize against it instead of a session.
+  const guestToken = customerId
+    ? null
+    : (await issueGuestAccess({ draftId: holdResult.draftId })).token;
 
   // PayPal: same hold and frozen price, collected by a different provider.
   // The booking is materialized only after PayPal captures the money.
@@ -1149,6 +1228,7 @@ const confirmBooking = catchAsync(async (req, res, next) => {
           expiresAt: holdResult.expiresAt,
           amount: pricing.total,
           currency: pricing.currency,
+          ...(guestToken ? { guestToken } : {}),
         },
         message: 'Redirecting to PayPal…',
       },
@@ -1208,6 +1288,7 @@ const confirmBooking = catchAsync(async (req, res, next) => {
           expiresAt: holdResult.expiresAt,
           amount: pricing.total,
           currency: pricing.currency,
+          ...(guestToken ? { guestToken } : {}),
         },
         message: 'Redirecting to secure payment…',
       },
@@ -1227,7 +1308,7 @@ const confirmBooking = catchAsync(async (req, res, next) => {
       // Attach the Stripe customer so hosted Checkout can offer previously
       // saved cards; email stays as the fallback when customer creation fails.
       customerId: await ensureStripeCustomer(req.user).catch(() => null),
-      customerEmail: req.user?.email,
+      customerEmail: req.user?.email || leadEmail,
       expiresAt: holdResult.expiresAt,
       clientUrl: resolveAllowedClientUrl(req),
       // Stripe replaces {CHECKOUT_SESSION_ID} with the real session id after creation.
@@ -1257,6 +1338,7 @@ const confirmBooking = catchAsync(async (req, res, next) => {
     status: 'success',
     data: {
       checkout: { id: checkout.id, url: checkout.url },
+      ...(guestToken ? { guestToken } : {}),
       message: 'Redirecting to secure payment…',
     },
   });
@@ -1276,7 +1358,7 @@ const confirmBooking = catchAsync(async (req, res, next) => {
 const getCheckoutDraft = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const draft = await prisma.checkoutDraft.findFirst({
-    where: { id, customerId: req.user.id, status: 'HOLDING' },
+    where: { id, status: 'HOLDING' },
     include: {
       tour: {
         select: {
@@ -1295,7 +1377,9 @@ const getCheckoutDraft = catchAsync(async (req, res, next) => {
     },
   });
 
-  if (!draft) {
+  // Found by id alone so a guest's draft is reachable at all; ownership is
+  // decided per caller (session owner, or the GuestAccess token for it).
+  if (!requestOwnsDraft(req, draft)) {
     return next(new AppError('Checkout session not found or already completed', 404));
   }
 
@@ -1387,10 +1471,12 @@ const getCheckoutDraft = catchAsync(async (req, res, next) => {
 const releaseCheckoutDraft = catchAsync(async (req, res) => {
   const { id } = req.params;
   const draft = await prisma.checkoutDraft.findFirst({
-    where: { id, customerId: req.user.id, status: 'HOLDING' },
+    where: { id, status: 'HOLDING' },
   });
 
-  if (!draft) {
+  // Same answer for "not yours" and "does not exist": a release attempt must
+  // never confirm that some other id is real.
+  if (!requestOwnsDraft(req, draft)) {
     return res.status(200).json({ status: 'success', data: { released: false } });
   }
 
@@ -1476,10 +1562,9 @@ const getMyBookings = catchAsync(async (req, res, next) => {
 
 const getBooking = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const customerId = req.user.id;
 
   const booking = await prisma.booking.findFirst({
-    where: { id, customerId },
+    where: { id },
     include: {
       tour: {
         include: {
@@ -1491,7 +1576,11 @@ const getBooking = catchAsync(async (req, res, next) => {
     },
   });
 
-  if (!booking) return next(new AppError('Booking not found', 404));
+  // Looked up by id alone (a guest booking has no customerId to match on) and
+  // then ownership-tested: a signed-in caller must own it, a guest must hold
+  // the GuestAccess token issued for it. `customerId: null` in a where clause
+  // would have matched EVERY guest booking — reading any id would have worked.
+  if (!requestOwnsBooking(req, booking)) return next(new AppError('Booking not found', 404));
 
   const decorated = withChoiceToken({ ...booking, refundState: bookingRefundState(booking) });
   res.status(200).json({ status: 'success', data: { booking: sanitizeBookingPaymentInternals(decorated) } });
@@ -1511,20 +1600,24 @@ const getBooking = catchAsync(async (req, res, next) => {
  */
 const getBookingBySession = catchAsync(async (req, res, next) => {
   const { sessionId } = req.params;
-  const customerId = req.user.id;
 
   if (!sessionId) return next(new AppError('sessionId is required', 400));
 
   const draft = await prisma.checkoutDraft.findFirst({
-    where: { stripeSessionId: sessionId, customerId },
+    where: { stripeSessionId: sessionId },
     select: {
       id: true,
       status: true,
       bookingId: true,
       expiresAt: true,
       createdAt: true,
+      customerId: true,
     },
   });
+
+  // Session id alone is not a credential: the caller must own the draft it
+  // resolves to (session owner, or the guest token minted for it).
+  if (!requestOwnsDraft(req, draft)) return next(new AppError('Checkout session not found', 404));
 
   if (!draft) return next(new AppError('Checkout session not found', 404));
 
@@ -1563,13 +1656,24 @@ const capturePaypalPayment = catchAsync(async (req, res, next) => {
   const orderId = req.body?.orderId || req.body?.token;
   if (!orderId) return next(new AppError('orderId is required', 400));
 
+  // Ownership is decided HERE rather than inside the capture helper: the
+  // helper's `customerId` check is skipped when it is null, and a guest has no
+  // session to pass. The token (or the session) must match this draft first.
+  const ownedDraft = await prisma.checkoutDraft.findUnique({
+    where: { paypalOrderId: String(orderId) },
+    select: { id: true, customerId: true },
+  });
+  if (!requestOwnsDraft(req, ownedDraft)) {
+    return next(new AppError('Payment not found', 404));
+  }
+
   // A PayPal/Stripe/DB failure here must never look like "nothing happened":
   // the money may already have moved. The webhook is still the settler, so we
   // tell the customer the payment is being confirmed rather than 500-ing.
   let result;
   try {
     result = await payments.captureAndSettlePaypal(String(orderId), {
-      customerId: req.user.id,
+      customerId: ownedDraft.customerId || null,
     });
   } catch (err) {
     console.error('[Travio Ghana] PayPal capture failed:', orderId, err.message);
@@ -1642,17 +1746,19 @@ const getBookingByPaypalOrder = catchAsync(async (req, res, next) => {
   if (!orderId) return next(new AppError('orderId is required', 400));
 
   const draft = await prisma.checkoutDraft.findFirst({
-    where: { paypalOrderId: orderId, customerId: req.user.id },
+    where: { paypalOrderId: orderId },
     select: {
       id: true,
       status: true,
       bookingId: true,
       expiresAt: true,
       createdAt: true,
+      customerId: true,
     },
   });
 
-  if (!draft) return next(new AppError('Checkout session not found', 404));
+  // Order id alone is not a credential — same rule as the Stripe session id.
+  if (!requestOwnsDraft(req, draft)) return next(new AppError('Checkout session not found', 404));
 
   let booking = null;
   if (draft.status === 'PAID' && draft.bookingId) {
@@ -1695,7 +1801,13 @@ const getPaymentCapabilities = catchAsync(async (req, res) => {
     paymentTiming: String(req.query?.timing || 'now'),
   });
 
-  res.status(200).json({ status: 'success', data: capabilities });
+  // Server-driven feature flag: the storefront asks here whether it may show
+  // checkout to a signed-out visitor, so one env var flips both sides. A
+  // build-time flag would drift from the API the moment they deploy apart.
+  res.status(200).json({
+    status: 'success',
+    data: { ...capabilities, guestCheckout: guestCheckoutEnabled() },
+  });
 });
 
 /**
@@ -1710,7 +1822,15 @@ const getPaypalApproval = catchAsync(async (req, res, next) => {
   const orderId = String(req.params.orderId || '');
   if (!orderId) return next(new AppError('orderId is required', 400));
 
-  const result = await payments.getPaypalApproval(orderId, { customerId: req.user.id });
+  // Same ownership rule as capture: a guest carries a token, not a session,
+  // so the check runs here before the helper's customerId comparison.
+  const ownedDraft = await prisma.checkoutDraft.findUnique({
+    where: { paypalOrderId: orderId },
+    select: { id: true, customerId: true },
+  });
+  if (!requestOwnsDraft(req, ownedDraft)) return next(new AppError('Payment not found', 404));
+
+  const result = await payments.getPaypalApproval(orderId, { customerId: ownedDraft.customerId || null });
 
   switch (result.reason) {
     case 'missing_order':

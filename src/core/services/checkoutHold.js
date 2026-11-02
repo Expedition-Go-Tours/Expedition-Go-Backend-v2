@@ -19,6 +19,11 @@ const HOLD_MINUTES = parseInt(process.env.CHECKOUT_HOLD_MINUTES, 10) || 30;
  */
 async function acquireHold({
   customerId,
+  // Guest checkout: the contact captured at checkout when there is no account.
+  // `customerId` is null in that case and the guest's email is what scopes the
+  // hold — two different guests on the same slot must not collide, and one
+  // guest retrying must supersede their own hold, not someone else's.
+  guest = null,
   tourId,
   tour,
   travelDate,
@@ -34,6 +39,13 @@ async function acquireHold({
   optionScope,
 }) {
   const seats = travelerCount(travelers);
+
+  // A hold must be attributable to somebody: an account, or a guest the
+  // storefront captured a contact for. Without either the "one active hold per
+  // customer per slot" rule below would be keyed on nothing.
+  if (!customerId && !guest?.email) {
+    throw new Error('A signed-in customer or a guest email is required to hold a spot');
+  }
 
   // Multi-option: resolve the option's id/title + capacity scope. When no
   // option is passed, optId/scope stay null (legacy whole-tour behavior).
@@ -72,7 +84,7 @@ async function acquireHold({
     // can ever be paid. An advisory lock is transaction-scoped and releases
     // on commit/rollback, so it serializes just this customer+slot and takes
     // no row locks that another path could deadlock against.
-    const holdKey = `checkout-hold:${customerId}:${tourId}`
+    const holdKey = `checkout-hold:${customerId || (guest?.email ? `guest:${guest.email}` : 'guest:anon')}:${tourId}`
       + `:${new Date(travelDate).toISOString().slice(0, 10)}:${selectedTime || 'any'}`;
     // The ::text cast is required: the lock function returns `void`, and
     // Prisma's $queryRaw cannot deserialize a void column (it fails at
@@ -94,7 +106,7 @@ async function acquireHold({
     // an amount mismatch and be auto-refunded.
     const existingHold = await tx.checkoutDraft.findFirst({
       where: {
-        customerId,
+        ...(customerId ? { customerId } : { guestEmail: guest.email }),
         tourId,
         travelDate: new Date(travelDate),
         ...(selectedTime ? { selectedTime } : {}),
@@ -143,6 +155,15 @@ async function acquireHold({
     return tx.checkoutDraft.create({
       data: {
         customerId,
+        // Guest identity: kept on the draft so the recovery sweep and the
+        // materialized booking both know who was checking out.
+        ...(customerId
+          ? {}
+          : {
+              guestName: guest?.name || null,
+              guestEmail: guest.email,
+              guestPhone: guest?.phone || null,
+            }),
         tourId,
         travelDate: new Date(travelDate),
         selectedTime: selectedTime || null,
@@ -315,6 +336,19 @@ async function materializeHold(draftId, session, paymentIntentId, opts = {}) {
       data: {
         bookingNumber,
         customerId: draftRecord.customerId,
+        // Guest checkout: no account on the draft, so the contact record rides
+        // as a BookingGuest (the same record a supplier-created walk-in uses).
+        ...(draftRecord.customerId
+          ? {}
+          : {
+              guest: {
+                create: {
+                  name: draftRecord.guestName || draftRecord.payload?.leadTraveler?.name || 'Guest',
+                  email: draftRecord.guestEmail || draftRecord.payload?.leadTraveler?.email || null,
+                  phone: draftRecord.guestPhone || draftRecord.payload?.leadTraveler?.phone || null,
+                },
+              },
+            }),
         tourId: draftRecord.tourId,
         source,
         ...(materializedOptionId ? { optionId: materializedOptionId, optionTitle: materializedOptionTitle } : {}),
@@ -371,13 +405,15 @@ async function materializeHold(draftId, session, paymentIntentId, opts = {}) {
     });
 
     // ── Clean up any cart items ─────────────────────────────────
-    await tx.cartItem.deleteMany({
-      where: {
-        customerId: draftRecord.customerId,
-        tourId: draftRecord.tourId,
-        selectedDate: draftRecord.travelDate,
-      },
-    }).catch(() => {});
+    if (draftRecord.customerId) {
+      await tx.cartItem.deleteMany({
+        where: {
+          customerId: draftRecord.customerId,
+          tourId: draftRecord.tourId,
+          selectedDate: draftRecord.travelDate,
+        },
+      }).catch(() => {});
+    }
 
     createdBooking = booking;
     return draftRecord;
@@ -385,6 +421,14 @@ async function materializeHold(draftId, session, paymentIntentId, opts = {}) {
 
   if (!draft) {
     return { ok: false, reason: oversold ? 'sold_out' : 'already_settled', oversold };
+  }
+
+  // Guest checkout: the token the browser holds pointed at the draft; now that
+  // the draft is a booking, re-point it so the confirmation page can read the
+  // booking with the same header it used for checkout.
+  if (createdBooking?.id) {
+    const { bindGuestAccessToBooking } = require('./guestAccess');
+    await bindGuestAccessToBooking(draftId, createdBooking.id);
   }
 
   // ── Analytics: record the completed booking for the conversion funnel ──

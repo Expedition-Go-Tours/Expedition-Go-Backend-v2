@@ -571,8 +571,12 @@ async function buildBookingBase(booking, opts = {}) {
     logoUrl: shell.logoUrl,
     poweredByLabel: shell.poweredByLabel || '',
     // identity — account holder (the recipient / addressee of emails)
-    customerName: customer.name || 'Guest',
-    customerEmail: customer.email || '',
+    //
+    // A guest booking has no `customer` row at all: the lead traveller IS the
+    // contact, so falling back to them keeps `to:` addressable and the
+    // greeting correct instead of blanking to '' and silently dropping mail.
+    customerName: customer.name || leadName || 'Guest',
+    customerEmail: customer.email || leadEmail || '',
     customerPhone: fmt.travelerPhone(booking.travelers) || customer.phone || '',
     customerLocation: fmt.travelerLocation(booking.travelers) || customer.location || '',
     // Contact-card avatar: the customer's Google profile photo when they
@@ -1432,12 +1436,204 @@ async function sendReviewRequestEmail(booking) {
   });
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Sprint 1 conversion emails.
+//
+// Recovery, price-drop and waitlist mail. Each one is a transactional
+// follow-up tied to an action the traveller took, so the copy states what
+// actually happened (a hold was released, a price changed, a date reopened)
+// and never implies a price is being held for anyone.
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Photo for a tour-derived email: the cover, else the first photo, else none.
+ */
+function tourPhotoUrl(tour) {
+  if (!tour) return '';
+  return tour.coverPhoto || (Array.isArray(tour.photos) && tour.photos[0]) || '';
+}
+
+/**
+ * Which storefront base a non-booking email should deep-link into.
+ *
+ * The traveller may never have booked before, so there is no `clientOrigin`
+ * to read. Their most recent booking is the best available signal; new users
+ * default to Ghana, the storefront this work shipped for.
+ */
+async function brandForUser(userId, fallback = 'ghana') {
+  if (!userId) return fallback;
+  try {
+    const latest = await prisma.booking.findFirst({
+      where: { customerId: userId },
+      orderBy: { createdAt: 'desc' },
+      select: { source: true },
+    });
+    if (!latest?.source) return fallback;
+    const { BRANDS } = require('../../../config/brands');
+    const hit = Object.values(BRANDS).find((b) => b.source === latest.source);
+    return hit ? hit.key : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * The hold was released because checkout was never completed. Sent once per
+ * draft (guarded by CheckoutDraft.abandonedNotifiedAt, set by the sweep) and
+ * always after the release, never before.
+ */
+async function sendCheckoutRecoveryEmail(draft) {
+  // Brand first: the shell vars depend on it, and the draft's frozen payload
+  // carries the storefront source it was minted on.
+  const { BRANDS } = require('../../../config/brands');
+  const source = (draft.payload && draft.payload._source) || 'EXPEDITION';
+  const brandKey = (Object.values(BRANDS).find((b) => b.source === source) || BRANDS.expedition).key;
+  const shell = await getShellVars(brandKey);
+
+  const tour = await prisma.tour.findUnique({
+    where: { id: draft.tourId },
+    select: {
+      id: true,
+      slug: true,
+      title: true,
+      city: true,
+      country: true,
+      coverPhoto: true,
+      photos: true,
+    },
+  });
+  if (!tour) return null;
+
+  const payload = draft.payload || {};
+  const pricing = draft.pricing || {};
+  const origin = payload._clientOrigin
+    ? normalizeOriginForLink(payload._clientOrigin)
+    : emailUrls.customerBaseForBrand(brandKey);
+  const customerName = draft.customer?.name || draft.guestName || 'there';
+  const currency = draft.currency || pricing.currency || 'USD';
+  const resumeUrl = emailUrls.viewTour(tour.id, tour.slug, origin);
+
+  const data = {
+    brandKey,
+    customerName,
+    tourTitle: tour.title,
+    tourImageUrl: tourPhotoUrl(tour),
+    locationLabel: [tour.city, tour.country].filter(Boolean).join(', '),
+    dateLabel: fmt.formatShortDate(draft.travelDate),
+    timeLabel: draft.selectedTime || '',
+    travelersLabel: fmt.formatTravelers(payload.travelers) || '1 traveller',
+    totalLabel: fmt.formatCurrency(pricing.total ?? 0, currency),
+    resumeUrl,
+    supportUrl: origin,
+    supportEmail: shell.supportEmail,
+  };
+
+  return sendRendered({
+    to: draft.guestEmail || draft.customer?.email,
+    subject: `Your seats for ${tour.title} were released`,
+    key: 'checkout-abandoned',
+    data,
+    opts: {
+      brandKey,
+      preheader: `The checkout for ${tour.title} was not completed, so the seats on ${data.dateLabel} were released.`,
+    },
+  });
+}
+
+/**
+ * A saved experience got cheaper than the price the traveller saw when they
+ * saved it. The baseline is WishlistItem.priceAtSave, written server-side at
+ * save time, so this can only fire on a real drop.
+ */
+async function sendWishlistPriceDropEmail({ userId, tour, oldPrice, newPrice, currency }) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, name: true, email: true },
+  });
+  if (!user?.email) return null;
+
+  const brandKey = await brandForUser(userId);
+  const shell = await getShellVars(brandKey);
+  const origin = emailUrls.customerBaseForBrand(brandKey);
+  const savings = Math.max(0, Number(oldPrice) - Number(newPrice));
+
+  const data = {
+    brandKey,
+    customerName: user.name || 'there',
+    tourTitle: tour.title,
+    tourImageUrl: tourPhotoUrl(tour),
+    locationLabel: [tour.city, tour.country].filter(Boolean).join(', '),
+    placeLabel: [tour.city, tour.country].filter(Boolean).join(', '),
+    oldPriceLabel: fmt.formatCurrency(oldPrice, currency),
+    newPriceLabel: fmt.formatCurrency(newPrice, currency),
+    savingsLabel: fmt.formatCurrency(savings, currency),
+    tourUrl: emailUrls.viewTour(tour.id, tour.slug, origin),
+    supportUrl: origin,
+    supportEmail: shell.supportEmail,
+  };
+
+  return sendRendered({
+    to: user.email,
+    subject: `${tour.title} dropped to ${data.newPriceLabel}`,
+    key: 'wishlist-price-drop',
+    data,
+    opts: { brandKey, preheader: data.preheader || `${tour.title} is now ${data.newPriceLabel}, down from ${data.oldPriceLabel}.` },
+  });
+}
+
+/**
+ * A sold-out date on the waitlist reopened. The email says plainly that no
+ * seat is being held — availability is live and first come, first served.
+ */
+async function sendWaitlistOpenEmail({ entry, tour, dateLabel, currency }) {
+  const user = entry.userId
+    ? await prisma.user.findUnique({ where: { id: entry.userId }, select: { name: true, email: true } })
+    : null;
+  const to = user?.email || entry.email;
+  if (!to) return null;
+
+  const brandKey = await brandForUser(entry.userId || null);
+  const shell = await getShellVars(brandKey);
+  const origin = emailUrls.customerBaseForBrand(brandKey);
+  const price = tour?.schedulesAndPricing
+    ? (await require('./tourHelpers').cheapestRetailPrice(tour.schedulesAndPricing))
+    : null;
+
+  const data = {
+    brandKey,
+    customerName: user?.name || 'there',
+    tourTitle: tour.title,
+    tourImageUrl: tourPhotoUrl(tour),
+    dateLabel,
+    priceLabel: price != null ? fmt.formatCurrency(price, currency || 'USD') : '',
+    tourUrl: emailUrls.viewTour(tour.id, tour.slug, origin),
+    supportUrl: origin,
+    supportEmail: shell.supportEmail,
+  };
+
+  return sendRendered({
+    to,
+    subject: `Seats opened for ${tour.title} on ${dateLabel}`,
+    key: 'waitlist-open',
+    data,
+    opts: { brandKey, preheader: `${tour.title} has availability on ${dateLabel} again.` },
+  });
+}
+
+function normalizeOriginForLink(raw) {
+  try {
+    const { normalizeOrigin } = require('./clientOrigin');
+    return normalizeOrigin(String(raw)) || emailUrls.customerBaseForBrand('ghana');
+  } catch {
+    return emailUrls.customerBaseForBrand('ghana');
+  }
+}
+
 /**
  * Notifies the customer (by email) that an operator replied to their review.
  * Booking worker include carries `review` (id/supplierResponse/…); the CTA goes
  * to the tour page's reviews anchor so the customer sees the public reply.
- */
-async function sendSupplierResponseEmail(booking) {
+ */async function sendSupplierResponseEmail(booking) {
   const b = await resolveBookingContext(booking);
   const review = b.review || {};
   const tourTitle = b.tour?.title || 'your trip';
@@ -2703,6 +2899,9 @@ module.exports = {
   sendSupplierCancelledBookingEmail,
   sendSupplierCancellationFeeEmail,
   sendReviewRequestEmail,
+  sendCheckoutRecoveryEmail,
+  sendWishlistPriceDropEmail,
+  sendWaitlistOpenEmail,
   sendSupplierResponseEmail,
 
   // supplier

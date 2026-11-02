@@ -917,6 +917,108 @@ const reviewRequest = {
 };
 
 // ────────────────────────────────────────────────────────────────────────────
+// Conversion emails (Sprint 1): recovery, price alerts, waitlist.
+//
+// These are transactional follow-ups, not marketing: each one is tied to a
+// specific action the traveller took (started checkout, saved an experience,
+// joined a waitlist) and carries no promotional content.
+// ────────────────────────────────────────────────────────────────────────────
+
+const checkoutAbandoned = {
+  key: 'checkout-abandoned',
+  name: 'Customer · Checkout not completed',
+  build() {
+    return B.shell('Finish your booking', `
+      ${B.photoHeader({ height: 236 })}
+      ${B.displayHeading({
+        text: 'Your seats were released',
+        subtext: '{{tourTitle}} &middot; {{dateLabel}}',
+        padding: '26px 40px 0 40px',
+      })}
+      ${B.textBlock('Hi {{customerName}}, your checkout for <strong>{{tourTitle}}</strong> was not completed, so the seats we were holding for <strong>{{dateLabel}}</strong> have been released.', { center: false })}
+      ${B.hairline()}
+      ${B.sectionHeading('What you were booking')}
+      ${B.bookingSummaryCard({
+        statusText: 'Seats released',
+        statusTone: 'warning',
+        rows: [
+          { label: 'Date', value: '{{dateLabel}}{{#if timeLabel}} &middot; {{timeLabel}}{{/if}}' },
+          { label: 'Travellers', value: '{{travelersLabel}}' },
+          { label: 'Total', value: '{{totalLabel}}', strong: true },
+        ],
+      })}
+      ${B.callout('The date was still open when we last checked, but availability changes as other travellers book. Complete your booking to secure your seats.', 'warning')}
+      ${B.pillButton('Finish booking', '{{resumeUrl}}')}
+      ${B.helpBand({
+        title: 'Need a hand?',
+        body: 'If something went wrong at checkout, reply to this email or contact {{supportEmail}} and we will help you finish the booking.',
+        href: '{{supportUrl}}',
+        label: 'Contact support',
+      })}
+    `, { variant: 'gyg', footer: 'customer' });
+  },
+};
+
+const wishlistPriceDrop = {
+  key: 'wishlist-price-drop',
+  name: 'Customer · Wishlist price drop',
+  build() {
+    return B.shell('Price drop on an experience you saved', `
+      ${B.photoHeader({ height: 236 })}
+      ${B.displayHeading({
+        text: 'The price just dropped',
+        subtext: '{{tourTitle}}',
+        padding: '26px 40px 0 40px',
+      })}
+      ${B.textBlock('Hi {{customerName}}, an experience on your saved list is now cheaper than when you saved it.', { center: false })}
+      ${B.sectionHeading('New price')}
+      ${B.bookingSummaryCard({
+        statusText: 'Price drop',
+        statusTone: 'success',
+        rows: [
+          { label: 'When you saved it', value: '{{oldPriceLabel}}' },
+          { label: 'Price now', value: '{{newPriceLabel}}' },
+          { label: 'You save', value: '{{savingsLabel}}', strong: true },
+        ],
+      })}
+      ${B.pillButton('View experience', '{{tourUrl}}')}
+      ${B.callout('Prices are per adult, depend on the date and group size, and can change again. The live price is always shown on the experience page.', 'info')}
+    `, { variant: 'gyg', footer: 'customer' });
+  },
+};
+
+const waitlistOpen = {
+  key: 'waitlist-open',
+  name: 'Customer · Waitlist date reopened',
+  build() {
+    return B.shell('Seats just opened up', `
+      ${B.photoHeader({ height: 236 })}
+      ${B.displayHeading({
+        text: 'A date you wanted is open again',
+        subtext: '{{tourTitle}} &middot; {{dateLabel}}',
+        padding: '26px 40px 0 40px',
+      })}
+      ${B.textBlock('Hi {{customerName}}, you asked us to let you know if <strong>{{tourTitle}}</strong> became available on <strong>{{dateLabel}}</strong>. It just did.', { center: false })}
+      ${B.hairline()}
+      ${B.sectionHeading('The date you asked about')}
+      ${B.detailCard([
+        { label: 'Experience', value: '{{tourTitle}}' },
+        { label: 'Date', value: '{{dateLabel}}' },
+        { label: 'Starting price', value: '{{priceLabel}}' },
+      ])}
+      ${B.callout('Availability is live and first come, first served. We are not holding seats for you.', 'warning')}
+      ${B.pillButton('Check availability', '{{tourUrl}}')}
+      ${B.helpBand({
+        title: 'Not the right date?',
+        body: 'You can join the waitlist again from the experience page for any other sold-out date.',
+        href: '{{tourUrl}}',
+        label: 'View experience',
+      })}
+    `, { variant: 'gyg', footer: 'customer' });
+  },
+};
+
+// ────────────────────────────────────────────────────────────────────────────
 // Supplier emails
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -1762,6 +1864,9 @@ const TEMPLATE_DEFS = [
   supplierCancelledBooking,
   supplierCancellationFee,
   reviewRequest,
+  checkoutAbandoned,
+  wishlistPriceDrop,
+  waitlistOpen,
   supplierNewBooking,
   supplierBookingRecorded,
   supplierReserveLater,

@@ -859,9 +859,11 @@ describe('expeditionController', () => {
   });
 
   describe('toggleWishlist', () => {
-    it('adds a tour to wishlist', async () => {
+    it('adds a tour to wishlist with the price baseline for alerts', async () => {
       req.params.tourId = 'tour-2';
       prisma.expeditionTour.findFirst.mockResolvedValue(mockExpeditionTour);
+      prisma.tour.findUnique.mockResolvedValue({ schedulesAndPricing: { pricingSchedules: { currency: 'USD' } } });
+      cheapestRetailPrice.mockReturnValue(150);
       prisma.wishlistItem.findUnique.mockResolvedValue(null);
       prisma.wishlistItem.create.mockResolvedValue({ id: 'wi1' });
 
@@ -871,11 +873,32 @@ describe('expeditionController', () => {
         where: { tourId: 'tour-2', isActive: true },
         select: { id: true },
       });
+      // The baseline is taken server-side from the same price the listing
+      // quotes — never from the request — so a later price-drop alert can only
+      // ever fire on a real drop against what the traveller saw.
+      expect(prisma.wishlistItem.create).toHaveBeenCalledWith({
+        data: { userId: 'user-1', tourId: 'tour-2', priceAtSave: 150, currency: 'USD' },
+      });
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ action: 'user.wishlist_added', metadata: { tourId: 'tour-2', source: 'expedition' } }));
+    });
+
+    it('saves without a baseline when no price can be resolved', async () => {
+      req.params.tourId = 'tour-2';
+      prisma.expeditionTour.findFirst.mockResolvedValue(mockExpeditionTour);
+      prisma.tour.findUnique.mockResolvedValue({ schedulesAndPricing: null });
+      cheapestRetailPrice.mockReturnValue(null);
+      prisma.wishlistItem.findUnique.mockResolvedValue(null);
+      prisma.wishlistItem.create.mockResolvedValue({ id: 'wi1' });
+
+      await controller.toggleWishlist(req, res, next);
+
+      // A row with no baseline is never a price-alert candidate, so leaving the
+      // columns null (rather than guessing 0) is what keeps the sweep honest.
       expect(prisma.wishlistItem.create).toHaveBeenCalledWith({
         data: { userId: 'user-1', tourId: 'tour-2' },
       });
       expect(res.status).toHaveBeenCalledWith(200);
-      expect(logActivity).toHaveBeenCalledWith(expect.objectContaining({ action: 'user.wishlist_added', metadata: { tourId: 'tour-2', source: 'expedition' } }));
     });
 
     it('removes a tour from wishlist', async () => {

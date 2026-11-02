@@ -1,6 +1,12 @@
 const express = require('express');
 const { createLimiter, createUserLimiter } = require('../../../middleware/dynamicRateLimiter');
 const { protect } = require('../../../middleware/authMiddleware');
+const { optionalAuth } = require('../../../middleware/authMiddleware');
+// Guest checkout: `optionalAuth` attaches a session when there is one, and this
+// attaches the GuestAccess token when there is not. Routes below accept both
+// kinds of caller and the controller decides ownership.
+const { attachGuestAccess } = require('../../core/services/guestAccess');
+const guestCapable = [optionalAuth, attachGuestAccess];
 // Supplier-scoped routes resolve the supplier through the team membership
 // (`resolveSupplier`), not through `restrictTo('supplier')`: a team member's own
 // account carries `roles: ['customer']` — the supplier they work for is reached
@@ -741,35 +747,35 @@ router.post('/checkout/calculate', calculateLimiter, validate(calculateCheckoutS
  *       404:
  *         description: Tour not found
  */
-router.post('/checkout/confirm', confirmLimiter, protect, restrictTo('customer'), validate(confirmBookingSchema), travioGhanaController.confirmBooking);
+router.post('/checkout/confirm', confirmLimiter, optionalAuth, validate(confirmBookingSchema), travioGhanaController.confirmBooking);
 
 /**
  * GET /api/travioghana/checkout/draft/:id
  * Order summary + a fresh PaymentIntent client secret for the branded checkout
  * page, so a refresh mid-payment can still mount the Payment Element.
  */
-router.get('/checkout/draft/:id', protect, restrictTo('customer'), travioGhanaController.getCheckoutDraft);
+router.get('/checkout/draft/:id', ...guestCapable, travioGhanaController.getCheckoutDraft);
 
 /**
  * POST /api/travioghana/checkout/draft/:id/release
  * Customer abandons the branded checkout — free the hold now, cancel the
  * unconfirmed PaymentIntent best-effort.
  */
-router.post('/checkout/draft/:id/release', protect, restrictTo('customer'), travioGhanaController.releaseCheckoutDraft);
+router.post('/checkout/draft/:id/release', ...guestCapable, travioGhanaController.releaseCheckoutDraft);
 
 /**
  * POST /api/travioghana/checkout/paypal/capture
  * Captures an approved PayPal order and settles the booking. Idempotent:
  * the return page and the webhook may both call the settlement path.
  */
-router.post('/checkout/paypal/capture', confirmLimiter, protect, restrictTo('customer'), travioGhanaController.capturePaypalPayment);
+router.post('/checkout/paypal/capture', confirmLimiter, ...guestCapable, travioGhanaController.capturePaypalPayment);
 
 /**
  * GET /api/travioghana/checkout/paypal/approval/:orderId
  * Re-issues the approval link for an open PayPal hold (page refresh mid-flow).
  * Ownership is enforced — the draft must belong to the signed-in customer.
  */
-router.get('/checkout/paypal/approval/:orderId', protect, restrictTo('customer'), travioGhanaController.getPaypalApproval);
+router.get('/checkout/paypal/approval/:orderId', ...guestCapable, travioGhanaController.getPaypalApproval);
 
 /**
  * GET /api/travioghana/payments/capabilities?currency=USD&timing=now
@@ -859,6 +865,45 @@ router.get('/wishlist', protect, restrictTo('customer'), travioGhanaController.g
  */
 router.patch('/wishlist/:tourId', protect, restrictTo('customer'), validate(tourIdParamSchema), travioGhanaController.toggleWishlist);
 
+// Public write/read surfaces added in Sprint 1: a waitlist join writes a row
+// from an anonymous request, and a share token is enumerable-looking enough
+// to be worth throttling even though it is opaque.
+const waitlistLimiter = createLimiter({
+  name: 'waitlist',
+  defaultMax: 10,
+  defaultWindowMs: 15 * 60 * 1000,
+  message: {
+    status: 'fail',
+    message: 'Too many waitlist requests from this IP, please try again later.',
+  },
+});
+const wishlistShareLimiter = createLimiter({
+  name: 'wishlist-share',
+  defaultMax: 30,
+  defaultWindowMs: 15 * 60 * 1000,
+  message: {
+    status: 'fail',
+    message: 'Too many requests from this IP, please try again later.',
+  },
+});
+
+// ── Sprint 1: shareable wishlist ────────────────────────────────────────────
+// POST  /wishlist/share         mint (or reuse) the owner's link
+// DELETE /wishlist/share        revoke it — an old URL stops working at once
+// GET   /wishlist/shared/:token public read; revoked/unknown tokens are 404
+router.post('/wishlist/share', protect, restrictTo('customer'), travioGhanaController.createWishlistShare);
+router.delete('/wishlist/share', protect, restrictTo('customer'), travioGhanaController.revokeWishlistShare);
+router.get('/wishlist/shared/:token', wishlistShareLimiter, travioGhanaController.getSharedWishlist);
+
+// ── Sprint 1: waitlist for a sold-out date ──────────────────────────────────
+// Guests may join (optionalAuth): no account is required to be told a date
+// reopened, exactly as no account is required to book one.
+router.post('/waitlist', waitlistLimiter, optionalAuth, travioGhanaController.joinWaitlist);
+router.delete('/waitlist', waitlistLimiter, optionalAuth, travioGhanaController.leaveWaitlist);
+
+// ── Sprint 1: trust facts next to the price ────────────────────────────────
+router.get('/tours/:id/trust', travioGhanaController.getTourTrust);
+
 /**
  * @swagger
  * /api/travioghana/bookings:
@@ -930,13 +975,13 @@ router.get('/bookings', protect, restrictTo('customer'), validate(getBookingsSch
  *       404:
  *         description: Session not found
  */
-router.get('/bookings/by-session/:sessionId', protect, restrictTo('customer'), travioGhanaController.getBookingBySession);
+router.get('/bookings/by-session/:sessionId', ...guestCapable, travioGhanaController.getBookingBySession);
 
 /**
  * GET /api/travioghana/bookings/by-paypal-order/:orderId
  * Polling counterpart to by-session for PayPal checkouts.
  */
-router.get('/bookings/by-paypal-order/:orderId', protect, restrictTo('customer'), travioGhanaController.getBookingByPaypalOrder);
+router.get('/bookings/by-paypal-order/:orderId', ...guestCapable, travioGhanaController.getBookingByPaypalOrder);
 
 /**
  * @swagger
@@ -974,7 +1019,7 @@ router.get('/bookings/by-paypal-order/:orderId', protect, restrictTo('customer')
  *       404:
  *         description: Booking not found
  */
-router.get('/bookings/:id', protect, restrictTo('customer'), validate(bookingIdParamSchema), travioGhanaController.getBooking);
+router.get('/bookings/:id', ...guestCapable, validate(bookingIdParamSchema), travioGhanaController.getBooking);
 
 /**
  * @swagger

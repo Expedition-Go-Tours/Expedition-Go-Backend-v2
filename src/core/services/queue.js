@@ -117,6 +117,9 @@ const SCHEDULES = [
   { jobName: 'cancel-stale-pending-bookings', queue: 'cleanup',    everyMs: 15 * 60 * 1000 },
   { jobName: 'cleanup-stale-bookings',      queue: 'cleanup',      everyMs: 5 * 60 * 1000 },
   { jobName: 'expire-checkout-holds',       queue: 'cleanup',      everyMs: 5 * 60 * 1000 },
+  { jobName: 'send-checkout-recovery',      queue: 'cleanup',      everyMs: 15 * 60 * 1000 },
+  { jobName: 'check-wishlist-price-drops',  queue: 'cleanup',      everyMs: 24 * 3600 * 1000 },
+  { jobName: 'notify-waitlist-open-dates',  queue: 'cleanup',      everyMs: 15 * 60 * 1000 },
   { jobName: 'expire-modify-topups',        queue: 'cleanup',      everyMs: 5 * 60 * 1000 },
   { jobName: 'charge-pay-later-bookings',   queue: 'cleanup',      everyMs: 30 * 60 * 1000 },
   { jobName: 'recover-pay-later-payments',  queue: 'cleanup',      everyMs: 30 * 60 * 1000 },
@@ -1222,6 +1225,23 @@ function registerWorkers() {
         case 'expire-checkout-holds': {
           const { expireCheckoutHolds } = require('./bookingCleanup');
           await expireCheckoutHolds();
+          break;
+        }
+        // Sprint 1 conversion sweeps. Each is flag-gated inside the service, so
+        // a deploy with the flag off is a no-op rather than a mail storm.
+        case 'send-checkout-recovery': {
+          const { recoverAbandonedCheckouts } = require('./checkoutRecovery');
+          await recoverAbandonedCheckouts();
+          break;
+        }
+        case 'check-wishlist-price-drops': {
+          const { checkWishlistPriceDrops } = require('./wishlistAlerts');
+          await checkWishlistPriceDrops();
+          break;
+        }
+        case 'notify-waitlist-open-dates': {
+          const { notifyWaitlistOpenDates } = require('./waitlistService');
+          await notifyWaitlistOpenDates();
           break;
         }
         case 'expire-modify-topups': {
