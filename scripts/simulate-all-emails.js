@@ -49,7 +49,10 @@ function mockTour(overrides = {}) {
     },
     durationMinutes: 480,
     supplier: {
-      id: 'sim-supplier-1',
+      // No id: `supplierRecipientList` then falls back to the supplier's email
+      // above, so the simulation lands in the sim inbox instead of querying the
+      // database for a recipient that does not exist.
+      id: '',
       name: 'Cape Peninsula Explorers',
       email: TO,
       phone: '+27 21 555 0130',
@@ -196,12 +199,16 @@ const BASE_VARIANTS = {
 };
 
 async function main() {
-  console.log(`\nSimulating all ${SENDERS.length} transactional emails → ${TO}\n`);
+  // EMAIL_SIM_FILTER=supplier sends only the names containing "supplier" —
+  // handy when the catalog is large and the inbox already has the rest.
+  const filter = process.env.EMAIL_SIM_FILTER || '';
+  const queue = filter ? SENDERS.filter(([name]) => name.includes(filter)) : SENDERS;
+  console.log(`\nSimulating ${queue.length}/${SENDERS.length} transactional emails → ${TO}${filter ? ` (filter: ${filter})` : ''}\n`);
 
   let ok = 0;
   let failed = 0;
 
-  for (const [name, fn, extras] of SENDERS) {
+  for (const [name, fn, extras] of queue) {
     const booking = BASE_VARIANTS[name] || mockBooking();
     try {
       // Payout senders take { booking, payout, ... } as a single object;
@@ -222,7 +229,7 @@ async function main() {
   }
 
   console.log(`\nDone: ${ok} sent, ${failed} failed/skipped.\n`);
-  process.exit(ok === SENDERS.length ? 0 : 1);
+  process.exit(ok === queue.length ? 0 : 1);
 }
 
 main();
