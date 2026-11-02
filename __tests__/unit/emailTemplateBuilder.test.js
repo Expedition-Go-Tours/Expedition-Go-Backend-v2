@@ -96,6 +96,36 @@ describe('generated email templates', () => {
   });
 });
 
+/**
+ * Mobile logo size.
+ *
+ * The wordmark is wide, so the desktop widths (150px in the GYG shell, 180px
+ * in the classic shell) read as a banner across a 390px phone. The <img> now
+ * carries a .brand-logo hook, the mobile media query shrinks it to 128px, and
+ * the width attribute stays fixed so Outlook desktop (which ignores the style
+ * block) keeps its size.
+ */
+describe('brand logo responsiveness', () => {
+  const files = fs.readdirSync(GENERATED_DIR).filter((f) => f.endsWith('.html'));
+
+  it('tags every logo with the mobile hook', () => {
+    const offenders = files.filter((file) => {
+      const html = fs.readFileSync(path.join(GENERATED_DIR, file), 'utf8');
+      return !html.includes('class="brand-logo"');
+    });
+    expect(offenders).toEqual([]);
+  });
+
+  it('shrinks the logo on a phone without touching the desktop width', () => {
+    const gyg = fs.readFileSync(path.join(GENERATED_DIR, 'customer-cancelled-unpaid.html'), 'utf8');
+    expect(gyg).toContain('.brand-logo { width:128px !important; max-width:128px !important; }');
+    expect(gyg).toContain('width="150" class="brand-logo" style="display:block;width:150px;max-width:100%;');
+
+    const classic = fs.readFileSync(path.join(GENERATED_DIR, 'booking-confirmed.html'), 'utf8');
+    expect(classic).toContain('width="180" class="brand-logo" style="display:block;width:180px;max-width:100%;');
+  });
+});
+
 describe('pay-later-charged template renders pickup section', () => {
   it('includes Pickup & meeting section with pickupLocation field', () => {
     const html = fs.readFileSync(path.join(GENERATED_DIR, 'pay-later-charged.html'), 'utf8');

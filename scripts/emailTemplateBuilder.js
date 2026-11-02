@@ -129,6 +129,11 @@ const BASE_CSS = `
     .h1 { font-size:24px !important; }
     .h2 { font-size:18px !important; }
     .body-lg { font-size:16px !important; }
+    /* Brand lockup. The wordmark is wide (TravioGhana), so a 150-180px image
+       reads as huge on a 360px phone; scale it with the column instead of
+       letting the desktop width ride along. The width ATTRIBUTE on the <img>
+       (150/180) still governs Outlook desktop, which ignores this block. */
+    .brand-logo { width:128px !important; max-width:128px !important; }
     .hide-mobile { display:none !important; }
   }
   /* Dark mode.
@@ -210,14 +215,15 @@ function shell(title, bodyHtml, options = {}) {
           <tr>
             <td class="dm-card" style="background-color:${COLORS.card};border:1px solid ${COLORS.border};border-radius:16px;padding:0;overflow:hidden;">
               <!-- Brand header: the logo lives INSIDE the card so the whole
-                   email reads as one object, and is sized up from the old
-                   170px so it holds its own against the 640px card. It carries
+                   email reads as one object. 180px holds its own against the
+                   640px card without dominating a phone (the .brand-logo rule
+                   scales it to 128px in the mobile media query). It carries
                    the card's top radius itself because overflow:hidden on a
                    <td> is not honoured everywhere. -->
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:separate;border-spacing:0;border-radius:16px 16px 0 0;">
                 <tr>
                   <td align="center" style="padding:26px 24px 22px 24px;">
-                    <img src="{{logoUrl}}" alt="{{brandName}}" width="220" style="display:block;width:220px;max-width:220px;height:auto;margin:0 auto;border:0;outline:none;">
+                    <img src="{{logoUrl}}" alt="{{brandName}}" width="180" class="brand-logo" style="display:block;width:180px;max-width:100%;height:auto;margin:0 auto;border:0;outline:none;">
                     {{#if poweredByLabel}}<div style="margin-top:12px;">
                       <span class="dm-accent-soft dm-accent" style="display:inline-block;font-family:${FONT};font-size:12px;font-weight:700;letter-spacing:0.3px;color:${COLORS.accent};background-color:${COLORS.accentSoft};border-radius:999px;padding:5px 14px;line-height:1;">{{poweredByLabel}}</span>
                     </div>{{/if}}
@@ -302,7 +308,7 @@ function gygShell(title, bodyHtml, options = {}) {
                 <!-- Logo: centred, with generous top space -->
                 <tr>
                   <td align="center" style="padding:30px 40px 14px 40px;" class="pad">
-                    <img src="{{logoUrl}}" alt="{{brandName}}" width="180" style="display:block;width:180px;max-width:180px;height:auto;margin:0 auto;border:0;outline:none;">
+                    <img src="{{logoUrl}}" alt="{{brandName}}" width="150" class="brand-logo" style="display:block;width:150px;max-width:100%;height:auto;margin:0 auto;border:0;outline:none;">
                   </td>
                 </tr>
                 ${bodyHtml}

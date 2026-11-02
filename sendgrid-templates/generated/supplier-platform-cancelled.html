@@ -69,6 +69,11 @@
     .h1 { font-size:24px !important; }
     .h2 { font-size:18px !important; }
     .body-lg { font-size:16px !important; }
+    /* Brand lockup. The wordmark is wide (TravioGhana), so a 150-180px image
+       reads as huge on a 360px phone; scale it with the column instead of
+       letting the desktop width ride along. The width ATTRIBUTE on the <img>
+       (150/180) still governs Outlook desktop, which ignores this block. */
+    .brand-logo { width:128px !important; max-width:128px !important; }
     .hide-mobile { display:none !important; }
   }
   /* Dark mode.
@@ -121,7 +126,7 @@
                 <!-- Logo: centred, with generous top space -->
                 <tr>
                   <td align="center" style="padding:30px 40px 14px 40px;" class="pad">
-                    <img src="{{logoUrl}}" alt="{{brandName}}" width="180" style="display:block;width:180px;max-width:180px;height:auto;margin:0 auto;border:0;outline:none;">
+                    <img src="{{logoUrl}}" alt="{{brandName}}" width="150" class="brand-logo" style="display:block;width:150px;max-width:100%;height:auto;margin:0 auto;border:0;outline:none;">
                   </td>
                 </tr>
                 
