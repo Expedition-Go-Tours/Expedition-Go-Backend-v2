@@ -29,7 +29,20 @@ jest.mock('../../src/core/services/notificationRecipientService', () => ({
   resolveRecipients: jest.fn(),
 }));
 
-process.env.CLIENT_URL = 'https://travioghana.com';
+// Mirrors production: CLIENT_URL is the TravioAfrica default and the branded
+// storefronts are only reachable through the allow-list, so a link can only be
+// right if the booking's own clientOrigin is honoured.
+const ORIGINAL_ENV = {
+  CLIENT_URL: process.env.CLIENT_URL,
+  ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
+};
+process.env.CLIENT_URL = 'https://travioafrica.com';
+process.env.ALLOWED_ORIGINS = [
+  'https://travioghana.com',
+  'https://www.travioghana.com',
+  'https://expeditiongotours.com',
+  'https://www.expeditiongotours.com',
+].join(',');
 
 const { __send } = require('resend');
 const { contactAddressForBooking } = require('../../src/core/services/supplierContact');
@@ -47,6 +60,15 @@ const {
 const HOUR = 60 * 60 * 1000;
 const RELAY = 'c-0123456789abcdef@messages.travioghana.com';
 
+// Restore the ambient env so this file's brand fixture cannot leak into the
+// next suite that shares the worker process.
+afterAll(() => {
+  for (const [key, value] of Object.entries(ORIGINAL_ENV)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+});
+
 function booking(overrides = {}) {
   const tour = overrides.tour || {
     id: 'tour-1',
@@ -63,6 +85,7 @@ function booking(overrides = {}) {
     customerId: 'cust-1',
     tourId: 'tour-1',
     source: 'GHANA',
+    clientOrigin: 'https://www.travioghana.com',
     travelDate: new Date(Date.now() + 48 * HOUR),
     selectedTime: '09:00',
     travelers: { adults: 2, children: 1, infants: 0 },
@@ -321,6 +344,53 @@ describe('supplier cancellation routing', () => {
       {},
     );
     expect(__send.mock.calls[0][0].html).toContain('Payment not collected');
+  });
+});
+
+describe('brand and storefront resolution', () => {
+  it('sends a Ghana booking as Travio Ghana with Ghana links', async () => {
+    const payload = await customerEmail(booking({ status: 'CANCELLED' }), {
+      cancelledBy: 'CUSTOMER',
+      refundAmount: 400,
+      refundSucceeded: true,
+    });
+
+    expect(payload.html).toContain('Travio Ghana');
+    expect(payload.html).not.toContain('Travio Africa');
+    expect(payload.html).toContain('https://www.travioghana.com/');
+    expect(payload.html).not.toContain('travioafrica.com');
+    expectRenderedCleanly(payload.html);
+  });
+
+  it('sends an Expedition booking as Expedition-Go with Expedition links', async () => {
+    const payload = await customerEmail(
+      booking({
+        source: 'EXPEDITION',
+        clientOrigin: 'https://www.expeditiongotours.com',
+        status: 'CANCELLED',
+      }),
+      { cancelledBy: 'CUSTOMER', refundAmount: 400, refundSucceeded: true },
+    );
+
+    expect(payload.html).toContain('Expedition-Go Tours');
+    expect(payload.html).toContain('https://www.expeditiongotours.com/');
+    expect(payload.html).not.toContain('https://travioghana.com');
+    expect(payload.html).not.toContain('https://travioafrica.com');
+    expectRenderedCleanly(payload.html);
+  });
+
+  it('keeps a supplier cancellation on the booking brand', async () => {
+    const payload = await supplierEmail(booking({ status: 'CANCELLED' }), {
+      cancelledBy: 'CUSTOMER',
+      refundAmount: 400,
+      refundSucceeded: true,
+    });
+
+    expect(payload.html).toContain('Travio Ghana');
+    expect(payload.html).not.toContain('Travio Africa');
+    expect(payload.html).toContain('travioghana.com');
+    expect(payload.html).not.toContain('travioafrica.com');
+    expectRenderedCleanly(payload.html);
   });
 });
 

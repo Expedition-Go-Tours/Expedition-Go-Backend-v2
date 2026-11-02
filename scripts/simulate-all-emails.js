@@ -56,6 +56,8 @@ function mockTour(overrides = {}) {
       name: 'Cape Peninsula Explorers',
       email: TO,
       phone: '+27 21 555 0130',
+      // Second signal for resolveEmailBrand, for any path that drops `source`.
+      roles: ['ghana'],
     },
     ...overrides,
   };
@@ -75,6 +77,12 @@ function mockBooking(overrides = {}) {
   const booking = {
     id: 'sim-booking-1',
     bookingNumber: 'TRA-SIM-0001',
+    // Booking.source is what `resolveEmailBrand` reads first, and clientOrigin
+    // is what every deep link is built from. Without both, the simulation
+    // silently falls through to the defaults and sends as Travio Africa with
+    // travioafrica.com links — exactly what production must never do.
+    source: 'GHANA',
+    clientOrigin: 'https://www.travioghana.com',
     travelDate: new Date(Date.now() + 3 * 86400000),
     selectedTime: '09:00',
     specialRequests: 'Vegetarian meals for all travellers, please.',
