@@ -207,9 +207,24 @@ function normalizePayload(payload, actor) {
   if (!payload || typeof payload !== 'object') throw new AppError('A refund request body is required', 400);
 
   const operated = payload.operated;
-  const attended = payload.attended;
-  if (typeof operated !== 'boolean' || typeof attended !== 'boolean') {
-    throw new AppError('Answer whether the tour operated and whether the customer attended', 400);
+  if (typeof operated !== 'boolean') {
+    throw new AppError('Answer whether the tour operated', 400);
+  }
+
+  // A tour that did not operate cannot have been attended, so the second
+  // question is not asked (and cannot be answered "yes" by a hand-crafted
+  // request). Recorded rather than overwritten silently: the reviewer sees
+  // that the value was inferred, not reported.
+  let attended;
+  let attendedInferred = false;
+  if (operated === false) {
+    attended = false;
+    attendedInferred = true;
+  } else {
+    if (typeof payload.attended !== 'boolean') {
+      throw new AppError('Answer whether the customer went on this tour', 400);
+    }
+    attended = payload.attended;
   }
 
   const reasonCode = String(payload.reasonCode || '').trim().toUpperCase();
@@ -220,6 +235,7 @@ function normalizePayload(payload, actor) {
   return {
     operated,
     attended,
+    attendedInferred,
     reasonCode,
     refundType: String(payload.refundType || '').toUpperCase(),
     value: toNumber(payload.value),

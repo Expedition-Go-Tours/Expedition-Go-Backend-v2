@@ -203,6 +203,35 @@ describe('createRefundRequest', () => {
     })).rejects.toThrow(/reason/i);
   });
 
+  it('infers "did not attend" when the tour did not operate', async () => {
+    // The modal hides the second question in this case; the server must not
+    // leave the field to chance, and must record that it was inferred.
+    await service.createRefundRequest({
+      bookingId: 'b1', supplierId: 's1', actor: { id: 'u1' },
+      payload: { operated: false, reasonCode: 'WEATHER_DISRUPTION', refundType: 'PERCENT', value: 100 },
+    });
+    const data = prisma.supplierRefundRequest.create.mock.calls[0][0].data;
+    expect(data.payload.attended).toBe(false);
+    expect(data.payload.attendedInferred).toBe(true);
+  });
+
+  it('ignores attended=true when the tour did not operate', async () => {
+    // A hand-crafted request cannot claim both.
+    await service.createRefundRequest({
+      bookingId: 'b1', supplierId: 's1', actor: { id: 'u1' },
+      payload: { operated: false, attended: true, reasonCode: 'WEATHER_DISRUPTION', refundType: 'PERCENT', value: 100 },
+    });
+    const data = prisma.supplierRefundRequest.create.mock.calls[0][0].data;
+    expect(data.payload.attended).toBe(false);
+  });
+
+  it('still requires the customer answer when the tour operated', async () => {
+    await expect(service.createRefundRequest({
+      bookingId: 'b1', supplierId: 's1', actor: { id: 'u1' },
+      payload: { operated: true, reasonCode: 'SERVICE_QUALITY', refundType: 'PERCENT', value: 50 },
+    })).rejects.toThrow(/customer went on this tour/i);
+  });
+
   it('requires the two attestation answers', async () => {
     await expect(service.createRefundRequest({
       bookingId: 'b1', supplierId: 's1', payload: { reasonCode: 'OTHER', refundType: 'AMOUNT', value: 10 }, actor: { id: 'u1' },
