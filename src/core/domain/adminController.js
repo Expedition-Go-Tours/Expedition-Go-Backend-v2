@@ -84,6 +84,13 @@ function buildAuditMessage(action, resource, metadata = {}) {
     'tour.deleted': () => 'Tour deleted',
     'tour.photo.deleted': () => 'Tour photo removed',
     'tour.seeded': () => 'Tours imported from file',
+    'tour.submitted_for_review': () => 'Tour submitted for review',
+    'tour.edit_submitted_for_review': () => 'Tour edit submitted for review',
+    'tour.withdrawn_from_review': () => 'Tour withdrawn from review',
+    'tour.draft_saved': () => 'Tour draft saved',
+    'booking.status_updated': () => 'Booking status updated',
+    'booking.pickup_updated': () => 'Pickup details updated',
+    'booking.rescheduled': () => 'Booking rescheduled',
     'review.created': () => 'Review submitted',
     'review.updated': () => 'Review updated',
     'review.deleted': () => 'Review deleted',
@@ -143,7 +150,12 @@ function buildAuditMessage(action, resource, metadata = {}) {
   const builder = messages[action];
   if (builder) return builder();
 
-  return action.replace(/\./g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  // Unknown actions still deserve a readable sentence: `tour.edit_submitted_for_review`
+  // becomes "Tour edit submitted for review", not "Tour Edit_submitted_for_review".
+  const [first, ...rest] = action.split('.').filter(Boolean);
+  const tail = rest.join(' ').replace(/_/g, ' ').trim();
+  const text = [first, tail].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : action;
 }
 
 exports.buildAuditMessage = buildAuditMessage;
