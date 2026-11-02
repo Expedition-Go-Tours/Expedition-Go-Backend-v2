@@ -21,6 +21,7 @@ const { attachBrand } = require('../../../middleware/brandContext');
 const ghana = require('./adminController');
 const adminController = require('../../core/domain/adminController');
 const cancellationRequestController = require('../../core/domain/cancellationRequestController');
+const supplierRefundRequestController = require('../../core/domain/supplierRefundRequestController');
 const adminAiController = require('../../core/domain/adminAiController');
 const verificationController = require('../../core/domain/supplierVerificationController');
 
@@ -179,6 +180,30 @@ router.post('/cancellation-requests/:id/approve',
 router.post('/cancellation-requests/:id/reject',
   requirePermission('cancellations.approve'),
   cancellationRequestController.reject,
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// SUPPLIER REFUND REQUESTS — supplier asks, admin decides, balance pays
+//
+// Reading the queue needs only bookings visibility; the DECISION moves money
+// (it refunds the traveller and debits the supplier), so it uses the existing
+// `payouts.approve` key rather than a new permission nobody is granted yet.
+// ══════════════════════════════════════════════════════════════════════════
+router.get('/refund-requests',
+  requirePermission('bookings.view', 'dashboard.*'),
+  supplierRefundRequestController.listAdmin,
+);
+router.get('/refund-requests/:id',
+  requirePermission('bookings.view', 'dashboard.*'),
+  supplierRefundRequestController.getAdminOne,
+);
+router.post('/refund-requests/:id/approve',
+  requirePermission('payouts.approve'),
+  supplierRefundRequestController.approve,
+);
+router.post('/refund-requests/:id/reject',
+  requirePermission('payouts.approve'),
+  supplierRefundRequestController.reject,
 );
 
 // ══════════════════════════════════════════════════════════════════════════

@@ -638,6 +638,27 @@ async function isLatestRefundBookingModify(paymentIntentId) {
 }
 
 /**
+ * A supplier refund request owns its own booking state (see
+ * `services/supplierRefundRequest.js`).
+ *
+ * This webhook cancels the supplier payout for EVERY refund, partial included.
+ * Left to run, a 10% goodwill refund would wipe out the whole payout on top of
+ * the proportional SupplierCharge the service raises. The refund is tagged
+ * `metadata.reason = 'supplier_refund_request'`, so the newest refund is the
+ * signal — same technique as the booking-modify skip above.
+ */
+async function isLatestRefundSupplierRequest(paymentIntentId) {
+  try {
+    const list = await getStripe().refunds.list({ payment_intent: paymentIntentId, limit: 3 });
+    const newest = (list && list.data && list.data[0]) || null;
+    return !!(newest && newest.metadata && newest.metadata.reason === 'supplier_refund_request');
+  } catch (err) {
+    console.warn('[Stripe] Could not inspect refund metadata for', paymentIntentId, err.message);
+    return false;
+  }
+}
+
+/**
  * The newest refund on a Charge object (by `created`), or null.
  *
  * `charge.amount_refunded` is cumulative across every refund on the intent, so
@@ -972,6 +993,14 @@ async function processStripeWebhook(event) {
         // still-active booking. Only skip when the NEWEST refund is ours.
         if (await isLatestRefundBookingModify(paymentIntentId)) {
           console.log(' charge.refunded — booking_modify refund; reconcile handled by modify service, skipping');
+          break;
+        }
+        // Same rule for a supplier-initiated refund: the refund service has
+        // already written the booking totals, the payout decision and the
+        // SupplierCharge. Cancelling the payout here too would charge the
+        // supplier twice for the same money.
+        if (await isLatestRefundSupplierRequest(paymentIntentId)) {
+          console.log(' charge.refunded — supplier refund request; state owned by the refund service, skipping');
           break;
         }
         // A full reversal makes the booking terminal; a partial dashboard

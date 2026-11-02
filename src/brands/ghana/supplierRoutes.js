@@ -25,6 +25,7 @@ const cancellationController = require('../../core/domain/cancellationController
 const teamController = require('../../core/domain/teamController');
 const bookingController = require('../../core/domain/bookingController');
 const supplierBookingController = require('../../core/domain/supplierBookingController');
+const supplierRefundRequestController = require('../../core/domain/supplierRefundRequestController');
 const {
   quoteSupplierBookingSchema,
   createSupplierBookingSchema,
@@ -137,6 +138,15 @@ router.post('/bookings/quote', resolveSupplier, requireTeamPermission('bookings.
 router.get('/bookings/:id/collections', resolveSupplier, requireTeamPermission('bookings.view'), validate(supplierBookingParamsSchema), supplierBookingController.collections);
 router.post('/bookings/:id/collections', resolveSupplier, requireTeamPermission('bookings.manage'), validate(recordCollectionSchema), supplierBookingController.recordCollection);
 router.post('/bookings/:id/refunds', resolveSupplier, requireTeamPermission('bookings.manage'), validate(recordCollectionSchema), supplierBookingController.recordOfflineRefund);
+
+// ── Supplier-initiated refunds on a delivered trip ─────────────────────────
+// The request is filed here; an admin decides and the money moves. The quote
+// is what makes the modal honest: the ceiling, the supplier's share and the
+// result of any existing request all come from the server, never the browser.
+router.get('/bookings/:id/refund-quote', resolveSupplier, requireTeamPermission('bookings.view'), supplierRefundRequestController.quote);
+router.post('/bookings/:id/refund-requests', resolveSupplier, requireTeamPermission('bookings.manage'), supplierRefundRequestController.create);
+router.get('/refund-requests', resolveSupplier, requireTeamPermission('bookings.view'), supplierRefundRequestController.listMine);
+router.post('/refund-requests/:id/withdraw', resolveSupplier, requireTeamPermission('bookings.manage'), supplierRefundRequestController.withdraw);
 
 // Commission cover — the supplier's available balance, which the "Create
 // booking" button gates on. Declared under /finance because /bookings/cover

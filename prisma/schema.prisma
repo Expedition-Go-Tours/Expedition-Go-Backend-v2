@@ -515,6 +515,7 @@ model User {
   wishlistItems                WishlistItem[]
   wishlistShares               WishlistShare[]
   waitlistEntries              WaitlistEntry[]
+  supplierRefundRequests       SupplierRefundRequest[]
   checkoutDrafts               CheckoutDraft[]
   stayProperties               StayProperty[]
   stayOffers                   StayOffer[]
@@ -3024,6 +3025,7 @@ model SupplierRefundRequest {
   // Soft reference, matching CancellationRequest: the supplier is a User, but
   // no back-relation is declared so the hot User model stays untouched.
   supplierId String
+  supplier   User   @relation(fields: [supplierId], references: [id], onDelete: Cascade)
 
   status SupplierRefundRequestStatus @default(PENDING_APPROVAL)
 

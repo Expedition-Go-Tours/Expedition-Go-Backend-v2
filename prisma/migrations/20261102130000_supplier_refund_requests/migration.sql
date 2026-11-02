@@ -59,3 +59,11 @@ ALTER TABLE "SupplierRefundRequest"
     ADD CONSTRAINT "SupplierRefundRequest_bookingId_fkey"
     FOREIGN KEY ("bookingId") REFERENCES "Booking"("id")
     ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "SupplierRefundRequest"
+    ADD CONSTRAINT "SupplierRefundRequest_supplierId_fkey"
+    FOREIGN KEY ("supplierId") REFERENCES "User"("id")
+    ON DELETE CASCADE ON UPDATE CASCADE;
+
+CREATE INDEX "SupplierRefundRequest_supplierId_idx"
+    ON "SupplierRefundRequest"("supplierId");

@@ -1019,6 +1019,79 @@ const waitlistOpen = {
 };
 
 // ────────────────────────────────────────────────────────────────────────────
+// Supplier refund requests.
+//
+// The supplier asks, an admin decides, and the supplier's balance carries the
+// cost. Two templates: the ops alert when a request is filed, and the decision
+// the supplier receives either way.
+// ────────────────────────────────────────────────────────────────────────────
+
+const supplierRefundRequested = {
+  key: 'supplier-refund-requested',
+  name: 'Admin · Supplier refund request filed',
+  build() {
+    return B.shell('A supplier asked to refund a traveller', `
+      ${B.mediaHeader({
+        imageVar: 'tourImageUrl',
+        badgeText: 'Refund request',
+        badgeColor: 'warning',
+        heading: 'Refund request awaiting a decision',
+        subtitle: '{{tourTitle}} &middot; {{dateLabel}}',
+      })}
+      ${B.referenceBar({ reference: '{{requestNumber}}', right: '{{supplierName}}' })}
+      ${B.sectionTitle('What was asked for')}
+      ${B.detailCard([
+        { label: 'Traveller refund', value: '{{refundAmountLabel}}' },
+        { label: 'Charged to supplier balance', value: '{{chargeLabel}}' },
+        { label: 'Reason', value: '{{reasonLabel}}' },
+        { label: 'Tour operated', value: '{{operatedLabel}}' },
+        { label: 'Customer attended', value: '{{attendedLabel}}' },
+        { label: 'Booking total', value: '{{totalLabel}}' },
+      ])}
+      {{#if note}}
+      ${B.paragraph('Supplier note: <strong>{{note}}</strong>')}
+      {{/if}}
+      ${B.callout('Approving refunds the traveller immediately and raises the charge against the supplier. Nothing moves until you decide.', 'warning')}
+      ${B.pillButton('Review the request', '{{adminUrl}}')}
+    `, { variant: 'gyg', footer: 'none' });
+  },
+};
+
+const supplierRefundDecision = {
+  key: 'supplier-refund-decision',
+  name: 'Supplier · Refund request decision',
+  build() {
+    return B.shell('{{decisionTitle}}', `
+      ${B.mediaHeader({
+        imageVar: 'tourImageUrl',
+        badgeText: '{{decisionBadge}}',
+        badgeColor: '{{decisionTone}}',
+        heading: '{{decisionTitle}}',
+        subtitle: '{{tourTitle}} &middot; {{dateLabel}}',
+      })}
+      ${B.referenceBar({ reference: '{{requestNumber}}', right: '{{bookingNumber}}' })}
+      ${B.textBlock('{{decisionBody}}', { center: false })}
+      ${B.sectionTitle('Request summary')}
+      ${B.detailCard([
+        { label: 'Traveller refund', value: '{{refundAmountLabel}}' },
+        { label: 'Charged to your balance', value: '{{chargeLabel}}' },
+        { label: 'Reason', value: '{{reasonLabel}}' },
+      ])}
+      {{#if decisionNote}}
+      ${B.callout('Note from our team: <strong>{{decisionNote}}</strong>', 'info')}
+      {{/if}}
+      {{#if approved}}
+      ${B.callout('The charge appears in your charges list and is settled against your next payout. It is not taken from your bank account.', 'info')}
+      {{/if}}
+      ${B.buttons([
+        { label: 'View booking', href: '{{supplierBookingUrl}}' },
+        { label: 'Your charges', href: '{{chargesUrl}}', kind: 'secondary' },
+      ])}
+    `, { variant: 'gyg', footer: 'supplier' });
+  },
+};
+
+// ────────────────────────────────────────────────────────────────────────────
 // Supplier emails
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -1867,6 +1940,8 @@ const TEMPLATE_DEFS = [
   checkoutAbandoned,
   wishlistPriceDrop,
   waitlistOpen,
+  supplierRefundRequested,
+  supplierRefundDecision,
   supplierNewBooking,
   supplierBookingRecorded,
   supplierReserveLater,

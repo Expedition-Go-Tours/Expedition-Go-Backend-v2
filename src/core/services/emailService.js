@@ -1629,6 +1629,122 @@ function normalizeOriginForLink(raw) {
   }
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Supplier refund requests.
+// ────────────────────────────────────────────────────────────────────────────
+
+const SUPPLIER_BASE = (process.env.GHANA_SUPPLIER_DASHBOARD_URL || 'https://supplier.travioghana.com').replace(/\/+$/, '');
+
+async function loadRefundRequestForEmail(requestId) {
+  const request = await prisma.supplierRefundRequest.findUnique({
+    where: { id: requestId },
+    include: {
+      supplier: { select: { id: true, name: true, email: true } },
+      booking: {
+        include: {
+          tour: { select: { id: true, title: true, slug: true } },
+          customer: { select: { id: true, name: true, email: true } },
+        },
+      },
+    },
+  });
+  if (!request) return null;
+  return request;
+}
+
+function refundReasonLabel(code) {
+  try {
+    const { REFUND_REASONS } = require('./supplierRefundRequest');
+    const hit = REFUND_REASONS.find((r) => r.code === code);
+    return hit ? hit.label : String(code || '');
+  } catch {
+    return String(code || '');
+  }
+}
+
+/** Ops alert: a supplier filed a refund request and it needs a decision. */
+async function sendSupplierRefundRequestedEmail(requestId) {
+  const request = await loadRefundRequestForEmail(requestId);
+  if (!request) return null;
+
+  const b = await resolveBookingContext(request.bookingId);
+  const base = await buildBookingBase(b);
+  const preview = request.preview || {};
+  const currency = preview.currency || b.currency || 'USD';
+
+  const targets = String(process.env.ADMIN_OPS_EMAIL || process.env.SUPPORT_EMAIL || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (targets.length === 0) return null;
+
+  const data = {
+    ...base,
+    requestNumber: request.requestNumber,
+    supplierName: request.supplier?.name || base.supplierName || 'Supplier',
+    refundAmountLabel: fmt.formatCurrency(preview.proposed ?? 0, currency),
+    chargeLabel: fmt.formatCurrency(preview.charge ?? 0, currency),
+    reasonLabel: refundReasonLabel(request.payload?.reasonCode),
+    operatedLabel: request.payload?.operated ? 'Yes' : 'No',
+    attendedLabel: request.payload?.attended ? 'Yes' : 'No',
+    note: request.payload?.note || '',
+    adminUrl: `${emailUrls.adminBaseForBrand('ghana')}/refund-requests?request=${encodeURIComponent(request.id)}`,
+  };
+
+  return sendRendered({
+    to: targets.join(','),
+    subject: `Refund request ${request.requestNumber} — ${b.tour?.title || 'booking'}`,
+    key: 'supplier-refund-requested',
+    data,
+    opts: { brandKey: base.brandKey, preheader: `${request.supplier?.name || 'A supplier'} asked to refund ${data.refundAmountLabel}` },
+  });
+}
+
+/** The supplier's decision notice — approved or rejected. */
+async function sendSupplierRefundDecisionEmail(requestId) {
+  const request = await loadRefundRequestForEmail(requestId);
+  if (!request || !request.supplier?.email) return null;
+
+  const b = await resolveBookingContext(request.bookingId);
+  const base = await buildBookingBase(b);
+  const preview = request.preview || {};
+  const currency = preview.currency || b.currency || 'USD';
+  const approved = request.status === 'COMPLETED';
+
+  const data = {
+    ...base,
+    requestNumber: request.requestNumber,
+    approved,
+    decisionTitle: approved ? 'Refund approved' : 'Refund request declined',
+    decisionBadge: approved ? 'Approved' : 'Declined',
+    decisionTone: approved ? 'success' : 'danger',
+    decisionBody: approved
+      ? `Your refund request for <strong>${b.tour?.title || 'the booking'}</strong> was approved and the traveller has been refunded. The cost is on your balance, not your bank account.`
+      : `Your refund request for <strong>${b.tour?.title || 'the booking'}</strong> was not approved. The reason is below.`,
+    refundAmountLabel: fmt.formatCurrency(preview.proposed ?? 0, currency),
+    chargeLabel: fmt.formatCurrency(preview.charge ?? 0, currency),
+    reasonLabel: refundReasonLabel(request.payload?.reasonCode),
+    decisionNote: request.decisionNote || '',
+    supplierBookingUrl: `${SUPPLIER_BASE}/bookings?booking=${encodeURIComponent(request.bookingId)}`,
+    chargesUrl: `${SUPPLIER_BASE}/finance`,
+  };
+
+  return sendRendered({
+    to: request.supplier.email,
+    subject: approved
+      ? `Refund approved — ${request.requestNumber}`
+      : `Refund request declined — ${request.requestNumber}`,
+    key: 'supplier-refund-decision',
+    data,
+    opts: {
+      brandKey: base.brandKey,
+      preheader: approved
+        ? `${data.refundAmountLabel} refunded to the traveller`
+        : 'The reason is included in this email',
+    },
+  });
+}
+
 /**
  * Notifies the customer (by email) that an operator replied to their review.
  * Booking worker include carries `review` (id/supplierResponse/…); the CTA goes
@@ -2902,6 +3018,8 @@ module.exports = {
   sendCheckoutRecoveryEmail,
   sendWishlistPriceDropEmail,
   sendWaitlistOpenEmail,
+  sendSupplierRefundRequestedEmail,
+  sendSupplierRefundDecisionEmail,
   sendSupplierResponseEmail,
 
   // supplier
