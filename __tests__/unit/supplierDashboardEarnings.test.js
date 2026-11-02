@@ -29,7 +29,7 @@ const makeSupplierController = require('../../src/core/supplier');
 const controller = makeSupplierController('ghana');
 
 async function invokeDashboard() {
-  const req = { supplierId: 'supplier-1', user: { id: 'user-1' } };
+  const req = { supplierId: 'supplier-1', user: { id: 'user-1' }, teamPermissions: ['*'] };
   const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
   const next = jest.fn();
   await controller.getDashboard(req, res, next);
