@@ -19,6 +19,55 @@ const TO = process.env.EMAIL_SIM_TO || 'kwarteon08@gmail.com';
 // ───────────────────────────────────────────────────────────────────────────
 // Mock booking — fully populated so resolveBookingContext skips the DB fetch.
 // ───────────────────────────────────────────────────────────────────────────
+function mockTour(overrides = {}) {
+  return {
+    id: 'sim-tour-1',
+    title: 'Cape of Good Hope & Penguins Private Day Tour',
+    slug: 'cape-of-good-hope-penguins-private-day-tour',
+    description:
+      'A full-day private exploration of the Cape Peninsula, Chapman\u2019s Peak Drive, the Cape of Good Hope and a visit to the famous Boulders Beach penguin colony.',
+    photos: [],
+    coverPhoto: 'https://res.cloudinary.com/dfpagrtoy/image/upload/v1787749419/user-photos/f7k7m3eeasci5xgt0csk.png',
+    productContent: {
+      location: { city: 'Cape Town', country: 'South Africa' },
+      whatToBring: ['Comfortable walking shoes', 'Sun hat and sunscreen', 'Camera', 'Warm layer for the coast', 'Water bottle'],
+    },
+    bookingAndTickets: {
+      meetingPoint: { name: 'V&A Waterfront', address: 'Victoria & Alfred Waterfront, Cape Town', instructions: 'Look for the guide holding a green sign.' },
+      meetingTime: '09:00',
+      durationLabel: '8 hours',
+      checkInProcess: 'Please check in at the meeting point 15 minutes early.',
+      cancellationPolicy: {
+        text: 'Free cancellation up to 24 hours before the experience starts.',
+      },
+    },
+    categorization: {
+      duration: { value: 8, unit: 'hours' },
+      categories: ['Day Tour', 'Nature'],
+      language: 'English',
+      bookingType: 'private',
+    },
+    durationMinutes: 480,
+    supplier: {
+      id: 'sim-supplier-1',
+      name: 'Cape Peninsula Explorers',
+      email: TO,
+      phone: '+27 21 555 0130',
+    },
+    ...overrides,
+  };
+}
+
+/** A tour sold as non-refundable — no free-cancellation deadline at all. */
+function nonRefundableTour() {
+  return mockTour({
+    bookingAndTickets: {
+      ...mockTour().bookingAndTickets,
+      cancellationPolicy: { type: 'all_sales_final' },
+    },
+  });
+}
+
 function mockBooking(overrides = {}) {
   const booking = {
     id: 'sim-booking-1',
@@ -64,39 +113,7 @@ function mockBooking(overrides = {}) {
       phone: '+27 82 555 0142',
       location: 'Cape Town, South Africa',
     },
-    tour: {
-      id: 'sim-tour-1',
-      title: 'Cape of Good Hope & Penguins Private Day Tour',
-      description:
-        'A full-day private exploration of the Cape Peninsula, Chapman\u2019s Peak Drive, the Cape of Good Hope and a visit to the famous Boulders Beach penguin colony.',
-      photos: [],
-      productContent: {
-        location: { city: 'Cape Town', country: 'South Africa' },
-        whatToBring: ['Comfortable walking shoes', 'Sun hat and sunscreen', 'Camera', 'Warm layer for the coast', 'Water bottle'],
-      },
-      bookingAndTickets: {
-        meetingPoint: { name: 'V&A Waterfront', address: 'Victoria & Alfred Waterfront, Cape Town', instructions: 'Look for the guide holding a green sign.' },
-        meetingTime: '09:00',
-        durationLabel: '8 hours',
-        checkInProcess: 'Please check in at the meeting point 15 minutes early.',
-        cancellationPolicy: {
-          text: 'Free cancellation up to 24 hours before the experience starts.',
-        },
-      },
-      categorization: {
-        duration: { value: 8, unit: 'hours' },
-        categories: ['Day Tour', 'Nature'],
-        language: 'English',
-        bookingType: 'private',
-      },
-      durationMinutes: 480,
-      supplier: {
-        id: 'sim-supplier-1',
-        name: 'Cape Peninsula Explorers',
-        email: TO,
-        phone: '+27 21 555 0130',
-      },
-    },
+    tour: mockTour(),
     ...overrides,
   };
   return booking;
@@ -126,7 +143,9 @@ const SENDERS = [
   ['pickup-location-required', email.sendPickupLocationRequiredEmail, { deadline: new Date(Date.now() + 3 * 86400000).toISOString() }],
   ['booking-reminder', email.sendBookingReminderEmail, {}],
   ['customer-cancelled-full-refund', email.sendCustomerCancelledFullRefundEmail, { cancelledAt: new Date().toISOString(), refundAmount: '385.00' }],
-  ['customer-cancelled-no-refund', email.sendCustomerCancelledNoRefundEmail, { cancelledAt: new Date().toISOString(), cancellationFee: '385.00', refundAmount: '0.00' }],
+  ['customer-cancelled-no-refund', email.sendCustomerCancelledNoRefundEmail, { cancelledAt: new Date().toISOString() }],
+  ['customer-cancelled-unpaid', email.sendCustomerCancelledUnpaidEmail, { cancelledAt: new Date().toISOString() }],
+  ['customer-cancelled-non-refundable', email.sendCustomerCancelledNonRefundableEmail, { cancelledAt: new Date().toISOString() }],
   ['refund-processing', email.sendRefundProcessingEmail, { refundReference: 're_3SimRef0001' }],
   ['refund-completed', email.sendRefundCompletedEmail, { refundReference: 're_3SimRef0001', refundedAt: new Date().toISOString() }],
   ['supplier-changed-booking', email.sendSupplierChangedBookingEmail, { changes: mockChanges(), changeReason: 'Customer requested a later start time.', needsAcceptance: true }],
@@ -140,9 +159,12 @@ const SENDERS = [
   ['supplier-pickup-updated', email.sendSupplierPickupUpdatedEmail, { previousPickupLocation: 'V&A Waterfront, Cape Town' }],
   ['supplier-booking-reminder', email.sendSupplierBookingReminderEmail, {}],
   ['supplier-customer-cancelled-free', email.sendSupplierCustomerCancelledFreeEmail, { cancelledAt: new Date().toISOString() }],
+  ['supplier-customer-cancelled-unpaid', email.sendSupplierCustomerCancelledUnpaidEmail, { cancelledAt: new Date().toISOString() }],
+  ['supplier-customer-cancelled-non-refundable', email.sendSupplierCustomerCancelledNonRefundableEmail, { cancelledAt: new Date().toISOString() }],
   ['supplier-customer-cancelled-late', email.sendSupplierCustomerCancelledLateEmail, { cancelledAt: new Date().toISOString() }],
   ['supplier-platform-cancelled', email.sendSupplierPlatformCancelledEmail, { reason: 'The tour date exceeded maximum capacity.', compensation: '25.00' }],
   ['supplier-cancellation-recorded', email.sendSupplierCancellationRecordedEmail, { reason: 'Customer requested cancellation.' }],
+  ['supplier-review-invite', email.sendSupplierReviewInviteEmail, {}],
   ['supplier-payout-scheduled', email.sendSupplierPayoutScheduledEmail, { booking: mockBooking(), payout: { id: 'po_3Sim0001', amount: '327.25', methodLabel: 'Bank transfer', date: new Date(Date.now() + 7 * 86400000) }, payoutDate: new Date(Date.now() + 7 * 86400000).toISOString() }],
   ['supplier-payout-completed', email.sendSupplierPayoutCompletedEmail, { booking: mockBooking(), payout: { id: 'po_3Sim0001', amount: '327.25', methodLabel: 'Bank transfer', date: new Date() }, payoutDate: new Date().toISOString() }],
   ['supplier-payout-failed', email.sendSupplierPayoutFailedEmail, { booking: mockBooking(), payout: { id: 'po_3Sim0001', amount: '327.25' }, reason: 'The destination account rejected the transfer (invalid IBAN).' }],
@@ -156,8 +178,17 @@ const BASE_VARIANTS = {
   'pay-later-charged': mockBooking({ paymentTiming: 'later', paymentStatus: 'SUCCEEDED', paidAt: new Date() }),
   'awaiting-confirmation': mockBooking({ status: 'PENDING', paymentStatus: 'SUCCEEDED', paidAt: new Date() }),
   'payment-unsuccessful': mockBooking({ paymentTiming: 'later', paymentStatus: 'FAILED' }),
-  'customer-cancelled-full-refund': mockBooking({ status: 'CANCELLED', paymentStatus: 'REFUNDED', refundAmount: '385.00', refundedAt: new Date(), cancelledAt: new Date(), cancellationReason: 'Change of plans' }),
-  'customer-cancelled-no-refund': mockBooking({ status: 'CANCELLED', paymentStatus: 'SUCCEEDED', cancelledAt: new Date(), cancellationReason: 'Late cancellation' }),
+  'customer-cancelled-full-refund': mockBooking({ status: 'CANCELLED', paymentStatus: 'REFUNDED', refundStatus: 'SUCCEEDED', refundAmount: '385.00', refundedAt: new Date(), cancelledAt: new Date(), cancellationReason: 'Change of plans' }),
+  // Late: the activity starts in 6h, so the 24h free window has genuinely passed.
+  'customer-cancelled-no-refund': mockBooking({ status: 'CANCELLED', paymentStatus: 'SUCCEEDED', travelDate: new Date(Date.now() + 6 * 3600000), cancelledAt: new Date(), cancellationReason: 'Schedule conflict' }),
+  'customer-cancelled-unpaid': mockBooking({ status: 'CANCELLED', paymentTiming: 'later', paymentStatus: 'PENDING', paidAt: null, cancelledAt: new Date(), cancellationReason: 'Change of plans' }),
+  'customer-cancelled-non-refundable': mockBooking({ status: 'CANCELLED', paidAt: new Date(), cancelledAt: new Date(), cancellationReason: 'Schedule conflict', tour: nonRefundableTour() }),
+  'supplier-cancelled-booking': mockBooking({ status: 'CANCELLED', refundStatus: 'PENDING', cancelledAt: new Date(), cancellationOrigin: 'SUPPLIER', cancellationReason: 'Guide unavailable due to illness.' }),
+  'supplier-customer-cancelled-free': mockBooking({ status: 'CANCELLED', paymentStatus: 'REFUNDED', refundStatus: 'SUCCEEDED', refundAmount: '385.00', refundedAt: new Date(), cancelledAt: new Date(), cancellationReason: 'Change of plans' }),
+  'supplier-customer-cancelled-unpaid': mockBooking({ status: 'CANCELLED', paymentTiming: 'later', paymentStatus: 'PENDING', paidAt: null, cancelledAt: new Date() }),
+  'supplier-customer-cancelled-non-refundable': mockBooking({ status: 'CANCELLED', paidAt: new Date(), cancelledAt: new Date(), tour: nonRefundableTour() }),
+  'supplier-customer-cancelled-late': mockBooking({ status: 'CANCELLED', paymentStatus: 'SUCCEEDED', travelDate: new Date(Date.now() + 6 * 3600000), cancelledAt: new Date() }),
+  'supplier-review-invite': mockBooking({ status: 'COMPLETED', paymentStatus: 'SUCCEEDED', travelDate: new Date(Date.now() - 5 * 86400000), leadTravelerName: 'Thabo Mokoena' }),
   'refund-processing': mockBooking({ paymentStatus: 'REFUNDED', refundAmount: '385.00' }),
   'refund-completed': mockBooking({ paymentStatus: 'REFUNDED', refundAmount: '385.00' }),
   'review-request': mockBooking({ status: 'COMPLETED', paymentStatus: 'SUCCEEDED', travelDate: new Date(Date.now() - 5 * 86400000) }),
