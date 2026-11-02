@@ -14,7 +14,7 @@ const prisma = require('./services/prismaClient');
 const AppError = require('./services/appError');
 const catchAsync = require('./services/catchAsync');
 const cache = require('./services/cacheHelper');
-const { scopeSettings } = require('./services/supplierFieldAccess');
+const { scopeSettings, scopeDashboard } = require('./services/supplierFieldAccess');
 const { notificationTypesForCategories, NOTIFICATION_CATEGORY_KEYS, hasPermissionInSet } = require('../../config/permissions');
 const { invalidateKeys } = require('./services/cacheHelper');
 const { computeOfferStatus } = require('./services/offerStatus');
@@ -171,7 +171,7 @@ controller.getDashboard = catchAsync(async (req, res) => {
     };
   }, ttl);
 
-  res.json({ status: 'success', data: result });
+  res.json({ status: 'success', data: scopeDashboard(req, result) });
 });
 
 /**
