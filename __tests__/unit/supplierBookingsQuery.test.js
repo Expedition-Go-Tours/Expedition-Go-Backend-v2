@@ -126,15 +126,46 @@ describe('server-side filters', () => {
     });
   });
 
-  it('searches booking number, customer name, customer email and tour title', async () => {
+  it('searches the reference, both names, both guest identities and the tour', async () => {
     await invoke({ search: 'kwa' });
 
-    expect(whereUsed().OR).toEqual([
-      { bookingNumber: { contains: 'kwa', mode: 'insensitive' } },
-      { customer: { name: { contains: 'kwa', mode: 'insensitive' } } },
-      { customer: { email: { contains: 'kwa', mode: 'insensitive' } } },
-      { tour: { title: { contains: 'kwa', mode: 'insensitive' } } },
+    expect(whereUsed().AND).toEqual([
+      {
+        OR: [
+          { bookingNumber: { contains: 'kwa', mode: 'insensitive' } },
+          { customer: { name: { contains: 'kwa', mode: 'insensitive' } } },
+          { customer: { email: { contains: 'kwa', mode: 'insensitive' } } },
+          { leadTravelerName: { contains: 'kwa', mode: 'insensitive' } },
+          { leadTravelerEmail: { contains: 'kwa', mode: 'insensitive' } },
+          { guest: { name: { contains: 'kwa', mode: 'insensitive' } } },
+          { guest: { email: { contains: 'kwa', mode: 'insensitive' } } },
+          { tour: { title: { contains: 'kwa', mode: 'insensitive' } } },
+        ],
+      },
     ]);
+    // A nullable relation filter matches nothing when the relation is null, so
+    // one clause covers both an account booking and an accountless reservation.
+    expect(whereUsed().OR).toBeUndefined();
+  });
+
+  it('ANDs the words of a multi-word search, in the order they were typed', async () => {
+    await invoke({ search: 'hankins priscilla' });
+
+    expect(whereUsed().AND).toEqual([
+      expect.objectContaining({
+        OR: expect.arrayContaining([{ leadTravelerName: { contains: 'hankins', mode: 'insensitive' } }]),
+      }),
+      expect.objectContaining({
+        OR: expect.arrayContaining([{ leadTravelerName: { contains: 'priscilla', mode: 'insensitive' } }]),
+      }),
+    ]);
+    expect(whereUsed().AND).toHaveLength(2);
+  });
+
+  it('ignores a search term that is only whitespace', async () => {
+    await invoke({ search: '   ' });
+
+    expect(whereUsed().AND).toBeUndefined();
   });
 
   it('applies the purchase-date range to createdAt, whole days inclusive', async () => {
@@ -245,7 +276,7 @@ describe('the CSV export', () => {
     await invoke({ search: 'Ama', status: 'CONFIRMED', activityFrom: '2026-11-01' });
 
     const where = prisma.booking.findMany.mock.calls[0][0].where;
-    expect(where.OR).toBeDefined();
+    expect(where.AND).toBeDefined();
     expect(where.status).toBe('CONFIRMED');
     expect(where.travelDate.gte.toISOString()).toBe('2026-11-01T00:00:00.000Z');
   });
@@ -333,7 +364,7 @@ describe('the summary the stat cards read', () => {
     const { payload } = await invoke({ search: 'Ama', status: 'PENDING' });
 
     const where = prisma.booking.groupBy.mock.calls[0][0].where;
-    expect(where.OR).toBeDefined();
+    expect(where.AND).toBeDefined();
     expect(where.status).toBe('PENDING');
     expect(payload.summary.counts).toEqual({ PENDING: 4 });
   });

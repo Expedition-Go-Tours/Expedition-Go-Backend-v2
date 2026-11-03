@@ -2082,14 +2082,33 @@ function buildSupplierBookingsFilter(supplierId, query = {}) {
 
   // Free-text search has to run in the database. Filtering the current page in
   // the browser made a match on page 2 look like it did not exist.
+  //
+  // What a supplier types is usually a PERSON: the traveller on the card, or
+  // the account that booked for them. Only matching the account name made
+  // "Priscilla" miss TRG-86629225 (booked by Wayne Gibson) and every
+  // accountless row — guest checkouts and supplier-created reservations —
+  // findable by reference alone. A nullable relation simply never matches when
+  // the relation is null, so one OR covers both kinds of row.
+  //
+  // Words are ANDed: "hankins priscilla" must find the same booking as
+  // "priscilla hankins", and each word may land on a different field (a name
+  // in one, a tour title in another). Phones are deliberately absent — they
+  // are stored in mixed formats, and a substring match that silently misses
+  // reads as a broken search.
   const term = typeof search === 'string' ? search.trim() : '';
   if (term) {
-    where.OR = [
-      { bookingNumber: { contains: term, mode: 'insensitive' } },
-      { customer: { name: { contains: term, mode: 'insensitive' } } },
-      { customer: { email: { contains: term, mode: 'insensitive' } } },
-      { tour: { title: { contains: term, mode: 'insensitive' } } },
+    const tokens = term.split(/\s+/).filter(Boolean).slice(0, 5);
+    const matches = (token) => [
+      { bookingNumber: { contains: token, mode: 'insensitive' } },
+      { customer: { name: { contains: token, mode: 'insensitive' } } },
+      { customer: { email: { contains: token, mode: 'insensitive' } } },
+      { leadTravelerName: { contains: token, mode: 'insensitive' } },
+      { leadTravelerEmail: { contains: token, mode: 'insensitive' } },
+      { guest: { name: { contains: token, mode: 'insensitive' } } },
+      { guest: { email: { contains: token, mode: 'insensitive' } } },
+      { tour: { title: { contains: token, mode: 'insensitive' } } },
     ];
+    where.AND = tokens.map((token) => ({ OR: matches(token) }));
   }
 
   const parseDay = (value, endOfDay = false) => {
