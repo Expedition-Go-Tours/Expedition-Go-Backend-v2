@@ -88,7 +88,6 @@ function buildAuditMessage(action, resource, metadata = {}) {
     'tour.edit_submitted_for_review': () => 'Tour edit submitted for review',
     'tour.withdrawn_from_review': () => 'Tour withdrawn from review',
     'tour.draft_saved': () => 'Tour draft saved',
-    'booking.status_updated': () => 'Booking status updated',
     'booking.pickup_updated': () => 'Pickup details updated',
     'booking.rescheduled': () => 'Booking rescheduled',
     'review.created': () => 'Review submitted',

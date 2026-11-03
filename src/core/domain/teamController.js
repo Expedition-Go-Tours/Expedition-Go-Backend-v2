@@ -376,7 +376,12 @@ exports.getMyTeamRole = catchAsync(async (req, res) => {
     roleNames: context.roleNames,
     permissions: context.permissions,
     isOwner: context.isOwner,
-    supplierId: context.supplierId,
+    // Two meanings, kept apart on purpose: the owner's workspace key is their
+    // SupplierProfile id, while a member's is the OWNER's User id — which is
+    // exactly what TeamMember.supplierId points at. A platform admin with no
+    // profile has no workspace, so the key is dropped rather than sent as null
+    // (the dashboard reads `undefined` as "none").
+    supplierId: context.isOwner ? (context.supplierProfileId || undefined) : context.supplierId,
     landingPath: context.landingPath,
     notificationCategories: context.notificationCategories,
     uiPreferences: context.uiPreferences,

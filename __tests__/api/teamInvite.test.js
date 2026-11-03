@@ -428,9 +428,30 @@ describeDb('team invite (real DB)', () => {
       expect(res.body.message).toMatch(/revoked/i);
     });
 
-    it('requires authentication', async () => {
+    it('reads the invitation without a session — the invitee has no account yet', async () => {
+      // Public by design: the page has to know the supplier and the role
+      // before it can ask for a password or a sign-in, and an invitee without
+      // an account has no session to send. The token is the credential.
       const res = await request(app).get(`${GHANA}/invite/${INVITE_TOKEN}`);
-      expect(res.status).toBe(401);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data).toMatchObject({
+        supplierName: OWNER_NAME,
+        invitedEmail: INVITEE_EMAIL,
+        status: 'PENDING',
+      });
+    });
+
+    it('still requires a session to accept or decline', async () => {
+      const accept = await request(app).post(`${GHANA}/invite/${INVITE_TOKEN}/accept`);
+      const decline = await request(app).post(`${GHANA}/invite/${INVITE_TOKEN}/decline`);
+
+      expect(accept.status).toBe(401);
+      expect(decline.status).toBe(401);
+
+      // Nothing was consumed by the anonymous attempts.
+      const row = await prisma.teamMember.findUnique({ where: { id: pendingId } });
+      expect(row).toMatchObject({ status: 'PENDING', inviteToken: INVITE_TOKEN });
     });
   });
 
@@ -677,9 +698,15 @@ describeDb('team invite (real DB)', () => {
       expect(row.roles).toEqual(['editor', 'finance']);
       expect(row.role).toBe('editor');
 
-      // The email is told about both roles.
+      // The email is told about both roles — as the labelled views the
+      // template renders, not bare keys.
       expect(mockSendTeamInviteEmail).toHaveBeenCalledWith(
-        expect.objectContaining({ roles: ['editor', 'finance'] }),
+        expect.objectContaining({
+          roles: expect.arrayContaining([
+            expect.objectContaining({ key: 'editor' }),
+            expect.objectContaining({ key: 'finance' }),
+          ]),
+        }),
       );
     });
 

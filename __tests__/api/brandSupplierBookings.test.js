@@ -30,8 +30,9 @@
  *   - the same editor can move their own business's booking on, and gets a
  *     404 (not a 403) when they try the other business's — the write-side
  *     counterpart of the same boundary;
- *   - a support member, a finance member and a traveller are refused before
- *     any query runs, because `bookings.view` is admin + editor only.
+ *   - support and finance can open the list (`bookings.view` is what their
+ *     contact and revenue work hangs off) but neither can change a booking,
+ *     and a traveller — not a member at all — is refused before any query runs.
  *
  * The write test also verifies the transition really landed in Postgres, which
  * a mocked `booking.update` could only ever confirm was called.
@@ -212,8 +213,9 @@ describeDb('the supplier bookings page, per role, on both brands', () => {
     await upsertProfile(owner1);
     await upsertProfile(owner2);
 
-    // `bookings.view` / `bookings.manage` are admin + editor. Support and
-    // finance deliberately hold neither, and the traveller is not a member.
+    // `bookings.manage` is admin + editor only. Support and finance hold
+    // `bookings.view` (contact and revenue depend on it) but not manage, and
+    // the traveller is not a member at all.
     await upsertMember(EDITOR, owner1.id, ['editor']);
     await upsertMember(SUPPORT, owner1.id, ['support']);
     await upsertMember(FINANCE, owner1.id, ['finance']);
@@ -295,16 +297,21 @@ describeDb('the supplier bookings page, per role, on both brands', () => {
       expect(idsIn(res)).toEqual([booking2Id]);
     });
 
-    it('refuses a support member — the page is not theirs (bookings.view)', async () => {
+    it('lets a support member read the list — contact work needs bookings.view', async () => {
+      // Support holds `bookings.view` (its `bookings.contact.view` depends on
+      // it) but not `bookings.manage`, so the page opens read-only. The
+      // boundary that matters for this role is asserted on the write below.
       const res = await request(app).get(LIST).set(auth('support'));
 
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(200);
+      expect(idsIn(res)).toEqual([booking1Id]);
     });
 
-    it('refuses a finance member', async () => {
+    it('lets a finance member read the list — revenue context needs bookings.view', async () => {
       const res = await request(app).get(LIST).set(auth('finance'));
 
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(200);
+      expect(idsIn(res)).toEqual([booking1Id]);
     });
 
     it('refuses a traveller, who is neither supplier nor member', async () => {
