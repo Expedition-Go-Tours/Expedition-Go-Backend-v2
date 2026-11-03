@@ -1,5 +1,5 @@
 jest.mock('../../src/core/services/prismaClient', () => ({
-  booking: { aggregate: jest.fn(), count: jest.fn(), groupBy: jest.fn(), findMany: jest.fn() },
+  booking: { aggregate: jest.fn(), count: jest.fn(), groupBy: jest.fn(), findMany: jest.fn(), findFirst: jest.fn() },
   user: { count: jest.fn(), findMany: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
   adminRole: { findUnique: jest.fn() },
   tour: { findMany: jest.fn(), count: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
@@ -1135,6 +1135,116 @@ describe('adminController', () => {
       expect(prisma.user.update).not.toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json.mock.calls[0][0].data.user.roles).toEqual(['supplier', 'expedition']);
+    });
+  });
+
+  // ============================
+  // Bookings booked WITHOUT an account (the guest checkout flow)
+  // ============================
+  //
+  // `Booking.customerId` is null when checkout never creates a user: the lead
+  // traveller is then the only identity on the row. These serializers used to
+  // read `customer.photoURL` unconditionally, so one such booking took the
+  // whole admin bookings page down (and the ticket and manual-charge paths
+  // with it).
+  describe('guest bookings — no customer account', () => {
+    const guestBooking = (overrides = {}) => ({
+      id: 'b-guest',
+      bookingNumber: 'TRG-74688375-2026-89',
+      status: 'CONFIRMED',
+      paymentStatus: 'SUCCEEDED',
+      paymentTiming: 'now',
+      grossAmount: '210.00',
+      currency: 'USD',
+      travelDate: new Date('2026-11-03T00:00:00.000Z'),
+      selectedTime: null,
+      subtotal: '210.00',
+      taxes: '0.00',
+      fees: '0.00',
+      discounts: '0.00',
+      commissionRate: '0.1500',
+      platformCommission: '31.50',
+      supplierPayout: '178.50',
+      travelers: { adults: 1, children: 0, infants: 0, details: [{ name: 'Thomas Rhodes', ageGroup: 'adult' }] },
+      specialRequests: null,
+      cancellationReason: null,
+      cancellationCode: null,
+      cancellationCategory: null,
+      cancellationOrigin: null,
+      countsTowardRate: null,
+      cancellationFee: null,
+      refundStatus: null,
+      refundAmount: null,
+      cancelledAt: null,
+      cancellationChoiceDeadline: null,
+      customerChoice: null,
+      paidAt: new Date('2026-11-03T02:58:09.000Z'),
+      createdAt: new Date('2026-11-03T02:58:08.000Z'),
+      updatedAt: new Date('2026-11-03T02:58:09.000Z'),
+      leadTravelerName: 'Thomas Rhodes',
+      leadTravelerEmail: 'briaantoine@gmail.com',
+      leadTravelerPhone: null,
+      pickup: null,
+      source: 'TRAVIO',
+      offerName: null,
+      offerPromoCode: null,
+      offerDiscountType: null,
+      offerDiscountPct: null,
+      offerDiscountFix: null,
+      appliedOffer: null,
+      // The guest checkout: no account, no relation to resolve.
+      customer: null,
+      tour: { id: 't1', title: 'Accra Guided City Tour', coverPhoto: null, supplier: { id: 's1', name: 'Supplier' } },
+      payouts: [],
+      cancellationRequests: [],
+      ...overrides,
+    });
+
+    it('lists a guest booking with a null customer instead of 500ing', async () => {
+      prisma.booking.findMany.mockResolvedValue([guestBooking()]);
+      prisma.booking.count.mockResolvedValue(1);
+
+      await controller.getBookings(req, res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
+
+      const payload = res.json.mock.calls[0][0].data;
+      expect(payload.bookings).toHaveLength(1);
+      expect(payload.bookings[0].customer).toBeNull();
+      // Money still comes back as numbers, guest row or not.
+      expect(payload.bookings[0].grossAmount).toBe(210);
+      expect(payload.bookings[0].leadTravelerName).toBe('Thomas Rhodes');
+    });
+
+    it('returns a guest booking detail with a null customer', async () => {
+      req.params = { id: 'b-guest' };
+      prisma.booking.findFirst.mockResolvedValue(guestBooking());
+
+      await controller.getBookingById(req, res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
+
+      const data = res.json.mock.calls[0][0].data;
+      expect(data.customer).toBeNull();
+      expect(data.leadTravelerEmail).toBe('briaantoine@gmail.com');
+      expect(data.supplierPayout).toBe(178.5);
+    });
+
+    it('keeps serving a booking that does have an account', async () => {
+      prisma.booking.findMany.mockResolvedValue([
+        guestBooking({ customer: { id: 'c1', name: 'Wayne Gibson', email: 'drwgibson@gmail.com', photoURL: null, phone: null } }),
+      ]);
+
+      await controller.getBookings(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json.mock.calls[0][0].data.bookings[0].customer).toMatchObject({
+        id: 'c1',
+        name: 'Wayne Gibson',
+        photoURL: null,
+      });
     });
   });
 });

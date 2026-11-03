@@ -889,7 +889,9 @@ exports.getBookingTicket = catchAsync(async (req, res, next) => {
   const html = generatePrintableTicketHtml({
     bookingNumber: booking.bookingNumber,
     status: booking.status,
-    customerName: booking.customer.name,
+    // A guest booking has no account: the lead traveller is who the ticket is
+    // for, and the ticket must still print without one.
+    customerName: booking.customer?.name || booking.leadTravelerName || 'Guest',
     tourTitle: booking.tour.title,
     tourDescription: booking.tour.description,
     travelDate: booking.travelDate,

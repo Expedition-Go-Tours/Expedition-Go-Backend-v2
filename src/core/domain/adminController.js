@@ -1412,10 +1412,11 @@ exports.getBookings = catchAsync(async (req, res) => {
       discounts: Number(rest.discounts),
       platformCommission: Number(rest.platformCommission),
       supplierPayout: Number(rest.supplierPayout),
-      customer: {
-        ...rest.customer,
-        photoURL: rest.customer.photoURL || null,
-      },
+      // A guest checkout has no account: the row still ships, with the lead
+      // traveller carrying the identity (see bookingContact on the client).
+      customer: rest.customer
+        ? { ...rest.customer, photoURL: rest.customer.photoURL || null }
+        : null,
       payouts: rest.payouts.map((p) => ({ ...p, amount: Number(p.amount) })),
       // Admin-approval gate: the open request rides along for the queue UI.
       pendingCancellation: cancellationRequests && cancellationRequests[0] ? cancellationRequests[0] : null,
@@ -1539,10 +1540,9 @@ exports.getBookingById = catchAsync(async (req, res, next) => {
       discounts: Number(bookingRest.discounts),
       platformCommission: Number(bookingRest.platformCommission),
       supplierPayout: Number(bookingRest.supplierPayout),
-      customer: {
-        ...bookingRest.customer,
-        photoURL: bookingRest.customer.photoURL || null,
-      },
+      customer: bookingRest.customer
+        ? { ...bookingRest.customer, photoURL: bookingRest.customer.photoURL || null }
+        : null,
       payouts: bookingRest.payouts.map((p) => ({ ...p, amount: Number(p.amount) })),
       // Admin-approval gate: the open request (if any) drives the decision UI.
       pendingCancellation: cancellationRequests && cancellationRequests[0] ? cancellationRequests[0] : null,
@@ -1713,13 +1713,17 @@ exports.chargePayLaterBooking = catchAsync(async (req, res, next) => {
       data: { bookingId: booking.id, source: 'admin-manual-charge' },
     }).catch(() => {});
 
-    enqueueNotification({
-      userId: booking.customer.id,
-      type: 'PAYMENT_FAILED',
-      title: 'Payment Declined',
-      message: `Your card charge for "${booking.tour?.title || 'your tour'}" failed. Please update your payment details.`,
-      data: { bookingId: booking.id },
-    }).catch(() => {});
+    // A guest booking has no account to notify — the admin already sees the
+    // failure above, and the email below still reaches the lead traveller.
+    if (booking.customer) {
+      enqueueNotification({
+        userId: booking.customer.id,
+        type: 'PAYMENT_FAILED',
+        title: 'Payment Declined',
+        message: `Your card charge for "${booking.tour?.title || 'your tour'}" failed. Please update your payment details.`,
+        data: { bookingId: booking.id },
+      }).catch(() => {});
+    }
 
     enqueueEmail({
       type: 'payment-unsuccessful',
@@ -1751,13 +1755,15 @@ exports.chargePayLaterBooking = catchAsync(async (req, res, next) => {
       data: { chargeRetries: 0, nextRetryAt: null },
     });
 
-    enqueueNotification({
-      userId: booking.customer.id,
-      type: 'PAYMENT_COMPLETED',
-      title: 'Payment Completed',
-      message: `Your card was charged for "${booking.tour?.title || 'your tour'}". Payment received!`,
-      data: { bookingId: booking.id },
-    }).catch(() => {});
+    if (booking.customer) {
+      enqueueNotification({
+        userId: booking.customer.id,
+        type: 'PAYMENT_COMPLETED',
+        title: 'Payment Completed',
+        message: `Your card was charged for "${booking.tour?.title || 'your tour'}". Payment received!`,
+        data: { bookingId: booking.id },
+      }).catch(() => {});
+    }
 
     notifyAdmin({
       type: 'PAYMENT_COLLECTED',
@@ -1788,13 +1794,15 @@ exports.chargePayLaterBooking = catchAsync(async (req, res, next) => {
     const { enqueueNotification, enqueueEmail } = require('../services/queue');
     const { notifyAdmin } = require('../services/adminNotificationService');
 
-    enqueueNotification({
-      userId: booking.customer.id,
-      type: 'PAYMENT_ACTION_REQUIRED',
-      title: 'Payment Action Required',
-      message: `Complete your payment for "${booking.tour?.title || 'your tour'}" to confirm your booking.`,
-      data: { bookingId: booking.id },
-    }).catch(() => {});
+    if (booking.customer) {
+      enqueueNotification({
+        userId: booking.customer.id,
+        type: 'PAYMENT_ACTION_REQUIRED',
+        title: 'Payment Action Required',
+        message: `Complete your payment for "${booking.tour?.title || 'your tour'}" to confirm your booking.`,
+        data: { bookingId: booking.id },
+      }).catch(() => {});
+    }
 
     enqueueEmail({
       type: 'payment-unsuccessful',
