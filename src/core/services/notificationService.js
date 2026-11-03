@@ -13,11 +13,7 @@
  */
 
 const prisma = require('./prismaClient');
-const {
-  notificationCategoryForType,
-  permissionsForMember,
-  hasPermissionInSet,
-} = require('../../../config/permissions');
+const { notificationCategoryForType } = require('../../../config/permissions');
 const { sendEmail, resolveEmailBrand } = require('./emailService');
 const { categoryForType } = require('./notificationCategories');
 const { resolveRecipients } = require('./notificationRecipientService');
@@ -29,9 +25,15 @@ const emailUrls = require('../../../config/emailUrls');
  */
 /**
  * Copy an operational notification into the inbox of every accepted team
- * member whose role includes the notification category and notifications.view.
- * The owner keeps the canonical row and the email; member copies are in-app
- * only, so a role filter cannot silently stop an email to the business.
+ * member whose role includes the notification category. The owner keeps the
+ * canonical row and the email; member copies are in-app only, so a role filter
+ * cannot silently stop an email to the business.
+ *
+ * The category IS the assignment — `RoleEditor` describes it as "which
+ * notification categories appear in this role's inbox" — so `notifications.view`
+ * (the permission to open your own inbox) must not gate delivery here too.
+ * Requiring both refused a custom role that had categories assigned and no
+ * view key: nothing arrived, and the bell looked broken rather than empty.
  */
 async function fanOutToTeamMembers({ userId, type, title, message, data, dedupeKey }) {
   try {
@@ -46,8 +48,6 @@ async function fanOutToTeamMembers({ userId, type, title, message, data, dedupeK
       where: { supplierId: userId, status: 'ACCEPTED' },
       select: {
         email: true,
-        roles: true,
-        role: true,
         notificationCategories: true,
         customRoles: {
           select: {
@@ -75,12 +75,6 @@ async function fanOutToTeamMembers({ userId, type, title, message, data, dedupeK
       const customRoles = (member.customRoles || [])
         .map((link) => link.role)
         .filter((role) => role && !role.isArchived);
-      const roles = Array.isArray(member.roles) && member.roles.length ? member.roles : [member.role].filter(Boolean);
-      const permissions = permissionsForMember(
-        roles,
-        customRoles.map((role) => role.permissions || []),
-      );
-      if (!hasPermissionInSet(permissions, 'notifications.view')) continue;
 
       const roleCategories = customRoles.flatMap((role) => role.notificationCategories || []);
       const allowed = (member.notificationCategories || []).length
@@ -560,6 +554,9 @@ async function getNotificationStats() {
 module.exports = {
   sendNotification,
   sendWebSocketNotification,
+  // Exported for its own unit test: the category filter is the whole
+  // permission story for team notification delivery.
+  fanOutToTeamMembers,
   getUserNotifications,
   markNotificationAsRead,
   markAllNotificationsAsRead,

@@ -221,10 +221,16 @@ router.post('/payout-methods', resolveSupplier, requireTeamPermission('payout-me
 router.patch('/payout-methods/:id', resolveSupplier, requireTeamPermission('payout-methods.manage', 'payouts.request'), payoutMethodController.updateMethod);
 router.delete('/payout-methods/:id', resolveSupplier, requireTeamPermission('payout-methods.manage', 'payouts.request'), payoutMethodController.deleteMethod);
 
-// Notifications (GET is Ghana-scoped; read/delete proxy to shared controller)
-router.get('/notifications', requireTeamPermission('notifications.view'), ghanaSupplier.getNotifications);
-router.patch('/notifications/:id/read', requireTeamPermission('notifications.view'), notificationController.markAsRead);
-router.patch('/notifications/mark-all-read', requireTeamPermission('notifications.view'), notificationController.markAllAsRead);
-router.delete('/notifications/:id', requireTeamPermission('notifications.view'), notificationController.deleteNotification);
+// Notifications are per-account: the inbox is the member's own, and the
+// handler already intersects any ?categories= with the role's assigned
+// `notificationCategories` — that filter is the permission, not a second
+// gate in front of it. Requiring `notifications.view` here refused a member
+// who had notifications assigned to them, and the only visible answer was a
+// "Failed to load" in the header bell. `resolveSupplier` still runs (from the
+// `router.use` above) so the category filter keeps reading `req.teamContext`.
+router.get('/notifications', ghanaSupplier.getNotifications);
+router.patch('/notifications/:id/read', notificationController.markAsRead);
+router.patch('/notifications/mark-all-read', notificationController.markAllAsRead);
+router.delete('/notifications/:id', notificationController.deleteNotification);
 
 module.exports = router;

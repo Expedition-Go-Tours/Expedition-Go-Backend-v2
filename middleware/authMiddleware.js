@@ -96,7 +96,11 @@ exports.optionalAuth = catchAsync(async (req, res, next) => {
 exports.restrictTo = (...roles) => {
   return (req, res, next) => {
     if (!req.user || !req.user.roles || !req.user.roles.some(role => roles.includes(role))) {
-      return next(new AppError('You do not have permission to perform this action', 403));
+      // Same wording and machine code as the team-role guards: one refusal the
+      // client renders, whichever middleware produced it.
+      return next(new AppError('You do not have permission to perform this action', 403, {
+        code: 'PERMISSION_DENIED',
+      }));
     }
     next();
   };

@@ -186,6 +186,21 @@ exports.getTeamContextForUser = getTeamContextForUser;
 exports.attachContext = attachContext;
 
 /**
+ * The one refusal a member's role produces, so every route answers it the same
+ * way. `code: PERMISSION_DENIED` is stable for clients to branch on (the body
+ * carries `code`, never a raw error), and the wording matches `restrictTo` so
+ * the dashboard can render a single "you don't have permission" notice no
+ * matter which guard refused. "Supplier access required" stays distinct — that
+ * is membership, not role, and an owner chasing a role bug over a membership
+ * bug is a wasted hour.
+ */
+function deniedByRole() {
+  return new AppError('You do not have permission to perform this action', 403, {
+    code: 'PERMISSION_DENIED',
+  });
+}
+
+/**
  * Legacy role-name guard. New code must use requireTeamPermission. Kept for
  * callers that still pass one of the built-in role names.
  */
@@ -202,7 +217,7 @@ exports.requireTeamRole = (...allowedRoles) => {
     if (context.isOwner) return next();
 
     if (allowedRoles.length > 0 && !context.systemRoles.some((role) => allowedRoles.includes(role))) {
-      return next(new AppError('You do not have permission for this action', 403));
+      return next(deniedByRole());
     }
     next();
   });
@@ -222,7 +237,7 @@ exports.requireTeamPermission = (...permissionKeys) => {
 
     const allowed = permissionKeys.some((key) => hasPermissionInSet(context.permissions, key));
     if (!allowed) {
-      return next(new AppError('You do not have permission for this action', 403));
+      return next(deniedByRole());
     }
     next();
   });

@@ -68,7 +68,10 @@ async function upsertUser(name, data) {
   return prisma.user.upsert({
     where: { email: emailFor(name) },
     update: data,
-    create: { firebaseUid: `test-${name}`, email: emailFor(name), photoURL: '', active: true, ...data },
+    // firebaseUid is unique across the WHOLE database, and every DB-gated
+    // suite runs against the same test database: `test-owner` would collide
+    // with the other suites' owners and fail the create.
+    create: { firebaseUid: `${PREFIX}${name}`, email: emailFor(name), photoURL: '', active: true, ...data },
   });
 }
 
