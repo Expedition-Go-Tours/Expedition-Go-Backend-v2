@@ -548,6 +548,16 @@ async function buildBookingBase(booking, opts = {}) {
   const leadEmail = booking.leadTravelerEmail || '';
   const leadPhone = booking.leadTravelerPhone || '';
 
+  // Supplier-facing templates name the person the supplier will actually meet
+  // (the lead traveller). When a booking was placed by someone else — a parent
+  // or agent — show who booked as a secondary line, not as "Customer" with the
+  // traveller's phone underneath (which reads as two different people).
+  const accountName = (customer.name || '').trim();
+  const leadTrimmed = leadName.trim();
+  const bookedByDifferent =
+    Boolean(accountName && leadTrimmed) &&
+    accountName.toLowerCase() !== leadTrimmed.toLowerCase();
+
   const paidNow = booking.paymentTiming !== 'later';
   const amountPaid =
     booking.paymentStatus === 'SUCCEEDED' || booking.paymentStatus === 'REFUNDED'
@@ -590,6 +600,9 @@ async function buildBookingBase(booking, opts = {}) {
     // Initials for the lead-traveller contact card (the lead has no photo, so
     // its card always uses this fallback circle).
     leadTravelerInitials: initialsOf(leadName || customer.name),
+    // Truthy when the booking account and the lead traveller are different
+    // people, so supplier templates can add a "Booked by" line.
+    bookedByDifferent,
     supplierName: supplier.name || '',
     supplierContact: supplier.phone || supplier.email || '',
     brandSubtext: `by ${shell.brandName}`,
@@ -2006,7 +2019,7 @@ async function sendSupplierPickupUpdatedEmail(booking, { previousPickupLocation 
   };
   return sendRendered({
     ...await supplierRecipientList(supplier, "bookings"),
-    subject: `Customer pickup location updated — ${base.customerName} (Ref: ${base.bookingNumber})`,
+    subject: `Customer pickup location updated — ${base.leadTravelerName} (Ref: ${base.bookingNumber})`,
     key: 'supplier-pickup-updated',
     data,
   });

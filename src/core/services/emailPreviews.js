@@ -58,6 +58,9 @@ const SAMPLE = {
   leadTravelerEmail: 'ada@example.com',
   leadTravelerPhone: '+233 24 000 0000',
   leadTravelerInitials: 'AM',
+  // Same account and lead traveller in the sample, so the supplier templates'
+  // "Booked by" line correctly stays hidden.
+  bookedByDifferent: false,
   // Address used by the supplier review-invite email (lead traveller → account
   // holder → "your guest"). Mirrors the sender's resolved value.
   guestName: 'Ada Mensah',

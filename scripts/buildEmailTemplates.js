@@ -66,7 +66,9 @@ function supplierBookingDetailsRows() {
 }
 
 function customerContactRows() {
-  return B.contactCard({ name: '{{leadTravelerName}}', email: '{{leadTravelerEmail}}', phone: '{{leadTravelerPhone}}', initials: '{{customerInitials}}' });
+  // The initials must belong to the lead traveller whose name is shown, not
+  // the booking account (the card printed "WG" over "Priscilla Hankins").
+  return B.contactCard({ name: '{{leadTravelerName}}', email: '{{leadTravelerEmail}}', phone: '{{leadTravelerPhone}}', initials: '{{leadTravelerInitials}}' });
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1217,8 +1219,11 @@ const supplierReserveLater = {
       ${B.sectionTitle('Booking details')}
       ${supplierBookingDetailsRows()}
       ${B.divider()}
-      ${B.sectionTitle('Customer')}
-      ${B.contactCard({ name: '{{customerName}}', email: '{{customerEmail}}', phone: '{{customerPhone}}', initials: '{{customerInitials}}' })}
+      ${B.sectionTitle('Lead traveller')}
+      ${B.contactCard({ name: '{{leadTravelerName}}', email: '{{leadTravelerEmail}}', phone: '{{leadTravelerPhone}}', initials: '{{leadTravelerInitials}}' })}
+      {{#if bookedByDifferent}}
+      ${B.paragraph('Booked by <strong>{{customerName}}</strong>')}
+      {{/if}}
       {{#if specialRequirements}}
       ${B.paragraph('Special requests: <strong>{{specialRequirements}}</strong>')}
       {{/if}}
@@ -1306,7 +1311,8 @@ const supplierContactUpdated = {
     return B.shell('Traveller details have changed', `
       ${B.hero({ heading: 'Traveller details have changed', badgeText: 'Updated', badgeColor: 'info' })}
       ${B.stackedRows([
-        { label: 'Lead traveller', value: '{{customerName}}' },
+        { label: 'Lead traveller', value: '{{leadTravelerName}}' },
+        { label: 'Booked by', value: '{{customerName}}', if: '{{bookedByDifferent}}' },
         { label: 'Updated telephone', value: '{{customerPhone}}' },
         { label: 'Updated email', value: '{{customerEmail}}' },
         { label: 'Emergency contact', value: '{{emergencyContact}}', if: '{{emergencyContact}}' },
@@ -1384,8 +1390,9 @@ const supplierBookingReminder = {
       ${B.sectionTitle('Booking details')}
       ${B.detailCard([
         { label: 'Experience', value: '{{tourTitle}}' },
-        { label: 'Customer', value: '{{customerName}}' },
-        { label: 'Telephone', value: '{{customerPhone}}', if: '{{customerPhone}}' },
+        { label: 'Lead traveller', value: '{{leadTravelerName}}' },
+        { label: 'Booked by', value: '{{customerName}}', if: '{{bookedByDifferent}}' },
+        { label: 'Telephone', value: '{{leadTravelerPhone}}', if: '{{leadTravelerPhone}}' },
         { label: 'Pickup / meeting point', value: '{{pickupLocation}}', if: '{{pickupLocation}}' },
       ])}
       {{#if specialRequirements}}

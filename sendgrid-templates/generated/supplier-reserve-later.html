@@ -325,7 +325,7 @@
       <tr><td style="padding:24px 40px 0 40px;" class="pad"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="border-top:1px solid #E2E8F0;font-size:0;line-height:0;">&nbsp;</td></tr></table></td></tr>
       
   <tr><td class="pad" style="padding:28px 40px 4px 40px;">
-    <div class="h2 font-main dm-text" style="font-size:15px;font-weight:800;color:#001F3F;letter-spacing:0.4px;text-transform:uppercase;line-height:1.3;">Customer</div>
+    <div class="h2 font-main dm-text" style="font-size:15px;font-weight:800;color:#001F3F;letter-spacing:0.4px;text-transform:uppercase;line-height:1.3;">Lead traveller</div>
   </td></tr>
       
   <tr><td class="pad" style="padding:12px 40px 0 40px;">
@@ -335,16 +335,22 @@
     {{#if customerAvatarUrl}}
     <img src="{{customerAvatarUrl}}" width="46" height="46" alt="" style="display:block;width:46px;height:46px;border-radius:50%;border:1px solid #E2E8F0;object-fit:cover;">
     {{else}}
-    <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td width="46" height="46" align="center" style="background-color:#001F3F;border-radius:50%;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:16px;font-weight:800;color:#ffffff;">{{customerInitials}}</td></tr></table>
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td width="46" height="46" align="center" style="background-color:#001F3F;border-radius:50%;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:16px;font-weight:800;color:#ffffff;">{{leadTravelerInitials}}</td></tr></table>
     {{/if}}</td>
         <td valign="middle" style="padding:16px 18px 16px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-          <div class="dm-text" style="font-size:15px;font-weight:800;color:#001F3F;line-height:1.3;padding-bottom:3px;">{{customerName}}</div>
-          {{#if customerEmail}}<div class="dm-text" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#334155;line-height:1.7;"><span class="dm-muted" style="color:#64748B;">&#9993;</span>&nbsp;&nbsp;<a class="dm-text" href="mailto:{{customerEmail}}" style="color:#334155;text-decoration:none;">{{customerEmail}}</a></div>{{/if}}
-          {{#if customerPhone}}<div class="dm-text" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#334155;line-height:1.7;"><span class="dm-muted" style="color:#64748B;">&#9742;</span>&nbsp;&nbsp;<a class="dm-text" href="#" style="color:#334155;text-decoration:none;">{{customerPhone}}</a></div>{{/if}}
+          <div class="dm-text" style="font-size:15px;font-weight:800;color:#001F3F;line-height:1.3;padding-bottom:3px;">{{leadTravelerName}}</div>
+          {{#if leadTravelerEmail}}<div class="dm-text" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#334155;line-height:1.7;"><span class="dm-muted" style="color:#64748B;">&#9993;</span>&nbsp;&nbsp;<a class="dm-text" href="mailto:{{leadTravelerEmail}}" style="color:#334155;text-decoration:none;">{{leadTravelerEmail}}</a></div>{{/if}}
+          {{#if leadTravelerPhone}}<div class="dm-text" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#334155;line-height:1.7;"><span class="dm-muted" style="color:#64748B;">&#9742;</span>&nbsp;&nbsp;<a class="dm-text" href="#" style="color:#334155;text-decoration:none;">{{leadTravelerPhone}}</a></div>{{/if}}
         </td>
       </tr>
     </table>
   </td></tr>
+      {{#if bookedByDifferent}}
+      
+  <tr><td class="pad" style="padding:16px 40px 0 40px;">
+    <p class="dm-text" style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;color:#334155;line-height:1.7;text-align:left;">Booked by <strong>{{customerName}}</strong></p>
+  </td></tr>
+      {{/if}}
       {{#if specialRequirements}}
       
   <tr><td class="pad" style="padding:16px 40px 0 40px;">
