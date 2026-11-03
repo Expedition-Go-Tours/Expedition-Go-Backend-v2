@@ -250,7 +250,10 @@ exports.forgotPassword = catchAsync(async (req, res, next) => {
   // the Ghana dashboard), not on the public storefront — the storefront has no
   // reset screen, so the old link dead-ended there.
   const brandKey = resolveEmailBrand({ user });
-  const resetUrl = `${emailUrls.dashboardBaseForUser(user)}/reset-password?token=${resetToken}`;
+  // The reset screen lives in the app the user signs in to (see
+  // emailUrls.resetPasswordUrl): admins on the console, suppliers on their
+  // dashboard. Sending an admin to the supplier dashboard dead-ends the link.
+  const resetUrl = emailUrls.resetPasswordUrl(user, resetToken);
 
   try {
     await sendEmail({

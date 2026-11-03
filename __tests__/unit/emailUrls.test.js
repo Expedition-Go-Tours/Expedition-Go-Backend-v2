@@ -163,3 +163,35 @@ describe('chat deep links — customer storefront and admin app resolution', () 
     expect(emailUrls.adminBaseForBrand(null)).toBe('https://admin.travioafrica.com');
   });
 });
+
+describe('resetPasswordUrl — the link must open the app the user signs in to', () => {
+  it('sends admin staff to the admin console, not the supplier dashboard', () => {
+    expect(emailUrls.resetPasswordUrl({ roles: ['admin'] }, 'tok')).toBe(
+      'https://admin.travioafrica.com/admin/reset-password?token=tok'
+    );
+    expect(emailUrls.resetPasswordUrl({ roles: ['admin', 'ghana'] }, 'tok')).toBe(
+      'https://admin.travioghana.com/admin/reset-password?token=tok'
+    );
+  });
+
+  it('sends suppliers to their dashboard reset screen', () => {
+    expect(emailUrls.resetPasswordUrl({ roles: ['supplier', 'ghana'] }, 'tok')).toBe(
+      'https://supplier.travioghana.com/reset-password?token=tok'
+    );
+    expect(emailUrls.resetPasswordUrl({ supplier: { roles: ['supplier'] } }, 'tok')).toBe(
+      'https://supplier.travioafrica.com/reset-password?token=tok'
+    );
+  });
+
+  it('keeps the default (customer) path on the supplier dashboard', () => {
+    expect(emailUrls.resetPasswordUrl({ roles: ['customer'] }, 'tok')).toBe(
+      'https://supplier.travioafrica.com/reset-password?token=tok'
+    );
+  });
+
+  it('encodes the token so a crafted value cannot break out of the query', () => {
+    expect(emailUrls.resetPasswordUrl({ roles: ['admin'] }, 'a b&c=d')).toBe(
+      'https://admin.travioafrica.com/admin/reset-password?token=a%20b%26c%3Dd'
+    );
+  });
+});

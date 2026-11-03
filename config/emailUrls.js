@@ -60,6 +60,32 @@ function dashboardBaseForUser(user) {
   return roles.includes('ghana') ? GHANA_DASHBOARD_URL : DASHBOARD_URL;
 }
 
+/**
+ * Resolve the admin console base URL for a user. Admin staff sign in on the
+ * admin app, not the supplier dashboard, so account links (password reset)
+ * must land there. Ghana admins use the Ghana admin app.
+ */
+function adminBaseForUser(user) {
+  const rec = user && user.supplier ? user.supplier : user;
+  const roles = Array.isArray(rec?.roles) ? rec.roles : [];
+  return adminBaseForRoles(roles);
+}
+
+/**
+ * Password-reset link for a user. It must open the app they sign in to:
+ * admin staff use the admin console (/admin/reset-password), suppliers use
+ * their dashboard (/reset-password). Sending an admin to the supplier
+ * dashboard dead-ends the link.
+ */
+function resetPasswordUrl(user, token) {
+  const rec = user && user.supplier ? user.supplier : user;
+  const roles = Array.isArray(rec?.roles) ? rec.roles : [];
+  const base = roles.includes('admin')
+    ? `${adminBaseForUser(user)}/admin/reset-password`
+    : `${dashboardBaseForUser(user)}/reset-password`;
+  return `${base}?token=${encodeURIComponent(token)}`;
+}
+
 function baseUrl(origin) {
   return String(origin || CLIENT_URL).replace(/\/$/, '');
 }
@@ -252,6 +278,8 @@ module.exports = {
   // Raw helpers — used by chat deep-links, team-invite URLs, and email
   // builder code that already knows the brand key.
   dashboardBaseForUser,
+  adminBaseForUser,
+  resetPasswordUrl,
   // Resolve a dashboard base from the brand registry key (not a user object).
   // Expedition is Ghana's sub-store and has no supplierDashboardUrl of its
   // own — it shares Ghana's supplier dashboard.
