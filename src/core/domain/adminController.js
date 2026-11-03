@@ -256,9 +256,18 @@ exports.getOverview = catchAsync(async (req, res, next) => {
         COUNT(*) FILTER (WHERE "createdAt" >= ${weekStart})::int AS "signupsWeek",
         COUNT(*) FILTER (WHERE "createdAt" >= ${monthStart})::int AS "signupsMonth",
         COUNT(*) FILTER (WHERE "createdAt" >= ${yearStart})::int AS "signupsYtd",
-        COUNT(*) FILTER (WHERE "lastLoginAt" >= ${currentPeriodStart} AND "active" = true)::int AS "activeToday",
-        COUNT(*) FILTER (WHERE "lastLoginAt" >= ${previousPeriodStart} AND "lastLoginAt" < ${currentPeriodStart} AND "active" = true)::int AS "activePrevious",
-        (SELECT COUNT(*) FROM "Event")::int AS "totalEvents"
+        (SELECT COUNT(*) FROM "Event")::int AS "totalEvents",
+        -- Active users means activity, not whose last login happened to land in
+        -- this window. lastLoginAt is a single timestamp, so a user who logs in
+        -- weekly counted only in the period of their most recent login and
+        -- vanished from every earlier one. Distinct event authors is what the
+        -- tile claims to measure, and it matches the list behind it.
+        (SELECT COUNT(DISTINCT "userId") FROM "Event"
+          WHERE "userId" IS NOT NULL AND "createdAt" >= ${currentPeriodStart})::int AS "activeToday",
+        (SELECT COUNT(DISTINCT "userId") FROM "Event"
+          WHERE "userId" IS NOT NULL
+            AND "createdAt" >= ${previousPeriodStart}
+            AND "createdAt" < ${currentPeriodStart})::int AS "activePrevious"
       FROM "User"
       WHERE "createdAt" >= ${scanStart} OR "lastLoginAt" >= ${scanStart}
     `,
@@ -1051,28 +1060,52 @@ exports.getRecentSignups = catchAsync(async (req, res, next) => {
  * Get list of recently active users (last 30 days)
  */
 exports.getActiveUsers = catchAsync(async (req, res, next) => {
-  const now = new Date();
-  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  // Same windows as the overview tile, so the count and the list behind it are
+  // answering the same question. The old version was hardcoded to 30 days.
+  const period = req.query.period || 'last_month';
+  const periodMap = { today: 0, last_week: 7, last_month: 30, last_quarter: 90 };
+  const periodDays = periodMap[period] ?? 30;
 
-  const users = await prisma.user.findMany({
-    where: {
-      lastLoginAt: { gte: thirtyDaysAgo },
-      active: true,
-    },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      photoURL: true,
-      roles: true,
-      lastLoginAt: true,
-    },
-    orderBy: { lastLoginAt: 'desc' },
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const since = period === 'today'
+    ? todayStart
+    : new Date(now.getTime() - periodDays * 24 * 60 * 60 * 1000);
+
+  // "Active" = authored an event in the window. `lastLoginAt` only remembers
+  // the newest login, so a weekly user disappeared from every older period.
+  const activity = await prisma.event.groupBy({
+    by: ['userId'],
+    where: { userId: { not: null }, createdAt: { gte: since } },
+    _max: { createdAt: true },
+    orderBy: { _max: { createdAt: 'desc' } },
   });
+
+  const ids = activity.map((row) => row.userId).filter(Boolean);
+  const users = ids.length
+    ? await prisma.user.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        photoURL: true,
+        roles: true,
+        lastLoginAt: true,
+      },
+    })
+    : [];
+
+  const byId = new Map(users.map((user) => [user.id, user]));
+  const lastActiveById = new Map(activity.map((row) => [row.userId, row._max?.createdAt || null]));
+  const ordered = ids
+    .map((id) => byId.get(id))
+    .filter(Boolean)
+    .map((user) => ({ ...user, lastActiveAt: lastActiveById.get(user.id) || user.lastLoginAt }));
 
   res.status(200).json({
     status: 'success',
-    data: { users },
+    data: { users: ordered },
   });
 });
 

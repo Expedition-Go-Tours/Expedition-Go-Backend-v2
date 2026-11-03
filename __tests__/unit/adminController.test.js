@@ -527,31 +527,43 @@ describe('adminController', () => {
   // getActiveUsers
   // ============================
   describe('getActiveUsers', () => {
-    it('returns active users from last 30 days', async () => {
-      const users = [{ id: 'u1', name: 'Active User', email: 'a@u.com', photoURL: 'p.jpg', roles: ['customer'], lastLoginAt: new Date() }];
+    const activity = [{ userId: 'u1', _max: { createdAt: new Date('2026-10-20T10:00:00.000Z') } }];
+    const users = [{ id: 'u1', name: 'Active User', email: 'a@u.com', photoURL: 'p.jpg', roles: ['customer'], lastLoginAt: new Date('2026-09-01T10:00:00.000Z') }];
+
+    it('returns the people who were active in the period', async () => {
+      prisma.event.groupBy.mockResolvedValue(activity);
       prisma.user.findMany.mockResolvedValue(users);
 
       await controller.getActiveUsers(req, res, next);
 
       expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ users }),
-        })
-      );
+      const payload = res.json.mock.calls[0][0].data.users;
+      expect(payload).toHaveLength(1);
+      // The tile and the list both mean "did something", so the row carries
+      // when they last did it — not when they last signed in.
+      expect(payload[0].lastActiveAt).toEqual(new Date('2026-10-20T10:00:00.000Z'));
     });
 
-    it('filters by active and lastLoginAt', async () => {
+    it('measures activity rather than the last-login timestamp', async () => {
+      prisma.event.groupBy.mockResolvedValue(activity);
+      prisma.user.findMany.mockResolvedValue(users);
+      req.query = { period: 'last_quarter' };
+
       await controller.getActiveUsers(req, res, next);
 
-      expect(prisma.user.findMany).toHaveBeenCalledWith(
+      expect(prisma.event.groupBy).toHaveBeenCalledWith(
         expect.objectContaining({
+          by: ['userId'],
           where: expect.objectContaining({
-            active: true,
-            lastLoginAt: expect.objectContaining({ gte: expect.any(Date) }),
+            userId: { not: null },
+            createdAt: expect.objectContaining({ gte: expect.any(Date) }),
           }),
-        })
+        }),
       );
+      // No activity in the window: no user query at all.
+      prisma.event.groupBy.mockResolvedValue([]);
+      await controller.getActiveUsers(req, res, next);
+      expect(prisma.user.findMany).toHaveBeenCalledTimes(1);
     });
   });
 
