@@ -14,6 +14,7 @@
 
 const express = require('express');
 const { protect } = require('../../../middleware/authMiddleware');
+const { createLimiter } = require('../../../middleware/dynamicRateLimiter');
 const validate = require('../../../middleware/validate');
 const { supplierUpdatePickupSchema, pickupReorderSchema } = require('../../core/services/expeditionValidation');
 const { resolveSupplier, requireTeamPermission } = require('../../../middleware/teamRoleMiddleware');
@@ -40,14 +41,42 @@ const staysRoutes = require('./staysRoutes');
 
 const router = express.Router();
 
+// Sign-up from an invitation is unauthenticated by definition. Rate-limit it
+// separately from link lookups: a valid token should not be slowed down by
+// someone else's scanning, and a password hash is the expensive operation.
+const inviteRegisterLimiter = createLimiter({
+  name: 'team_invite_register',
+  defaultMax: 10,
+  defaultWindowMs: 15 * 60 * 1000,
+  message: {
+    status: 'fail',
+    message: 'Too many attempts, please try again later.',
+  },
+});
+
+const inviteLookupLimiter = createLimiter({
+  name: 'team_invite_lookup',
+  defaultMax: 30,
+  defaultWindowMs: 15 * 60 * 1000,
+  message: {
+    status: 'fail',
+    message: 'Too many requests, please try again later.',
+  },
+});
+
 // ── Team invitations (pre-membership) ───────────────────────────────────────
 // An invitee holds `roles: ['customer']` (the signup default) until they
-// accept, when acceptInvite grants supplier access. These four must therefore
-// sit BEFORE the supplier-access guard below — behind `restrictTo('supplier')`
+// accept, when acceptInvite grants supplier access. These routes must sit
+// BEFORE the supplier-access guard below — behind `restrictTo('supplier')`
 // every invite failed with 403 and the team feature could never complete.
-// `protect` is enough: the token is the secret, and the controller enforces
+//
+// Details and account creation are PUBLIC: the page needs the supplier and
+// role before it can decide whether to ask for a password or a sign-in, and
+// an invitee without an account has no session to send. The token is the
+// secret; accept/decline still require a session and the controller enforces
 // that the signed-in email matches the invited one.
-router.get('/settings/team/invite/:token', protect, teamController.getInviteDetails);
+router.get('/settings/team/invite/:token', inviteLookupLimiter, teamController.getInviteDetails);
+router.post('/settings/team/invite/:token/register', inviteRegisterLimiter, teamController.registerInvitee);
 router.post('/settings/team/invite/:token/accept', protect, teamController.acceptInvite);
 router.post('/settings/team/invite/:token/decline', protect, teamController.declineInvite);
 // Membership discovery: owner → admin, member → their role, stranger → null.
@@ -104,6 +133,7 @@ router.put('/settings/booking-rules', resolveSupplier, requireTeamPermission('se
 router.get('/settings/team/members', requireTeamPermission('team.view'), teamController.getMembers);
 router.post('/settings/team/invite', requireTeamPermission('team.manage'), teamController.inviteMember);
 router.post('/settings/team/invite/resend', requireTeamPermission('team.manage'), teamController.resendInvite);
+router.get('/settings/team/invite/:memberId/link', requireTeamPermission('team.manage'), teamController.getInviteLink);
 router.post('/settings/team/direct-add', requireTeamPermission('team.manage'), teamController.directAddMember);
 router.patch('/settings/team/members/:id/role', requireTeamPermission('team.roles.assign'), teamController.updateMemberRole);
 router.patch('/settings/team/members/:id/roles', requireTeamPermission('team.roles.assign'), teamController.updateMemberRole);

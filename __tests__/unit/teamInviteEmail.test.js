@@ -67,13 +67,27 @@ describe('team invite email', () => {
 
     // One button, the raw link for clients that strip it, and the security context.
     expect(html).toContain(`href="${INVITE_URL}"`);
-    expect(html).toContain('expires in 48 hours');
+    expect(html).toContain('expires in 2 days');
     expect(html).toContain('secretary@example.com');
-    expect(html).toContain("weren't expecting this invitation");
+    expect(html).toContain("weren't expecting it");
+
+    // The invitee sets their own password; the email must say so, and must
+    // make clear the link never resets an existing one.
+    expect(html).toContain('Set your own password');
+    expect(html).toContain('never changes an existing password');
 
     expect(text).toContain(INVITE_URL);
     expect(text).toContain('Editor: Manage tours, bookings and products');
+    expect(text).toContain('You will choose your own password');
+    expect(text).toContain('expires in 2 days');
     expect(text).toContain('support@travioghana.com');
+  });
+
+  it('names a week in the default 7-day invitation', async () => {
+    const withoutTtl = { ...inviteArgs };
+    delete withoutTtl.expiresInHours;
+    await sendTeamInviteEmail(withoutTtl);
+    expect(sentPayload().html).toContain('expires in 7 days');
   });
 
   it('uses the brand identity of the inviting supplier', async () => {

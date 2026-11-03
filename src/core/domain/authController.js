@@ -243,14 +243,14 @@ exports.forgotPassword = catchAsync(async (req, res, next) => {
   const resetToken = signPasswordResetToken({ userId: user.id });
 
   const { sendEmail, resolveEmailBrand } = require('../services/emailService');
-  const { getBrand, getBrandEmail } = require('../../../config/brands');
-  // Branded identity: the sender, logo, footer, subject AND the reset-link
-  // origin follow the user's brand (Ghana / Expedition / TravioAfrica)
-  // instead of always pointing at the default CLIENT_URL storefront.
+  const { getBrandEmail } = require('../../../config/brands');
+  const emailUrls = require('../../../config/emailUrls');
+  // Branded identity: the sender, logo, footer and subject follow the user's
+  // brand. The reset page lives in the supplier dashboard (Ghana suppliers get
+  // the Ghana dashboard), not on the public storefront — the storefront has no
+  // reset screen, so the old link dead-ended there.
   const brandKey = resolveEmailBrand({ user });
-  const brand = getBrand(brandKey);
-  const resetOrigin = (brand?.storefrontUrl || process.env.CLIENT_URL || 'http://localhost:8080').replace(/\/+$/, '');
-  const resetUrl = `${resetOrigin}/reset-password?token=${resetToken}`;
+  const resetUrl = `${emailUrls.dashboardBaseForUser(user)}/reset-password?token=${resetToken}`;
 
   try {
     await sendEmail({

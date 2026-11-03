@@ -784,4 +784,144 @@ describeDb('team invite (real DB)', () => {
       expect(row.role).toBe('editor');
     });
   });
+
+  // ── Invitee creates their own account ─────────────────────────────────
+  describe('team invite — invitee sign-up', () => {
+    const makeInvite = ({ email, token, expiresAt = FUTURE }) => prisma.teamMember.create({
+      data: {
+        supplierId: ownerId,
+        email,
+        roles: ['editor'],
+        role: 'editor',
+        status: 'PENDING',
+        inviteToken: token,
+        tokenExpiresAt: expiresAt,
+      },
+    });
+
+    it('creates the account from the token and ignores an email in the body', async () => {
+      const email = 'tmi-signup-ok@test.invalid';
+      const inviteToken = 'tmi-signup-ok-token';
+      await makeInvite({ email, token: inviteToken });
+
+      const res = await request(app)
+        .post(`${GHANA}/invite/${inviteToken}/register`)
+        .send({
+          name: 'Ama Mensah',
+          password: 'correct horse battery',
+          email: 'attacker@test.invalid', // must be ignored
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.user.email).toBe(email);
+      expect(res.body.data.user.hasPassword).toBe(true);
+      expect(res.body.data.accessToken).toBeTruthy();
+      expect(res.body.data.refreshToken).toBeTruthy();
+
+      const user = await prisma.user.findUnique({ where: { email } });
+      expect(user).toMatchObject({ name: 'Ama Mensah', authProvider: 'local', emailVerified: true });
+      expect(user.passwordHash).toBeTruthy();
+      expect(user.roles).toEqual(expect.arrayContaining(['customer', 'supplier', 'ghana']));
+
+      // Single use: the token no longer resolves, and the row is accepted.
+      expect(await prisma.teamMember.findUnique({ where: { inviteToken } })).toBeNull();
+      const acceptedRow = await prisma.teamMember.findUnique({
+        where: { supplierId_email: { supplierId: ownerId, email } },
+      });
+      expect(acceptedRow.status).toBe('ACCEPTED');
+      expect(acceptedRow.inviteToken).toBeNull();
+    });
+
+    it('refuses to register when an account already exists', async () => {
+      const res = await request(app)
+        .post(`${GHANA}/invite/${INVITE_TOKEN}/register`)
+        .send({ name: 'Already Here', password: 'correct horse battery' });
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('ACCOUNT_EXISTS');
+
+      // The original password was not touched.
+      const row = await prisma.teamMember.findUnique({ where: { id: pendingId } });
+      expect(row).toMatchObject({ status: 'PENDING', inviteToken: INVITE_TOKEN });
+    });
+
+    it('410s on an expired invitation and creates no account', async () => {
+      const email = 'tmi-signup-late@test.invalid';
+      const inviteToken = 'tmi-signup-late-token';
+      await makeInvite({ email, token: inviteToken, expiresAt: PAST });
+
+      const res = await request(app)
+        .post(`${GHANA}/invite/${inviteToken}/register`)
+        .send({ name: 'Late Arrival', password: 'correct horse battery' });
+
+      expect(res.status).toBe(410);
+      expect(await prisma.user.findUnique({ where: { email } })).toBeNull();
+    });
+
+    it('honours a concurrent double submit exactly once', async () => {
+      const email = 'tmi-signup-race@test.invalid';
+      const inviteToken = 'tmi-signup-race-token';
+      await makeInvite({ email, token: inviteToken });
+
+      const body = { name: 'Race Condition', password: 'correct horse battery' };
+      const [first, second] = await Promise.all([
+        request(app).post(`${GHANA}/invite/${inviteToken}/register`).send(body),
+        request(app).post(`${GHANA}/invite/${inviteToken}/register`).send(body),
+      ]);
+
+      expect([first.status, second.status].sort()).toEqual([201, 409]);
+      const users = await prisma.user.findMany({ where: { email } });
+      expect(users).toHaveLength(1);
+    });
+
+    it('blocks a login that already belongs to another business', async () => {
+      const email = 'tmi-signup-elsewhere@test.invalid';
+      const inviteToken = 'tmi-signup-elsewhere-token';
+      await makeInvite({ email, token: inviteToken });
+
+      const foreign = await prisma.teamMember.create({
+        data: {
+          supplierId: strangerId,
+          email,
+          roles: ['editor'],
+          role: 'editor',
+          status: 'ACCEPTED',
+          acceptedAt: new Date(),
+        },
+      });
+
+      const res = await request(app)
+        .post(`${GHANA}/invite/${inviteToken}/register`)
+        .send({ name: 'Elsewhere Person', password: 'correct horse battery' });
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('MEMBER_OF_ANOTHER_SUPPLIER');
+
+      await prisma.teamMember.delete({ where: { id: foreign.id } }).catch(() => {});
+    });
+
+    it('never lets a supplier owner accept an invitation into another business', async () => {
+      const inviteToken = 'tmi-owner-join-token';
+      const own = await prisma.teamMember.create({
+        data: {
+          supplierId: ownerId,
+          email: OWNER_EMAIL,
+          roles: ['editor'],
+          role: 'editor',
+          status: 'PENDING',
+          inviteToken,
+          tokenExpiresAt: FUTURE,
+        },
+      });
+
+      const res = await request(app).post(`${GHANA}/invite/${inviteToken}/accept`).set(auth(ownerId));
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('SUPPLIER_ACCOUNT');
+      const row = await prisma.teamMember.findUnique({ where: { id: own.id } });
+      expect(row.status).toBe('PENDING');
+
+      await prisma.teamMember.delete({ where: { id: own.id } }).catch(() => {});
+    });
+  });
 });

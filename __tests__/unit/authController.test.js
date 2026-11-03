@@ -532,11 +532,12 @@ describe('forgotPassword', () => {
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ status: 'success' }));
   });
 
-  it('points the reset link at the brand storefront origin (Ghana)', async () => {
+  it('points the reset link at the Ghana supplier dashboard for a Ghana supplier', async () => {
     const { sendEmail, resolveEmailBrand } = require('../../src/core/services/emailService');
+    const emailUrls = require('../../config/emailUrls');
     sendEmail.mockResolvedValue();
     resolveEmailBrand.mockReturnValue('ghana');
-    prisma.user.findUnique.mockResolvedValue(mockUser);
+    prisma.user.findUnique.mockResolvedValue({ ...mockUser, roles: ['supplier', 'ghana'] });
     mockSignPasswordResetToken.mockReturnValue('reset-token');
 
     const req = mockReq({ body: { email: 'john@test.com' } });
@@ -545,15 +546,18 @@ describe('forgotPassword', () => {
 
     await controller.forgotPassword(req, res, next);
 
+    // The reset screen lives in the dashboard, not the storefront: the
+    // storefront has no /reset-password route, so the old link dead-ended.
     expect(sendEmail.mock.calls[0][0].data.buttonUrl).toBe(
-      'https://travioghana.com/reset-password?token=reset-token'
+      `${emailUrls.dashboardBaseForUser({ roles: ['supplier', 'ghana'] })}/reset-password?token=reset-token`
     );
     // Restore the factory default for subsequent tests.
     resolveEmailBrand.mockReturnValue('africa');
   });
 
-  it('defaults the reset link to the TravioAfrica storefront origin', async () => {
+  it('defaults the reset link to the user dashboard origin', async () => {
     const { sendEmail } = require('../../src/core/services/emailService');
+    const emailUrls = require('../../config/emailUrls');
     sendEmail.mockResolvedValue();
     prisma.user.findUnique.mockResolvedValue(mockUser);
     mockSignPasswordResetToken.mockReturnValue('reset-token');
@@ -565,7 +569,7 @@ describe('forgotPassword', () => {
     await controller.forgotPassword(req, res, next);
 
     expect(sendEmail.mock.calls[0][0].data.buttonUrl).toBe(
-      'https://travioafrica.com/reset-password?token=reset-token'
+      `${emailUrls.dashboardBaseForUser(mockUser)}/reset-password?token=reset-token`
     );
   });
 });

@@ -69,6 +69,10 @@ const ALLOWED_WITHOUT_GUARD = [
   // checks the signed-in email matches the invitation.
   { path: '/settings/team/invite/:token/accept', reason: 'token-authorised' },
   { path: '/settings/team/invite/:token/decline', reason: 'token-authorised' },
+  // Pre-membership sign-up: the invitee has no session yet, and the token is
+  // the only credential. The controller reads the email from the token (never
+  // the body), refuses an existing account, and consumes the invite atomically.
+  { path: '/settings/team/invite/:token/register', reason: 'token-authorised' },
   // Per-account notifications: the controller scopes every statement to
   // req.user.id, so a member only ever touches their own inbox.
   { path: '/notifications/:id/read', reason: 'per-account' },

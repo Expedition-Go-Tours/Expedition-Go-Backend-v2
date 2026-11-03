@@ -2610,15 +2610,19 @@ async function sendTeamInviteEmail({
   inviteUrl,
   invitedBy,
   invitedByEmail = '',
-  expiresInHours = 48,
+  expiresInHours = 168,
   brandKey = null,
 }) {
   const roleView = teamRoleView(roles && roles.length ? roles : role);
   const roleNames = roleView.map((r) => r.label).join(' + ') || 'team member';
   const safeSupplier = htmlEscape(supplierName || 'this supplier');
   const safeInviter = htmlEscape(invitedBy || 'Your supplier');
+  const safeInvitee = htmlEscape(to);
   const shell = await getShellVars(brandKey);
   const brandName = shell.brandName || 'Travio';
+  const expiryLabel = expiresInHours % 24 === 0 && expiresInHours >= 24
+    ? `${expiresInHours / 24} days`
+    : `${expiresInHours} hours`;
 
   // Plain-text alternative: helps deliverability and clients that strip HTML.
   const text = [
@@ -2629,8 +2633,11 @@ async function sendTeamInviteEmail({
     '',
     `Accept the invitation: ${inviteUrl}`,
     '',
-    `This link expires in ${expiresInHours} hours and only works for ${to}.`,
-    `If you weren't expecting this invitation you can safely ignore it.`,
+    'New to Travio? You will choose your own password on the next screen.',
+    'Already have an account? Sign in as usual. This link never changes an existing password.',
+    '',
+    `This link expires in ${expiryLabel} and only works for ${to}.`,
+    "If you weren't expecting this invitation you can safely ignore it.",
     `Questions? ${shell.supportEmail}`,
   ].join('\n');
 
@@ -2639,7 +2646,7 @@ async function sendTeamInviteEmail({
       to,
       subject: `${invitedBy || 'A teammate'} invited you to join ${supplierName}'s team on ${brandName}`,
       template: 'team-invite',
-      opts: { brandKey, text, preheader: `${roleNames} access to ${supplierName} — accept in one click.` },
+      opts: { brandKey, text, preheader: `${roleNames} access to ${supplierName}. You will set your own password.` },
       data: {
         supplierName: safeSupplier,
         roles: roleView,
@@ -2648,8 +2655,9 @@ async function sendTeamInviteEmail({
         inviterEmail: htmlEscape(invitedByEmail),
         inviterInitials: initialsOf(invitedBy),
         inviteUrl,
-        inviteeEmail: htmlEscape(to),
+        inviteeEmail: safeInvitee,
         expiresInHours,
+        expiryLabel,
         brandName,
       },
     });

@@ -1866,19 +1866,34 @@ const teamInvite = {
     const body = [
       B.hero({
         heading: "You're invited to join {{supplierName}}",
-        subtitle: 'A teammate has given you access to their supplier dashboard.',
+        subtitle: '{{inviterName}} has given you access to the supplier dashboard.',
         badgeText: 'Team invitation',
       }),
       inviterBlock(),
       roleAccessBlock(),
+      B.sectionTitle('Getting started'),
+      B.stepList([
+        {
+          title: 'Open your invitation',
+          body: 'Use the button below. This link only works for {{inviteeEmail}}.',
+        },
+        {
+          title: 'Set your own password',
+          body: "New to Travio? You will choose a password on the next screen. Already have an account? Sign in as usual. This link never changes an existing password.",
+        },
+        {
+          title: 'Start working in {{supplierName}}',
+          body: 'The dashboard opens with exactly the access listed above.',
+        },
+      ]),
       B.buttonPrimary('Accept invitation', '{{inviteUrl}}', { color: '{{accentColor}}' }),
       B.paragraph(
-        'This secure link only works for <strong>{{inviteeEmail}}</strong> and expires in {{expiresInHours}} hours. No password needed. Sign in with that address and you are in.',
+        'This link expires in {{expiryLabel}} and only works for <strong>{{inviteeEmail}}</strong>.',
         { center: true, muted: true, small: true },
       ),
       fallbackLinkBlock(),
       B.callout(
-        "You're receiving this because {{inviterName}} added you to {{supplierName}}. If you weren't expecting this invitation, you can safely ignore this email. Nothing changes on your account until you accept.",
+        "You're receiving this because {{inviterName}} invited you to {{supplierName}}. If you weren't expecting it, ignore this email. Nothing changes on your account until you accept.",
         'info',
       ),
     ].join('\n');
@@ -1898,7 +1913,7 @@ const teamInviteRevoked = {
         badgeColor: 'danger',
       }),
       B.paragraph(
-        '{{inviterName}} cancelled the invitation to join {{supplierName}} as <strong>{{rolesText}}</strong>. The link in the original email no longer works, so no action is needed from you.',
+        '{{inviterName}} cancelled the invitation to join {{supplierName}} as <strong>{{rolesText}}</strong>. The link in the original email no longer works, so there is nothing you need to do.',
       ),
       B.callout(
         'Still need access? Ask {{inviterName}} to send a new invitation. It only takes a moment.',

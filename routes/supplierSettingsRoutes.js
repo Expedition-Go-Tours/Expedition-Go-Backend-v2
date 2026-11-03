@@ -92,6 +92,11 @@ const recipientWriteLimiter = createLimiter({
  */
 router.get('/team/invite/:token', inviteLookupLimiter, teamController.getInviteDetails);
 
+// Public — the invitee creates their own account from the link. Email comes
+// from the token, never the body, so the link cannot mint an account for a
+// different address.
+router.post('/team/invite/:token/register', inviteLookupLimiter, teamController.registerInvitee);
+
 // Public — token-authenticated from the email link (no session required).
 router.get('/notification-recipients/verify', settingsController.verifyNotificationRecipient);
 router.post('/notification-recipients/unsubscribe', settingsController.unsubscribeNotificationRecipient);
@@ -909,6 +914,8 @@ router.post('/team/invite', requireTeamRole('admin'), teamInviteLimiter, teamCon
  *         description: No pending invitation found for this email
  */
 router.post('/team/invite/resend', requireTeamRole('admin'), teamInviteLimiter, teamController.resendInvite);
+// Copyable link for owners who send invitations over WhatsApp instead of email.
+router.get('/team/invite/:memberId/link', requireTeamRole('admin'), teamController.getInviteLink);
 
 /**
  * @swagger
