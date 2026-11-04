@@ -5,6 +5,7 @@ const { enqueueNotification, enqueueEmail } = require('../services/queue');
 const { notifyAdmin } = require('../services/adminNotificationService');
 const { logActivity } = require('../services/auditLogger');
 const getConfig = require('../services/getConfig');
+const { viewerCalendar } = require('../services/viewerCalendar');
 
 /**
  * Get payout history for the authenticated supplier
@@ -598,6 +599,9 @@ exports.failPayout = catchAsync(async (req, res, next) => {
  * Get payout summary / stats for the admin dashboard
  */
 exports.getPayoutSummary = catchAsync(async (req, res, next) => {
+  // "Paid this month" must mean the viewer's month: the server's month rolls
+  // over at UTC midnight, hours before an operator's does.
+  const { monthStart } = viewerCalendar(parseInt(req.query.tzOffsetMinutes, 10));
   const [pending, approved, processing, failed, paidThisMonth, monthlyBreakdown, requestStages, outstandingFromBookings] = await Promise.all([
     prisma.payout.aggregate({
       where: { status: 'PENDING' },
@@ -623,7 +627,7 @@ exports.getPayoutSummary = catchAsync(async (req, res, next) => {
       where: {
         status: 'PAID',
         paidAt: {
-          gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+          gte: monthStart
         }
       },
       _sum: { amount: true, commissionAmount: true },

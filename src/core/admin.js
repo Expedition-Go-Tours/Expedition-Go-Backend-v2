@@ -21,6 +21,7 @@ const adminController = require('./domain/adminController');
 const { getBrand } = require('../../config/brands');
 const { computeFunnel } = require('./services/funnelEngine');
 const { getActivityFeed } = require('./services/activityFeed');
+const { viewerCalendar } = require('./services/viewerCalendar');
 const { Prisma } = require('@prisma/client');
 
 function makeAdminController(brandKey) {
@@ -97,19 +98,25 @@ controller.getOverview = catchAsync(async (req, res, next) => {
     ? requestedPeriod
     : 'this_month';
 
-  const now = new Date();
+  // The viewer's calendar, not the server's: "today" and "this month" have to
+  // roll over at the operator's midnight, not at UTC's. Without the offset the
+  // KPIs and the trend chart shifted under them hours early.
+  const cal = viewerCalendar(parseInt(req.query.tzOffsetMinutes, 10));
+  const { shiftMinutes } = cal;
+
+  const now = cal.now;
   const bucket = Math.floor(now.getTime() / 120000);
-  const cacheKey = `${BRAND.cachePrefix}admin:overview:${bucket}:${period}`;
+  // tz is part of the key: two viewers in different zones see different days.
+  const cacheKey = `${BRAND.cachePrefix}admin:overview:${bucket}:${period}:tz${cal.tz}`;
 
   const result = await cache.getOrSet(cacheKey, async () => {
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const monthBeforeStart = new Date(now.getFullYear(), now.getMonth() - 2, 1);
-    const quarterIndex = Math.floor(now.getMonth() / 3);
-    const quarterStart = new Date(now.getFullYear(), quarterIndex * 3, 1);
-    const previousQuarterStart = new Date(now.getFullYear(), quarterIndex * 3 - 3, 1);
-    const quarterBeforeStart = new Date(now.getFullYear(), quarterIndex * 3 - 6, 1);
+    const todayStart = cal.todayStart;
+    const monthStart = cal.monthStart;
+    const previousMonthStart = cal.previousMonthStart;
+    const monthBeforeStart = cal.monthBeforeStart;
+    const quarterStart = cal.quarterStart;
+    const previousQuarterStart = cal.previousQuarterStart;
+    const quarterBeforeStart = cal.quarterBeforeStart;
 
     const windows = (() => {
       switch (period) {
@@ -138,9 +145,8 @@ controller.getOverview = catchAsync(async (req, res, next) => {
     const previousPeriodStart = windows.previousStart;
     const previousPeriodEnd = windows.previousEnd;
 
-    const weekStart = new Date(todayStart);
-    weekStart.setDate(weekStart.getDate() - weekStart.getDay());
-    const yearStart = new Date(now.getFullYear(), 0, 1);
+    const weekStart = cal.weekStart;
+    const yearStart = cal.yearStart;
     const scanStart = new Date(Math.min(
       currentPeriodStart.getTime(), previousPeriodStart.getTime(),
       weekStart.getTime(), monthStart.getTime(), yearStart.getTime(),
@@ -212,12 +218,12 @@ controller.getOverview = catchAsync(async (req, res, next) => {
               TO_CHAR(d.bucket, 'HH24') || ':00' AS day,
               COALESCE(SUM(b.count), 0)::int AS count
             FROM generate_series(
-              ${currentPeriodStart},
-              GREATEST(${currentPeriodStart}, ${new Date(currentPeriodEnd.getTime() - 60_000)}),
+              ${currentPeriodStart} + ${shiftMinutes}::int * interval '1 minute',
+              GREATEST(${currentPeriodStart}, ${new Date(currentPeriodEnd.getTime() - 60_000)}) + ${shiftMinutes}::int * interval '1 minute',
               interval '4 hours'
             ) d(bucket)
             LEFT JOIN (
-              SELECT date_trunc('hour', "createdAt") AS bucket, COUNT(*)::int AS count
+              SELECT date_trunc('hour', "createdAt" + ${shiftMinutes}::int * interval '1 minute') AS bucket, COUNT(*)::int AS count
               FROM "Booking"
               WHERE ("source"::text = ${BRAND.source} OR EXISTS (
                 SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
@@ -232,7 +238,7 @@ controller.getOverview = catchAsync(async (req, res, next) => {
         : period === 'last_quarter'
         ? prisma.$queryRaw`
             SELECT
-              TO_CHAR(d.bucket, 'DD Mon') AS day,
+              TO_CHAR(d.bucket + ${shiftMinutes}::int * interval '1 minute', 'DD Mon') AS day,
               COALESCE(COUNT(b.id), 0)::int AS count
             FROM generate_series(
               ${currentPeriodStart},
@@ -254,19 +260,19 @@ controller.getOverview = catchAsync(async (req, res, next) => {
               TO_CHAR(d.day, 'DD Mon') AS day,
               COALESCE(b.count, 0)::int AS count
             FROM generate_series(
-              ${currentPeriodStart}::date,
-              ${new Date(currentPeriodEnd.getTime() - 1_000)}::date,
+              (${currentPeriodStart} + ${shiftMinutes}::int * interval '1 minute')::date,
+              (${new Date(currentPeriodEnd.getTime() - 1_000)} + ${shiftMinutes}::int * interval '1 minute')::date,
               interval '1 day'
             ) d(day)
             LEFT JOIN (
-              SELECT "createdAt"::date AS day, COUNT(*)::int AS count
+              SELECT ("createdAt" + ${shiftMinutes}::int * interval '1 minute')::date AS day, COUNT(*)::int AS count
               FROM "Booking"
               WHERE ("source"::text = ${BRAND.source} OR EXISTS (
                 SELECT 1 FROM "Tour" _t JOIN "User" _u ON _u.id = _t."supplierId"
                 WHERE _t.id = "Booking"."tourId" AND ${BRAND.role} = ANY(_u."roles"::text[])
               ))
                 AND "createdAt" >= ${currentPeriodStart} AND "createdAt" < ${currentPeriodEnd}
-              GROUP BY "createdAt"::date
+              GROUP BY 1
             ) b ON b.day = d.day::date
             ORDER BY d.day ASC
           `,
