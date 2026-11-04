@@ -72,6 +72,37 @@ describe('activityFeed', () => {
     expect(week.start.getTime()).toBeLessThan(yesterday.start.getTime());
   });
 
+  it('prefers explicit client bounds so "today" is the viewer’s day', () => {
+    // A viewer at 7pm local can be past UTC midnight, where the server's
+    // "today" is a fresh, empty day. The client sends its own calendar day.
+    const from = new Date(Date.now() - 20 * 3600 * 1000);
+    const to = new Date(Date.now() + 5 * 3600 * 1000); // future: must clamp
+    const range = _private.resolveWindow('today', from.toISOString(), to.toISOString());
+
+    expect(range.start.getTime()).toBe(from.getTime());
+    expect(range.end.getTime()).toBeLessThanOrEqual(Date.now());
+    expect(range.end.getTime()).toBeLessThan(to.getTime());
+  });
+
+  it('clamps a client range to 92 days and falls back on unusable bounds', () => {
+    const start = new Date(Date.now() - 400 * 24 * 3600 * 1000);
+    const end = new Date(Date.now() - 300 * 24 * 3600 * 1000);
+    const clamped = _private.resolveWindow('week', start.toISOString(), end.toISOString());
+    expect(clamped.start.getTime()).toBeGreaterThanOrEqual(Date.now() - 93 * 24 * 3600 * 1000);
+
+    const server = _private.resolveWindow('yesterday');
+    const unusable = [
+      ['nonsense', null],
+      [null, null],
+      [end.toISOString(), end.toISOString()], // inverted: end is not after start
+    ];
+    for (const [from, to] of unusable) {
+      const fallback = _private.resolveWindow('yesterday', from, to);
+      expect(fallback.start.getTime()).toBe(server.start.getTime());
+      expect(fallback.end.getTime()).toBe(server.end.getTime());
+    }
+  });
+
   it('round-trips an opaque cursor', () => {
     const item = { id: 'b1', occurredAt: new Date('2026-11-02T10:00:00.000Z') };
     const encoded = _private.encodeCursor(item);

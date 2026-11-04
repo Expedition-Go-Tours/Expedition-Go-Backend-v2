@@ -444,6 +444,11 @@ controller.getActivityFeed = catchAsync(async (req, res) => {
     q: req.query.q,
     cursor: req.query.cursor,
     limit: req.query.limit,
+    // Explicit instants from the client: "today" must be the viewer's
+    // calendar day, not the server's, or the feed goes empty at UTC midnight
+    // for anyone west of UTC.
+    from: req.query.from,
+    to: req.query.to,
   });
 
   res.status(200).json({ status: 'success', data });

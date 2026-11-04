@@ -270,8 +270,35 @@ function startOfDay(date) {
   return next;
 }
 
-function resolveWindow(window) {
+function parseBound(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** How far back an explicit client range may reach. */
+const MAX_RANGE_DAYS = 92;
+
+/**
+ * Resolve the activity window.
+ *
+ * `from`/`to` are instants sent by the client, so "today" means the viewer's
+ * calendar day instead of the server's (UTC) one. Without them — or if either
+ * is unusable — the server falls back to its own day boundaries, which is what
+ * every caller did before clients sent a range.
+ */
+function resolveWindow(window, from, to) {
   const now = new Date();
+  const start = parseBound(from);
+  const end = parseBound(to);
+  if (start && end && end > start) {
+    const earliest = new Date(now.getTime() - MAX_RANGE_DAYS * 24 * 3600 * 1000);
+    return {
+      start: start < earliest ? earliest : start,
+      end: end > now ? now : end,
+    };
+  }
+
   const today = startOfDay(now);
   if (window === 'yesterday') {
     const start = new Date(today);
@@ -1170,7 +1197,11 @@ async function fetchAudits(range, cursor, limit, q, actions = AUDIT_ACTIONS) {
  * Build a page of the activity feed.
  *
  * @param {Object} options
- * @param {'today'|'yesterday'|'week'} [options.window]
+ * @param {'today'|'yesterday'|'week'} [options.window] Server-side day window,
+ *   used only when `from`/`to` are absent.
+ * @param {string} [options.from] ISO instant. With `to`, overrides `window` so
+ *   "today" is the viewer's calendar day rather than the server's.
+ * @param {string} [options.to] ISO instant, clamped to now.
  * @param {'all'|'bookings'|'customers'|'reviews'|'finance'|'system'} [options.type]
  * @param {string} [options.q]
  * @param {string} [options.cursor]
@@ -1182,11 +1213,13 @@ async function getActivityFeed({
   q = '',
   cursor: rawCursor = null,
   limit: rawLimit = DEFAULT_LIMIT,
+  from = null,
+  to = null,
 } = {}) {
   const safeWindow = ['today', 'yesterday', 'week'].includes(window) ? window : 'today';
   const safeType = Object.prototype.hasOwnProperty.call(TYPE_FILTERS, type) ? type : 'all';
   const safeLimit = Math.min(MAX_LIMIT, Math.max(1, parseInt(rawLimit, 10) || DEFAULT_LIMIT));
-  const range = resolveWindow(safeWindow);
+  const range = resolveWindow(safeWindow, from, to);
   const cursor = decodeCursor(rawCursor);
   const search = String(q || '').trim().slice(0, 100);
   const wanted = TYPE_FILTERS[safeType];
