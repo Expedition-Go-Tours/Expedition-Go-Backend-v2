@@ -669,6 +669,30 @@ describe('Booking Controller', () => {
       expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({ name: 'booking.status_confirmed' }));
     });
 
+    it('rejects a supplier cancellation on the day of the activity', async () => {
+      const supplierBooking = {
+        ...mockBooking,
+        status: 'CONFIRMED',
+        travelDate: new Date(),
+        tour: { supplierId: 'supplier-1', title: 'Tour' },
+        customer: { id: 'c-1' },
+      };
+      prisma.booking.findFirst.mockResolvedValue(supplierBooking);
+      const req = mockReq({
+        user: { id: 'supplier-1', roles: ['supplier'] },
+        params: { id: 'booking-1' },
+        body: { status: 'CANCELLED', cancellationCode: 'VEHICLE_BREAKDOWN', cancellationCategory: 'OPERATIONAL', agreedToTerms: true, explanation: 'Gearbox failed' },
+      });
+      const res = mockRes();
+      const next = jest.fn();
+
+      await bookingController.updateBookingStatus(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(next.mock.calls[0][0].message).toContain('closed on the day');
+      expect(prisma.booking.update).not.toHaveBeenCalled();
+    });
+
     it('rejects PENDING→CONFIRMED when activity date has passed', async () => {
       const pastDate = new Date();
       pastDate.setDate(pastDate.getDate() - 2);

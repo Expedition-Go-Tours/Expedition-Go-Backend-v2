@@ -375,3 +375,30 @@ describe('plannedRefund (supplier cancels ⇒ always full refund)', () => {
     expect(amount).toBe(0);
   });
 });
+
+describe('cancellation day gate', () => {
+  const { cancellationClosedForActivity } = require('../../src/core/services/supplierCancellation');
+
+  const at = (offsetDays) => {
+    const date = new Date();
+    date.setHours(12, 0, 0, 0);
+    date.setDate(date.getDate() + offsetDays);
+    return date;
+  };
+
+  it('closes on the activity day, whatever the time', () => {
+    expect(cancellationClosedForActivity({ travelDate: at(0) })).toBe(true);
+  });
+
+  it('closes for a past activity', () => {
+    expect(cancellationClosedForActivity({ travelDate: at(-1) })).toBe(true);
+  });
+
+  it('stays open until the day before', () => {
+    expect(cancellationClosedForActivity({ travelDate: at(1) })).toBe(false);
+  });
+
+  it('does not close a booking without a travel date', () => {
+    expect(cancellationClosedForActivity({})).toBe(false);
+  });
+});

@@ -35,7 +35,7 @@ const { logActivity } = require('../services/auditLogger');
 const logger = require('../services/logger');
 const { sanitizeBookingPaymentInternals } = require('../services/sanitizeBookings');
 const supplierContact = require('../services/supplierContact');
-const { cancelBySupplier, cancelBatchBySupplier, applyCustomerChoice, CHOICE_WINDOW_HOURS } = require('../services/supplierCancellation');
+const { cancelBySupplier, cancelBatchBySupplier, applyCustomerChoice, CHOICE_WINDOW_HOURS, cancellationClosedForActivity } = require('../services/supplierCancellation');
 const { verifyChoiceToken, withChoiceToken } = require('../services/cancellationReasons');
 
 // ================================
@@ -1812,6 +1812,16 @@ exports.updateBookingStatus = catchAsync(async (req, res, next) => {
   // route), ALWAYS-full refund for supplier-caused cancels, 25% fee for
   // operational reasons, and the customer's 48h reschedule-or-refund window.
   if (status === 'CANCELLED') {
+    // From 00:00 on the activity day a supplier cannot cancel: the trip is
+    // due to run, and a supplier-caused cancellation refunds the customer in
+    // full. Marking completed/no-show is the correct post-activity action.
+    if (cancellationClosedForActivity(booking)) {
+      return next(new AppError(
+        'Cancellation is closed on the day of the activity. Mark the booking completed or no-show instead.',
+        400,
+      ));
+    }
+
     // Admin-approval gate: park the request instead of executing — nothing
     // on the booking/money/customer side runs until an admin approves.
     const { requiresApproval, createCancellationRequest } =

@@ -183,6 +183,23 @@ async function executeRefund(bookingOrId) {
  * @param {object} [args.req]       express request for event metadata
  * @param {boolean} [args.skipValidation] internal batch caller already validated
  */
+/**
+ * Has the activity day arrived? From 00:00 on the travel date, a supplier can
+ * no longer cancel: the experience is due to run, and a supplier-caused
+ * cancellation refunds the customer in full. The admin approval path keeps
+ * its own power — this gate sits on the supplier's button, not on the
+ * approved execution of a request made earlier.
+ */
+function cancellationClosedForActivity(booking, now = new Date()) {
+  const startOfDay = (value) => {
+    const date = new Date(value);
+    date.setHours(0, 0, 0, 0);
+    return date;
+  };
+  if (!booking?.travelDate) return false;
+  return startOfDay(booking.travelDate) <= startOfDay(now);
+}
+
 async function cancelBySupplier({ booking, payload, supplierId, req, skipValidation = false }) {
   const validation = skipValidation
     ? { ok: true, errors: [], normalized: payload }
@@ -722,6 +739,16 @@ async function cancelBatchBySupplier({ supplierId, payload, filters, req }) {
   let totalFees = 0;
 
   for (const booking of batch) {
+    if (cancellationClosedForActivity(booking)) {
+      results.push({
+        bookingId: booking.id,
+        bookingNumber: booking.bookingNumber,
+        ok: false,
+        skipped: true,
+        error: 'Cancellation is closed on the day of the activity.',
+      });
+      continue;
+    }
     try {
       const outcome = await cancelBySupplier({
         booking,
@@ -794,6 +821,7 @@ async function cancelBatchBySupplier({ supplierId, payload, filters, req }) {
 
 module.exports = {
   CHOICE_WINDOW_HOURS,
+  cancellationClosedForActivity,
   BATCH_MAX,
   plannedRefund,
   executeRefund,
