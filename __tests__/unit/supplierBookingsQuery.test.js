@@ -380,6 +380,16 @@ describe('the summary the stat cards read', () => {
     expect(payload.summary.counts.REFUNDS).toBe(7);
   });
 
+  it('orders the Refunds tab by refund date, newest first', async () => {
+    await invoke({ status: 'REFUNDS' });
+
+    expect(prisma.booking.findMany.mock.calls[0][0].orderBy).toEqual([
+      { refundedAt: { sort: 'desc', nulls: 'last' } },
+      { cancelledAt: 'desc' },
+      { createdAt: 'desc' },
+    ]);
+  });
+
   it('turns the Refunds tab into a refund predicate, not a status value', async () => {
     await invoke({ status: 'REFUNDS' });
 

@@ -2153,11 +2153,21 @@ function buildSupplierBookingsFilter(supplierId, query = {}) {
     };
   }
 
-  const orderBy = sort === 'oldest'
-    ? { createdAt: 'asc' }
-    : sort === 'travelDate'
-      ? { travelDate: 'asc' }
-      : { createdAt: 'desc' };
+  // The Refunds tab is ordered by the refund itself, not by when the booking
+  // was made: a refund issued today belongs at the top even if the booking is
+  // months old. Pending refunds have no date yet, so they follow the completed
+  // ones in cancellation order.
+  const orderBy = (status === 'REFUNDS' || status === 'REFUNDED')
+    ? [
+        { refundedAt: { sort: 'desc', nulls: 'last' } },
+        { cancelledAt: 'desc' },
+        { createdAt: 'desc' },
+      ]
+    : sort === 'oldest'
+      ? { createdAt: 'asc' }
+      : sort === 'travelDate'
+        ? { travelDate: 'asc' }
+        : { createdAt: 'desc' };
 
   return { where, orderBy };
 }
