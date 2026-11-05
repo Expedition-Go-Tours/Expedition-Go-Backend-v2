@@ -262,7 +262,7 @@ describeDb('the supplier bookings page, per role, on both brands', () => {
         totalRevenue: 100,
         totalEarnings: 85,
         totalBookings: 1,
-        ...(LIST.includes('/travioghana/') ? { counts: { PENDING: 1 } } : {}),
+        ...(LIST.includes('/travioghana/') ? { counts: { PENDING: 1, REFUNDS: 0 } } : {}),
       });
       expect(res.body.data.pagination.totalCount).toBe(1);
     });
