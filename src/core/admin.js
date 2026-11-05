@@ -83,6 +83,61 @@ function topSuppliersSince(since, until) {
   `;
 }
 
+// Brands whose storefront events belong to this dashboard. Expedition is
+// Ghana's sub-store and already rolls up to 'ghana' at write time
+// (services/eventBrand TAG_ALIAS), but older rows still carry the raw key.
+const ACTIVE_EVENT_BRANDS = BRAND.key === 'ghana' ? ['ghana', 'expedition'] : [BRAND.key];
+const ACTIVE_EVENT_PATTERNS = ACTIVE_EVENT_BRANDS.map((key) => `${key}.%`);
+
+/**
+ * Accounts that were active in [start, end), as (id, last seen) rows.
+ *
+ * Two branches, UNION ALL so the caller can group and read the timestamp:
+ *
+ *   1. A brand-role account signed in. A login carries no brand signal, so
+ *      this is the only way a supplier's dashboard session is attributed here.
+ *   2. The account did something on this storefront — a brand-tagged Event.
+ *      That is how customers are counted: customer accounts are shared across
+ *      storefronts, so their login alone says nothing about which brand they
+ *      used. Anonymous traffic (userId null) is not an account.
+ *
+ * Every caller — the KPI tile and the drill-down list — must go through this
+ * so the number and the people behind it are the same question.
+ */
+function activeAccounts(start, end) {
+  const signedIn = Prisma.sql`
+    SELECT u."id" AS id, u."lastLoginAt" AS seen
+    FROM "User" u
+    WHERE u."active" = true
+      AND ${BRAND.role} = ANY(u."roles"::text[])
+      AND u."lastLoginAt" >= ${start}
+      AND u."lastLoginAt" < ${end}`;
+
+  const actedOnBrand = Prisma.sql`
+    SELECT e."userId" AS id, e."createdAt" AS seen
+    FROM "Event" e
+    WHERE e."userId" IS NOT NULL
+      AND e."createdAt" >= ${start}
+      AND e."createdAt" < ${end}
+      AND (
+        e."brand" IN (${Prisma.join(ACTIVE_EVENT_BRANDS)})
+        OR ${Prisma.join(
+          ACTIVE_EVENT_PATTERNS.map((pattern) => Prisma.sql`e."name" LIKE ${pattern}`),
+          ' OR ',
+        )}
+      )`;
+
+  return Prisma.sql`${signedIn} UNION ALL ${actedOnBrand}`;
+}
+
+/** Distinct active accounts in the window, as a scalar count for a KPI. */
+function activeAccountCount(start, end) {
+  return Prisma.sql`(
+    SELECT count(DISTINCT id)::int
+    FROM (${activeAccounts(start, end)}) active_accounts
+  )`;
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // OVERVIEW / ANALYTICS
 // ══════════════════════════════════════════════════════════════════════════
@@ -201,8 +256,8 @@ controller.getOverview = catchAsync(async (req, res, next) => {
           COUNT(*) FILTER (WHERE "createdAt" >= ${weekStart})::int AS "signupsWeek",
           COUNT(*) FILTER (WHERE "createdAt" >= ${monthStart})::int AS "signupsMonth",
           COUNT(*) FILTER (WHERE "createdAt" >= ${yearStart})::int AS "signupsYtd",
-          COUNT(*) FILTER (WHERE "lastLoginAt" >= ${currentPeriodStart} AND "lastLoginAt" < ${currentPeriodEnd} AND "active" = true)::int AS "activeToday",
-          COUNT(*) FILTER (WHERE "lastLoginAt" >= ${previousPeriodStart} AND "lastLoginAt" < ${previousPeriodEnd} AND "active" = true)::int AS "activePrevious",
+          ${activeAccountCount(currentPeriodStart, currentPeriodEnd)} AS "activeToday",
+          ${activeAccountCount(previousPeriodStart, previousPeriodEnd)} AS "activePrevious",
           (SELECT COUNT(*) FROM "Event" e JOIN "User" u ON u.id = e."userId" WHERE ${BRAND.role} = ANY(u."roles"::text[]))::int AS "totalEvents"
         FROM "User"
         WHERE ${BRAND.role} = ANY("roles"::text[])
@@ -1677,24 +1732,56 @@ controller.activateSupplier = catchAsync(async (req, res, next) => {
 
 /**
  * GET /api/travioghana/admin/users/active
- * Recently active Ghana users.
+ * The people behind the overview's "Active Users" tile.
+ *
+ * Same window and same definition as the count above it (`activeAccounts`).
+ * The old version ignored `period` entirely and used a hard-coded
+ * `lastLoginAt >= 30 days`, so the drill-down could list a completely
+ * different set of people than the tile that opened it.
  */
 controller.getActiveUsers = catchAsync(async (req, res, next) => {
-  const now = new Date();
-  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const requested = String(req.query.period || 'this_month');
+  const period = ['today', 'this_month', 'last_month', 'last_quarter'].includes(requested)
+    ? requested
+    : 'this_month';
+  const cal = viewerCalendar(parseInt(req.query.tzOffsetMinutes, 10));
 
-  const users = await prisma.user.findMany({
-    where: {
-      roles: { has: BRAND.role },
-      lastLoginAt: { gte: thirtyDaysAgo },
-      active: true,
-    },
-    select: {
-      id: true, name: true, email: true, photoURL: true,
-      roles: true, lastLoginAt: true,
-    },
-    orderBy: { lastLoginAt: 'desc' },
-  });
+  const { start, end } = (() => {
+    switch (period) {
+      case 'today':
+        return { start: cal.todayStart, end: cal.now };
+      case 'last_month':
+        return { start: cal.previousMonthStart, end: cal.monthStart };
+      case 'last_quarter':
+        return { start: cal.previousQuarterStart, end: cal.quarterStart };
+      case 'this_month':
+      default:
+        return { start: cal.monthStart, end: cal.now };
+    }
+  })();
+
+  const rows = await prisma.$queryRaw`
+    SELECT id, max(seen) AS "lastActiveAt"
+    FROM (${activeAccounts(start, end)}) active_accounts
+    GROUP BY id
+    ORDER BY max(seen) DESC
+  `;
+
+  const lastActiveById = new Map(rows.map((row) => [row.id, row.lastActiveAt]));
+  const ids = [...lastActiveById.keys()];
+  const profiles = ids.length
+    ? await prisma.user.findMany({
+        where: { id: { in: ids }, active: true },
+        select: {
+          id: true, name: true, email: true, photoURL: true,
+          roles: true, lastLoginAt: true,
+        },
+      })
+    : [];
+
+  const users = profiles
+    .map((user) => ({ ...user, lastActiveAt: lastActiveById.get(user.id) || user.lastLoginAt }))
+    .sort((a, b) => new Date(b.lastActiveAt || 0) - new Date(a.lastActiveAt || 0));
 
   res.status(200).json({ status: 'success', data: { users } });
 });
