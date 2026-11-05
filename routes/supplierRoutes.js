@@ -517,6 +517,46 @@ router.get('/analytics/products', resolveSupplier, requireTeamPermission('analyt
 
 /**
  * @swagger
+ * /suppliers/analytics/summary:
+ *   get:
+ *     summary: Period-scoped KPIs for the Performance page
+ *     description: |
+ *       Revenue (paid), bookings (created), average booking value and rating
+ *       for the selected period, with the previous equal-length window so the
+ *       deltas on the cards are computed from the same source.
+ *     tags: [Supplier]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: period
+ *         in: query
+ *         schema: { type: string, enum: [30d, 90d, 12m] }
+ *     responses:
+ *       200:
+ *         description: Summary metrics
+ */
+router.get('/analytics/summary', resolveSupplier, requireTeamPermission('analytics.view'), supplierController.getAnalyticsSummary);
+
+/**
+ * @swagger
+ * /suppliers/analytics/timeseries:
+ *   get:
+ *     summary: Revenue and bookings over time, with the previous period
+ *     tags: [Supplier]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: period
+ *         in: query
+ *         schema: { type: string, enum: [30d, 90d, 12m] }
+ *     responses:
+ *       200:
+ *         description: Day, week or month buckets plus the previous window
+ */
+router.get('/analytics/timeseries', resolveSupplier, requireTeamPermission('analytics.view'), supplierController.getAnalyticsTimeseries);
+
+/**
+ * @swagger
  * /suppliers/analytics/ga4-funnel:
  *   get:
  *     summary: GA4 ecommerce funnel per product (viewed → cart → purchased)

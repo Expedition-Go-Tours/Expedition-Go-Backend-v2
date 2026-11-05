@@ -660,38 +660,57 @@ exports.getEarnings = catchAsync(async (req, res) => {
  */
 exports.getProductAnalytics = catchAsync(async (req, res) => {
   const supplierId = req.supplierId;
+  const period = req.query.period ? resolveAnalyticsPeriod(req.query.period) : null;
   const bucket = Math.floor(Date.now() / 60000); // 1-minute buckets, as the dashboard
+  const cacheKey = `supplier:analytics:products:${supplierId}:${period ? period.key : 'all'}:${bucket}`;
 
-  const result = await cache.getOrSet(`supplier:analytics:products:${supplierId}:${bucket}`, async () => {
-    const rows = await prisma.booking.groupBy({
-      by: ['tourId'],
-      where: { tour: { supplierId }, isSimulated: false },
-      _count: { _all: true },
-      _sum: { grossAmount: true, supplierPayout: true },
-      orderBy: { _sum: { grossAmount: 'desc' } },
-      take: 20,
+  const result = await cache.getOrSet(cacheKey, async () => {
+    const where = { tour: { supplierId }, isSimulated: false };
+    if (period) where.createdAt = { gte: period.start, lte: period.end };
+
+    // Grouped in JS rather than by Prisma: revenue must only count money that
+    // was actually paid, while the booking count includes pending rows. A
+    // `groupBy` can filter the rows or sum them, not both at once.
+    const rows = await prisma.booking.findMany({
+      where,
+      select: { tourId: true, grossAmount: true, supplierPayout: true, paymentStatus: true },
     });
-
     if (!rows.length) return [];
 
-    // The titles and photos live on the tour, not the booking: one query, keyed by
-    // the ids the grouping produced.
+    const byTour = new Map();
+    for (const row of rows) {
+      const entry = byTour.get(row.tourId) || { bookings: 0, revenue: 0, payout: 0 };
+      entry.bookings += 1;
+      if (row.paymentStatus === 'SUCCEEDED') {
+        entry.revenue += Number(row.grossAmount) || 0;
+        entry.payout += Number(row.supplierPayout) || 0;
+      }
+      byTour.set(row.tourId, entry);
+    }
+
+    const ranked = [...byTour.entries()]
+      .map(([tourId, stats]) => ({ tourId, ...stats }))
+      .sort((a, b) => b.revenue - a.revenue || b.bookings - a.bookings)
+      .slice(0, 20);
+
+    // The titles and photos live on the tour, not the booking: one query, keyed
+    // by the ids the grouping produced.
     const tours = await prisma.tour.findMany({
-      where: { id: { in: rows.map((r) => r.tourId) } },
+      where: { id: { in: ranked.map((r) => r.tourId) } },
       select: { id: true, title: true, coverPhoto: true, averageRating: true },
     });
     const tourById = new Map(tours.map((t) => [t.id, t]));
 
-    return rows.map((r) => {
+    return ranked.map((r) => {
       const tour = tourById.get(r.tourId);
       return {
         tourId: r.tourId,
         name: tour?.title || 'Unknown product',
         photo: tour?.coverPhoto || null,
         rating: Number(tour?.averageRating || 0),
-        bookings: r._count?._all ?? 0,
-        revenue: Number(r._sum?.grossAmount || 0),
-        payout: Number(r._sum?.supplierPayout || 0),
+        bookings: r.bookings,
+        revenue: round2(r.revenue),
+        payout: round2(r.payout),
       };
     });
   }, 60);
@@ -833,6 +852,258 @@ function resolveGa4DateRange(from, to) {
     : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   return { from: start, to: end };
 }
+
+// ── Performance page: one period model for every number ───────────────────
+//
+// The page used to mix an all-time payout total with a month-on-month delta and
+// a 90-day booking count on the same row. Every figure below resolves through
+// one [start, end) window plus the previous equal-length window, so a card, the
+// chart and the table cannot be describing different periods.
+
+const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const DAY_MS = 86_400_000;
+
+const ANALYTICS_PERIODS = Object.freeze({
+  '30d': { key: '30d', label: 'Last 30 days', days: 30, granularity: 'day' },
+  '90d': { key: '90d', label: 'Last 90 days', days: 90, granularity: 'week' },
+  '12m': { key: '12m', label: 'Last 12 months', months: 12, granularity: 'month' },
+});
+
+function round2(value) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+function resolveAnalyticsPeriod(value) {
+  const key = ANALYTICS_PERIODS[value] ? value : '30d';
+  const config = ANALYTICS_PERIODS[key];
+  const end = new Date();
+
+  if (config.months) {
+    // Full calendar months: 12 buckets, and the 12 before them as comparison.
+    const start = new Date(end.getFullYear(), end.getMonth() - (config.months - 1), 1);
+    const previousStart = new Date(start.getFullYear(), start.getMonth() - config.months, 1);
+    return { ...config, start, end, previousStart, previousEnd: start };
+  }
+
+  // `days` buckets including today, so a "30 day" chart draws 30 bars.
+  const start = new Date(end.getFullYear(), end.getMonth(), end.getDate() - (config.days - 1));
+  const length = end.getTime() - start.getTime();
+  return {
+    ...config,
+    start,
+    end,
+    previousStart: new Date(start.getTime() - length),
+    previousEnd: start,
+  };
+}
+
+const dayLabel = (date) => `${date.getDate()} ${MONTH_SHORT[date.getMonth()]}`;
+const monthKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+function makeBuckets(start, end, granularity) {
+  const buckets = [];
+  if (granularity === 'month') {
+    let cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+    while (cursor <= end) {
+      const next = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+      buckets.push({
+        start: cursor,
+        end: next,
+        key: monthKey(cursor),
+        label: `${MONTH_SHORT[cursor.getMonth()]} ${String(cursor.getFullYear()).slice(-2)}`,
+        revenue: 0,
+        bookings: 0,
+      });
+      cursor = next;
+    }
+    return buckets;
+  }
+
+  const step = granularity === 'week' ? 7 * DAY_MS : DAY_MS;
+  const first = granularity === 'week'
+    ? new Date(start)
+    : new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  for (let i = 0; ; i += 1) {
+    const from = new Date(first.getTime() + i * step);
+    if (from > end) break;
+    buckets.push({
+      start: from,
+      end: new Date(from.getTime() + step),
+      key: from.toISOString().slice(0, 10),
+      label: dayLabel(from),
+      revenue: 0,
+      bookings: 0,
+    });
+  }
+  return buckets;
+}
+
+function addToBuckets(buckets, at, field, amount) {
+  if (!at) return;
+  const time = new Date(at).getTime();
+  for (const bucket of buckets) {
+    if (time >= bucket.start.getTime() && time < bucket.end.getTime()) {
+      bucket[field] += amount;
+      return;
+    }
+  }
+}
+
+function accumulateBookings(buckets, bookings) {
+  for (const booking of bookings) {
+    if (booking.paymentStatus === 'SUCCEEDED' && booking.paidAt) {
+      addToBuckets(buckets, booking.paidAt, 'revenue', Number(booking.grossAmount) || 0);
+    }
+    addToBuckets(buckets, booking.createdAt, 'bookings', 1);
+  }
+}
+
+/**
+ * GET /suppliers/analytics/summary?period=30d|90d|12m
+ *
+ * The Performance page's KPI row. Revenue is money actually paid inside the
+ * window; bookings are bookings created inside it; the previous window is the
+ * same length immediately before it, which is what every delta compares to.
+ * Rating is the one all-time figure here and says so on the card.
+ */
+exports.getAnalyticsSummary = catchAsync(async (req, res) => {
+  const supplierId = req.supplierId;
+  const period = resolveAnalyticsPeriod(req.query.period);
+
+  const [profile, paid, created, lowRatings, reviewCount] = await Promise.all([
+    prisma.supplierProfile.findUnique({
+      where: { userId: supplierId },
+      select: { averageRating: true },
+    }),
+    prisma.booking.findMany({
+      where: {
+        tour: { supplierId },
+        isSimulated: false,
+        paymentStatus: 'SUCCEEDED',
+        paidAt: { gte: period.previousStart, lt: period.end },
+      },
+      select: { grossAmount: true, supplierPayout: true, paidAt: true },
+    }),
+    prisma.booking.findMany({
+      where: {
+        tour: { supplierId },
+        isSimulated: false,
+        createdAt: { gte: period.previousStart, lt: period.end },
+      },
+      select: { status: true, createdAt: true },
+    }),
+    prisma.review.count({ where: { tour: { supplierId }, status: 'APPROVED', rating: { lte: 3 } } }),
+    prisma.review.count({ where: { tour: { supplierId }, status: 'APPROVED' } }),
+  ]);
+
+  const within = (date, from, to) => Boolean(date) && date >= from && date < to;
+
+  const money = (from, to) => paid.reduce((acc, booking) => {
+    if (!within(booking.paidAt, from, to)) return acc;
+    acc.gross += Number(booking.grossAmount) || 0;
+    acc.payout += Number(booking.supplierPayout) || 0;
+    acc.paid += 1;
+    return acc;
+  }, { gross: 0, payout: 0, paid: 0 });
+
+  const currentMoney = money(period.start, period.end);
+  const previousMoney = money(period.previousStart, period.previousEnd);
+
+  const currentBookings = created.filter((b) => within(b.createdAt, period.start, period.end));
+  const previousBookings = created.filter((b) => within(b.createdAt, period.previousStart, period.previousEnd));
+  const countStatus = (status) => currentBookings.filter((b) => b.status === status).length;
+
+  res.json({
+    status: 'success',
+    data: {
+      period: {
+        key: period.key,
+        label: period.label,
+        from: period.start.toISOString(),
+        to: period.end.toISOString(),
+      },
+      revenue: {
+        gross: round2(currentMoney.gross),
+        payout: round2(currentMoney.payout),
+        previousGross: round2(previousMoney.gross),
+        previousPayout: round2(previousMoney.payout),
+        currency: 'USD',
+      },
+      bookings: {
+        total: currentBookings.length,
+        previousTotal: previousBookings.length,
+        confirmed: countStatus('CONFIRMED'),
+        pending: countStatus('PENDING'),
+        completed: countStatus('COMPLETED'),
+        cancelled: countStatus('CANCELLED'),
+        paid: currentMoney.paid,
+        avgValue: currentMoney.paid ? round2(currentMoney.gross / currentMoney.paid) : 0,
+      },
+      rating: {
+        average: Number(profile?.averageRating) || 0,
+        count: reviewCount,
+        lowShare: reviewCount ? round2((lowRatings / reviewCount) * 100) : 0,
+      },
+    },
+  });
+});
+
+/**
+ * GET /suppliers/analytics/timeseries?period=30d|90d|12m
+ *
+ * Buckets by day, week or month to match the window: a 30-day chart with
+ * monthly bars is a single bar. The previous window is returned alongside on
+ * the same index so the chart can draw a comparison without a second call.
+ */
+exports.getAnalyticsTimeseries = catchAsync(async (req, res) => {
+  const supplierId = req.supplierId;
+  const period = resolveAnalyticsPeriod(req.query.period);
+
+  const bookings = await prisma.booking.findMany({
+    where: {
+      tour: { supplierId },
+      isSimulated: false,
+      OR: [
+        { createdAt: { gte: period.previousStart, lt: period.end } },
+        { paidAt: { gte: period.previousStart, lt: period.end } },
+      ],
+    },
+    select: { createdAt: true, paidAt: true, grossAmount: true, paymentStatus: true },
+  });
+
+  const current = makeBuckets(period.start, period.end, period.granularity);
+  const previous = makeBuckets(period.previousStart, period.previousEnd, period.granularity);
+  accumulateBookings(current, bookings);
+  accumulateBookings(previous, bookings);
+
+  // Month edges can leave one extra bucket on either side; align from the end
+  // so the comparison lines up with the bars it sits behind.
+  const offset = previous.length - current.length;
+
+  res.json({
+    status: 'success',
+    data: {
+      period: {
+        key: period.key,
+        label: period.label,
+        from: period.start.toISOString(),
+        to: period.end.toISOString(),
+      },
+      granularity: period.granularity,
+      buckets: current.map(({ label, revenue, bookings: count }) => ({
+        label,
+        revenue: round2(revenue),
+        bookings: count,
+      })),
+      previous: current.map((_, index) => {
+        const bucket = previous[offset + index];
+        return bucket
+          ? { revenue: round2(bucket.revenue), bookings: bucket.bookings }
+          : { revenue: 0, bookings: 0 };
+      }),
+    },
+  });
+});
 
 exports.getMonthlyRevenue = catchAsync(async (req, res) => {
   const supplierId = req.supplierId;
