@@ -301,6 +301,9 @@ enum NotificationType {
   CANCELLATION_CHOICE_REQUIRED // Customer must pick reschedule-or-refund (48h window)
   CANCELLATION_REQUEST_APPROVED // Admin approved the supplier's cancellation request
   CANCELLATION_REQUEST_REJECTED // Admin rejected the supplier's cancellation request
+  SUPPLIER_REFUND_APPROVED // Admin approved a supplier's refund request (money executed)
+  SUPPLIER_REFUND_REJECTED // Admin declined a supplier's refund request
+  SUPPLIER_REFUND_FAILED // Provider refund failed after approval; charge reversed
   INVOICE_GENERATED // Finance v3: a payout-window invoice was generated
   INVOICE_PAID // Finance v3: finance recorded the bank reference (payment sent)
   INVOICE_APPROVED // Finance v3: finance approved the invoice (transfer authorized)

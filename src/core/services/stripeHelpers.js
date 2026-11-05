@@ -816,6 +816,9 @@ async function processStripeWebhook(event) {
   // Set when a booking-topup PaymentIntent is settled (parked change applied);
   // its side-effect emails run after the transaction like every other branch.
   let modifyApplied = null;
+  // Provider refunds that failed asynchronously (refund.failed). Reversed after
+  // commit, because the reversal itself is a separate, idempotent transaction.
+  const failedSupplierRefunds = [];
 
   await prisma.$transaction(async (tx) => {
     // Re-check inside the transaction — serialized by Postgres, no race
@@ -1273,6 +1276,25 @@ async function processStripeWebhook(event) {
         break;
       }
 
+      case 'refund.failed':
+      case 'refund.updated': {
+        // Stripe sends refund.updated with status 'failed', and (newer
+        // accounts) refund.failed. Handle both — the reversal is idempotent.
+        const refund = event.data.object || {};
+        if (String(refund.status || '').toLowerCase() !== 'failed') break;
+        const meta = refund.metadata || {};
+        if (meta.reason !== 'supplier_refund_request' || !meta.requestId) {
+          console.log(` ${event.type} — not a supplier refund request, skipping`);
+          break;
+        }
+        failedSupplierRefunds.push({
+          requestId: meta.requestId,
+          refundId: refund.id || null,
+          failureReason: refund.failure_reason || refund.failure_message || null,
+        });
+        break;
+      }
+
       default:
         console.log(` Unhandled event type: ${event.type}`);
     }
@@ -1299,6 +1321,21 @@ async function processStripeWebhook(event) {
     paymentIntentId: reconciledPaymentIntentId || event.data.object?.id,
     source: 'webhook',
   });
+
+  // ── Failed provider refunds: undo the approval ──────────────────────
+  // A refund Stripe accepted as pending can fail later. By then the approval
+  // has flipped the booking, written the supplier charge and emailed the
+  // supplier that the money is on its way — so the reversal restores the
+  // booking, drops the charge and tells the supplier. Ops is alerted to retry
+  // the traveller's refund by hand.
+  for (const failed of failedSupplierRefunds) {
+    try {
+      const { reverseFailedRefund } = require('./supplierRefundRequest');
+      await reverseFailedRefund(failed);
+    } catch (err) {
+      console.error('[Webhook] Supplier refund reversal failed:', err.message);
+    }
+  }
 
   // Close the hosted-attempt row for this session. The booking itself was
   // settled above by handlePaymentSucceeded; this only keeps attention and the

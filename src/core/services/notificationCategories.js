@@ -43,6 +43,9 @@ const CATEGORY_BY_TYPE = {
   PAYOUT_REQUEST_REJECTED: 'payments',
   REFUND_ISSUED: 'payments',
   REFUND_CLAIM: 'payments',
+  SUPPLIER_REFUND_APPROVED: 'payments',
+  SUPPLIER_REFUND_REJECTED: 'payments',
+  SUPPLIER_REFUND_FAILED: 'payments',
 
   // System / account / moderation
   SYSTEM_ALERT: 'systemAlerts',

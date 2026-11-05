@@ -469,13 +469,22 @@ function bookingSummaryCard({ statusText = 'Cancelled', statusTone = 'danger', r
 /**
  * Full-bleed tinted refund band. GYG puts the refund amount on a band that
  * touches both canvas edges — the single most scannable element in the email.
+ *
+ * `tone`: 'accent' (money going back), 'warning' (an attempted refund that did
+ * not complete). A refund that failed must never wear the success band.
  */
-function refundBand({ amount = '{{refundAmountLabel}}', eyebrow = 'Refund', note } = {}) {
+function refundBand({ amount = '{{refundAmountLabel}}', eyebrow = 'Refund', note, tone = 'accent' } = {}) {
+  const bands = {
+    accent: { bg: '{{accentSoft}}', border: '{{accentSoft}}', eyebrow: '{{accentDark}}' },
+    warning: { bg: GYG.warningSoft, border: '#F3E2BF', eyebrow: GYG.warningInk },
+    danger: { bg: GYG.dangerSoft, border: '#F3D3D0', eyebrow: GYG.dangerInk },
+  };
+  const t = bands[tone] || bands.accent;
   return `
   <tr><td style="padding:30px 0 0 0;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:{{accentSoft}};border-top:1px solid {{accentSoft}};border-bottom:1px solid {{accentSoft}};">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:${t.bg};border-top:1px solid ${t.border};border-bottom:1px solid ${t.border};">
       <tr><td style="padding:22px 40px;" class="pad">
-        <div style="font-family:${FONT};font-size:11px;font-weight:800;letter-spacing:0.9px;text-transform:uppercase;color:{{accentDark}};line-height:1;">${eyebrow}</div>
+        <div style="font-family:${FONT};font-size:11px;font-weight:800;letter-spacing:0.9px;text-transform:uppercase;color:${t.eyebrow};line-height:1;">${eyebrow}</div>
         <div class="font-main dm-text" style="padding-top:8px;font-family:${FONT};font-size:32px;font-weight:800;color:${GYG.ink};line-height:1.1;letter-spacing:-0.5px;">${amount}</div>
         ${note ? `<div class="dm-text" style="padding-top:8px;font-family:${FONT};font-size:13px;color:${GYG.body};line-height:1.6;">${note}</div>` : ''}
       </td></tr>

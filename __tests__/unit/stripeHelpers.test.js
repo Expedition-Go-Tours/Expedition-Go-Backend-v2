@@ -29,6 +29,9 @@ jest.mock('../../src/core/services/redisClient', () => ({
   del: jest.fn(async () => undefined),
 }));
 jest.mock('../../src/core/services/emailService', () => ({}));
+jest.mock('../../src/core/services/supplierRefundRequest', () => ({
+  reverseFailedRefund: jest.fn(() => Promise.resolve({ reversed: true })),
+}));
 jest.mock('../../src/core/services/getConfig', () => jest.fn((key, defaultValue) => Promise.resolve(defaultValue)));
 jest.mock('../../src/core/services/discordNotifier', () => ({
   notifyDiscord: jest.fn(() => Promise.resolve()),
@@ -378,6 +381,41 @@ describe('processStripeWebhook', () => {
         }),
       }),
     );
+  });
+
+  it('reverses a supplier refund approval when the provider refund fails', async () => {
+    const { reverseFailedRefund } = require('../../src/core/services/supplierRefundRequest');
+    reverseFailedRefund.mockClear();
+    const stripeEvent = mockStripeEvent('refund.failed', {
+      id: 're_1',
+      status: 'failed',
+      failure_reason: 'insufficient_funds',
+      metadata: { reason: 'supplier_refund_request', requestId: 'sr-1', bookingId: 'booking-1' },
+    });
+
+    await processStripeWebhook(stripeEvent);
+
+    expect(reverseFailedRefund).toHaveBeenCalledWith({
+      requestId: 'sr-1',
+      refundId: 're_1',
+      failureReason: 'insufficient_funds',
+    });
+    // The booking is the refund service's to restore, not the webhook's.
+    expect(tx.booking.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('ignores a failed refund that is not a supplier refund request', async () => {
+    const { reverseFailedRefund } = require('../../src/core/services/supplierRefundRequest');
+    reverseFailedRefund.mockClear();
+    const stripeEvent = mockStripeEvent('refund.failed', {
+      id: 're_2',
+      status: 'failed',
+      metadata: { reason: 'booking_modify' },
+    });
+
+    await processStripeWebhook(stripeEvent);
+
+    expect(reverseFailedRefund).not.toHaveBeenCalled();
   });
 
   it('handles checkout.session.completed by attaching the PI and settling the booking', async () => {

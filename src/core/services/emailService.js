@@ -1313,12 +1313,18 @@ async function sendRefundProcessingEmail(booking, { refundReference } = {}) {
   });
 }
 
-async function sendRefundCompletedEmail(booking, { refundReference, refundedAt } = {}) {
+async function sendRefundCompletedEmail(booking, { refundReference, refundedAt, refundAmount } = {}) {
   const b = await resolveBookingContext(booking);
   const base = await buildBookingBase(b);
   const data = {
     ...base,
-    refundAmountLabel: fmt.formatCurrency(b.refundAmount ?? b.grossAmount, b.currency),
+    // The booking row carries the CUMULATIVE refunded amount. A partial refund
+    // on a previously part-refunded booking must quote what this email is
+    // about, so callers pass the executed amount when they know it.
+    refundAmountLabel: fmt.formatCurrency(
+      refundAmount != null ? refundAmount : (b.refundAmount ?? b.grossAmount),
+      b.currency,
+    ),
     refundReference: refundReference || '',
     refundedAtLabel: fmt.formatDateTime(refundedAt || b.refundedAt || new Date()),
   };
@@ -1327,6 +1333,72 @@ async function sendRefundCompletedEmail(booking, { refundReference, refundedAt }
     subject: 'Your refund has been issued',
     key: 'refund-completed',
     data,
+  });
+}
+
+/**
+ * Customer-facing: a refund has been REQUESTED for their booking but not
+ * decided. No money has moved, and the copy must not imply it will.
+ *
+ * Sent when a supplier files a request, so the traveller is not surprised by a
+ * refund (or by its absence) later. The decision email follows — approved
+ * (`refund-completed`) or declined (`customer-refund-declined`).
+ */
+async function sendCustomerRefundRequestedEmail(requestId) {
+  const request = await loadRefundRequestForEmail(requestId);
+  if (!request) return null;
+
+  const b = await resolveBookingContext(request.bookingId);
+  const base = await buildBookingBase(b);
+  if (!base.customerEmail) return null;
+
+  const preview = request.preview || {};
+  const currency = preview.currency || b.currency || 'USD';
+  const origin = emailUrls.bookingClientOrigin(b);
+
+  return sendRendered({
+    to: base.customerEmail,
+    subject: `We’re reviewing a refund for ${b.bookingNumber}`,
+    key: 'customer-refund-requested',
+    data: {
+      ...base,
+      refundAmountLabel: fmt.formatCurrency(preview.proposed ?? 0, currency),
+      manageUrl: emailUrls.manageBooking(b.id, origin),
+    },
+    opts: {
+      brandKey: base.brandKey,
+      preheader: `A refund request for ${b.tour?.title || 'your booking'} is being reviewed`,
+    },
+  });
+}
+
+/**
+ * Customer-facing: the review finished and the refund was not approved. Sends
+ * only after a request email, so the traveller is never left waiting on a
+ * decision they were told about. The supplier's internal decision note is not
+ * included.
+ */
+async function sendCustomerRefundDeclinedEmail(requestId) {
+  const request = await loadRefundRequestForEmail(requestId);
+  if (!request) return null;
+
+  const b = await resolveBookingContext(request.bookingId);
+  const base = await buildBookingBase(b);
+  if (!base.customerEmail) return null;
+
+  const origin = emailUrls.bookingClientOrigin(b);
+  return sendRendered({
+    to: base.customerEmail,
+    subject: `Refund review update — ${b.bookingNumber}`,
+    key: 'customer-refund-declined',
+    data: {
+      ...base,
+      manageUrl: emailUrls.manageBooking(b.id, origin),
+    },
+    opts: {
+      brandKey: base.brandKey,
+      preheader: 'The refund requested for your booking was not approved',
+    },
   });
 }
 
@@ -1714,47 +1786,133 @@ async function sendSupplierRefundRequestedEmail(requestId) {
   });
 }
 
-/** The supplier's decision notice — approved or rejected. */
+/** The supplier's decision notice — approved, declined or provider-failed. */
 async function sendSupplierRefundDecisionEmail(requestId) {
   const request = await loadRefundRequestForEmail(requestId);
-  if (!request || !request.supplier?.email) return null;
+  if (!request) return null;
 
   const b = await resolveBookingContext(request.bookingId);
   const base = await buildBookingBase(b);
   const preview = request.preview || {};
   const currency = preview.currency || b.currency || 'USD';
   const approved = request.status === 'COMPLETED';
+  const failed = request.status === 'FAILED';
+  const rejected = !approved && !failed;
+
+  const charge = Number(preview.charge) || 0;
+  const chargeApplied = approved && charge > 0;
+  const hadCharge = charge > 0;
+  const refundAmountLabel = fmt.formatCurrency(preview.proposed ?? request.refundedAmount ?? 0, currency);
+  const chargeLabel = fmt.formatCurrency(charge, currency);
+  const supplierName = base.supplierName || 'there';
+
+  // Available balance after the charge landed — it is an OPEN supplierCharge by
+  // now, so the same predicate the finance page uses answers this. The email
+  // still sends without it (the figure is reassurance, not the decision).
+  let balanceAfterLabel = '—';
+  try {
+    const { openBalance } = require('./supplierRefundRequest');
+    const balance = await openBalance(request.supplierId, currency);
+    if (balance && Number.isFinite(balance.available)) {
+      balanceAfterLabel = fmt.formatCurrency(balance.available, currency);
+    }
+  } catch (err) {
+    console.warn('[Email] supplier refund balance failed:', err.message);
+  }
+
+  const statusMeta = {
+    COMPLETED: { label: 'Completed', tone: 'success' },
+    REFUNDED: { label: 'Refunded', tone: 'neutral' },
+    NO_SHOW: { label: 'No-show', tone: 'warning' },
+    CANCELLED: { label: 'Cancelled', tone: 'neutral' },
+    CONFIRMED: { label: 'Confirmed', tone: 'success' },
+    PENDING: { label: 'Pending', tone: 'warning' },
+  }[String(b.status || '').toUpperCase()] || { label: 'Booking', tone: 'neutral' };
 
   const data = {
     ...base,
     requestNumber: request.requestNumber,
     approved,
-    decisionTitle: approved ? 'Refund approved' : 'Refund request declined',
-    decisionBadge: approved ? 'Approved' : 'Declined',
-    decisionTone: approved ? 'success' : 'danger',
-    decisionBody: approved
-      ? `Your refund request for <strong>${b.tour?.title || 'the booking'}</strong> was approved and the traveller has been refunded. The cost is on your balance, not your bank account.`
-      : `Your refund request for <strong>${b.tour?.title || 'the booking'}</strong> was not approved. The reason is below.`,
-    refundAmountLabel: fmt.formatCurrency(preview.proposed ?? 0, currency),
-    chargeLabel: fmt.formatCurrency(preview.charge ?? 0, currency),
+    rejected,
+    failed,
+    chargeApplied,
+    hadCharge,
+    bookingStatusLabel: statusMeta.label,
+    bookingStatusTone: statusMeta.tone,
+    refundKindLabel: preview.isFull ? 'Full booking refund' : 'Partial refund',
+    refundAmountLabel,
+    chargeLabel,
+    reversedChargeLabel: chargeLabel,
+    balanceAfterLabel,
     reasonLabel: refundReasonLabel(request.payload?.reasonCode),
+    operatedLabel: request.payload?.operated ? 'Yes' : 'No',
+    attendedLabel: request.payload?.attended ? 'Yes' : 'No',
+    filedAtLabel: fmt.formatLongDate(request.createdAt),
     decisionNote: request.decisionNote || '',
-    supplierBookingUrl: `${SUPPLIER_BASE}/bookings?booking=${encodeURIComponent(request.bookingId)}`,
-    chargesUrl: `${SUPPLIER_BASE}/finance`,
+    supplierBookingUrl: `${SUPPLIER_BASE}/bookings?bookingId=${encodeURIComponent(request.bookingId)}`,
+    // Platform charges are listed on the payouts tab; /finance alone opens
+    // Earnings, where the charge the email is talking about is not visible.
+    chargesUrl: `${SUPPLIER_BASE}/finance?tab=payouts`,
   };
 
+  if (approved) {
+    data.decisionBadge = 'Approved';
+    data.decisionTone = 'success';
+    data.decisionTitle = 'Refund approved';
+    data.decisionBody = chargeApplied
+      ? `Hello ${supplierName}, we approved refund request <strong>${request.requestNumber}</strong>. ${refundAmountLabel} has been returned to the traveller, and ${chargeLabel} is now on your balance.`
+      : `Hello ${supplierName}, we approved refund request <strong>${request.requestNumber}</strong>. ${refundAmountLabel} has been returned to the traveller. Nothing is charged to you.`;
+    data.chargeTitle = chargeApplied ? 'Netted off your next payout' : 'No charge to your balance';
+    data.chargeBody = chargeApplied
+      ? `${chargeLabel} appears in your charges and settles against your next payout or invoice. It is never taken from your bank account.`
+      : 'This booking had not been paid out to you yet, so the refund comes out of the platform balance and there is nothing to recover.';
+  } else if (failed) {
+    data.decisionBadge = 'Update';
+    data.decisionTone = 'warning';
+    data.decisionTitle = 'We couldn’t complete this refund';
+    data.decisionBody = `Hello ${supplierName}, the ${refundAmountLabel} refund for request <strong>${request.requestNumber}</strong> did not go through with our payment provider. ${
+      charge > 0
+        ? `The ${chargeLabel} charge raised on approval has been reversed in full.`
+        : 'Nothing was charged to your balance.'
+    } Our team is reissuing the traveller’s refund by hand — nothing is needed from you.`;
+    data.chargeTitle = 'Charge reversed';
+    data.chargeBody = charge > 0
+      ? `The ${chargeLabel} charge is no longer owed and will not appear on your next payout.`
+      : 'Your balance never carried a charge for this refund.';
+  } else {
+    data.decisionBadge = 'Declined';
+    data.decisionTone = 'danger';
+    data.decisionTitle = 'Refund request declined';
+    data.decisionBody = `Hello ${supplierName}, after reviewing request <strong>${request.requestNumber}</strong> we decided not to approve this refund. No money was refunded and nothing was charged to your balance.`;
+    data.chargeTitle = 'Your balance is unchanged';
+    data.chargeBody = 'Nothing was refunded and nothing was charged.';
+  }
+
+  // Owner plus every verified notification address that opted into payments.
+  const audience = await supplierRecipientList(request.supplierId, 'payments');
+  const to = audience.to.length
+    ? audience.to
+    : (request.supplier?.email ? [request.supplier.email] : []);
+  if (!to.length) return null;
+
   return sendRendered({
-    to: request.supplier.email,
+    to,
+    tagsByRecipient: audience.tagsByRecipient,
+    recipient: 'supplier',
     subject: approved
-      ? `Refund approved — ${request.requestNumber}`
-      : `Refund request declined — ${request.requestNumber}`,
+      ? `Refund approved — ${refundAmountLabel} for ${b.bookingNumber}`
+      : failed
+        ? `Refund update — ${b.bookingNumber}`
+        : `Refund request declined — ${request.requestNumber}`,
     key: 'supplier-refund-decision',
     data,
     opts: {
       brandKey: base.brandKey,
       preheader: approved
-        ? `${data.refundAmountLabel} refunded to the traveller`
-        : 'The reason is included in this email',
+        ? `${refundAmountLabel} refunded to the traveller`
+        : failed
+          ? 'The refund did not go through; your charge is reversed'
+          : 'The reason is included in this email',
     },
   });
 }
@@ -3044,6 +3202,8 @@ module.exports = {
   normalizeCancellationOptions,
   sendRefundProcessingEmail,
   sendRefundCompletedEmail,
+  sendCustomerRefundRequestedEmail,
+  sendCustomerRefundDeclinedEmail,
   sendSupplierChangedBookingEmail,
   sendSupplierCancelledBookingEmail,
   sendSupplierCancellationFeeEmail,

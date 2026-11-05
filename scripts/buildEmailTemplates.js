@@ -731,9 +731,80 @@ const refundCompleted = {
   },
 };
 
+/**
+ * A supplier has asked us to refund this booking. No money has moved and none
+ * is promised: the copy says "reviewing" and the decision email follows.
+ */
+const customerRefundRequested = {
+  key: 'customer-refund-requested',
+  name: 'Customer · Refund request under review',
+  build() {
+    return B.shell('We’re reviewing your refund', `
+      ${B.statusRow('In review', 'info')}
+      ${B.displayHeading({
+        text: 'We’re reviewing your refund',
+        subtext: '{{tourTitle}} &middot; {{dateLabel}}',
+      })}
+      ${B.textBlock('Hello {{customerName}}, a refund request has been raised for your booking. Our team is checking it now — nothing has moved yet, and you do not need to do anything.')}
+      ${B.bookingSummaryCard({
+        statusText: 'In review',
+        statusTone: 'info',
+        rows: [
+          { label: 'Booking reference', value: '{{bookingNumber}}' },
+          { label: 'Activity date', value: '{{dateLabel}}' },
+          { label: 'Travellers', value: '{{travelersLabel}}' },
+          { label: 'Booking total', value: '{{totalLabel}}', strong: true },
+        ],
+      })}
+      ${B.detailCard([
+        { label: 'Refund requested', value: '{{refundAmountLabel}}' },
+        { label: 'Status', value: 'In review' },
+      ])}
+      ${B.sectionHeading('What happens next')}
+      ${B.stepList([
+        { title: 'We review the request', body: 'Our team checks it against the booking and the trip.' },
+        { title: 'You get a decision by email', body: 'We will write to you either way — there is no need to chase us.' },
+        { title: 'If approved, the money is returned', body: 'It goes back to your original payment method, usually within 5&ndash;10 business days.' },
+      ])}
+      ${B.pillButton('View booking', '{{manageUrl}}')}
+    `, { variant: 'gyg', footer: 'customer' });
+  },
+};
+
+/** The review finished without a refund. Closes the loop opened above. */
+const customerRefundDeclined = {
+  key: 'customer-refund-declined',
+  name: 'Customer · Refund request not approved',
+  build() {
+    return B.shell('Refund review complete', `
+      ${B.statusRow('Update', 'neutral')}
+      ${B.displayHeading({
+        text: 'Refund review complete',
+        subtext: '{{tourTitle}} &middot; {{dateLabel}}',
+      })}
+      ${B.textBlock('Hello {{customerName}}, we have finished reviewing the refund requested for your booking and we are not able to approve it. Your booking is unchanged.')}
+      ${B.bookingSummaryCard({
+        statusText: 'Unchanged',
+        statusTone: 'neutral',
+        rows: [
+          { label: 'Booking reference', value: '{{bookingNumber}}' },
+          { label: 'Activity date', value: '{{dateLabel}}' },
+          { label: 'Travellers', value: '{{travelersLabel}}' },
+          { label: 'Booking total', value: '{{totalLabel}}', strong: true },
+        ],
+      })}
+      ${B.policyPanel({
+        title: 'Have more information?',
+        body: 'If there is something we have not seen, reply to this email and our team will look again. You can also reach us at {{supportEmail}}.',
+        tone: 'neutral',
+      })}
+      ${B.pillButton('View booking', '{{manageUrl}}')}
+    `, { variant: 'gyg', footer: 'customer' });
+  },
+};
+
 const supplierChangedBooking = {
-  key: 'supplier-changed-booking',
-  name: 'Customer · Supplier changed booking',
+  key: 'supplier-changed-booking',  name: 'Customer · Supplier changed booking',
   build() {
     return B.shell('Important update to your booking', `
       ${B.hero({ heading: 'Your booking details have changed', badgeText: 'Important', badgeColor: 'info' })}
@@ -1064,30 +1135,124 @@ const supplierRefundDecision = {
   name: 'Supplier · Refund request decision',
   build() {
     return B.shell('{{decisionTitle}}', `
-      ${B.mediaHeader({
-        imageVar: 'tourImageUrl',
-        badgeText: '{{decisionBadge}}',
-        badgeColor: '{{decisionTone}}',
-        heading: '{{decisionTitle}}',
-        subtitle: '{{tourTitle}} &middot; {{dateLabel}}',
+      {{#if approved}}${B.statusRow('Approved', 'success')}{{/if}}
+      {{#if failed}}${B.statusRow('Update', 'warning')}{{/if}}
+      {{#if rejected}}${B.statusRow('Declined', 'danger')}{{/if}}
+      ${B.displayHeading({
+        text: '{{decisionTitle}}',
+        subtext: '{{tourTitle}} &middot; {{dateLabel}}',
       })}
-      ${B.referenceBar({ reference: '{{requestNumber}}', right: '{{bookingNumber}}' })}
-      ${B.textBlock('{{decisionBody}}', { center: false })}
-      ${B.sectionTitle('Request summary')}
+      {{#if approved}}
+      ${B.refundBand({
+        eyebrow: 'Traveller refund',
+        amount: '{{refundAmountLabel}}',
+        note: '{{refundKindLabel}}. Returned to the traveller&rsquo;s original payment method.',
+      })}
+      {{/if}}
+      {{#if failed}}
+      ${B.refundBand({
+        eyebrow: 'Refund not completed',
+        amount: '{{refundAmountLabel}}',
+        note: 'The traveller did not receive this refund, and you are not charged for it.',
+        tone: 'warning',
+      })}
+      {{/if}}
+      ${B.textBlock('{{decisionBody}}')}
+
+      ${B.bookingSummaryCard({
+        statusText: '{{bookingStatusLabel}}',
+        statusTone: 'neutral',
+        rows: [
+          { label: 'Booking reference', value: '{{bookingNumber}}' },
+          { label: 'Activity date', value: '{{dateLabel}}' },
+          { label: 'Travellers', value: '{{travelersLabel}}' },
+          { label: 'Booking total', value: '{{totalLabel}}', strong: true },
+        ],
+      })}
+
+      ${B.sectionHeading('What this means for you')}
+      {{#if rejected}}
       ${B.detailCard([
-        { label: 'Traveller refund', value: '{{refundAmountLabel}}' },
-        { label: 'Charged to your balance', value: '{{chargeLabel}}' },
-        { label: 'Reason', value: '{{reasonLabel}}' },
+        { label: 'Refund requested', value: '{{refundAmountLabel}}' },
+        { label: 'Reason given', value: '{{reasonLabel}}' },
+      ])}
+      ${B.policyPanel({
+        title: 'Nothing has changed',
+        body: 'No money was refunded and nothing was charged to your balance. The booking stays as it is.',
+        tone: 'neutral',
+      })}
+      {{else}}
+      {{#if failed}}
+      ${B.detailCard([
+        { label: 'Refund attempted', value: '{{refundAmountLabel}}' },
+        { label: 'Charge raised on approval', value: '{{chargeLabel}}' },
+        { label: 'Reason given', value: '{{reasonLabel}}' },
+      ])}
+      ${B.policyPanel({ title: '{{chargeTitle}}', body: '{{chargeBody}}', tone: 'warning' })}
+      {{else}}
+      ${B.detailCard([
+        { label: 'Refund to the traveller', value: '{{refundAmountLabel}}' },
+        { label: 'Charged to your balance', value: '{{chargeLabel}}', if: '{{chargeApplied}}' },
+        { label: 'Balance available now', value: '{{balanceAfterLabel}}' },
+        { label: 'Reason given', value: '{{reasonLabel}}' },
+      ])}
+      {{#if chargeApplied}}
+      ${B.policyPanel({ title: '{{chargeTitle}}', body: '{{chargeBody}}', tone: 'info' })}
+      {{else}}
+      ${B.policyPanel({ title: '{{chargeTitle}}', body: '{{chargeBody}}', tone: 'success' })}
+      {{/if}}
+      {{/if}}
+      {{/if}}
+
+      ${B.sectionHeading('What happens next')}
+      {{#if approved}}
+      {{#if chargeApplied}}
+      ${B.stepList([
+        { title: 'The refund is on its way', body: 'It returns to the traveller&rsquo;s original payment method, usually within 5&ndash;10 business days.' },
+        { title: 'The charge is on your balance', body: '{{chargeLabel}} appears in your charges list straight away.' },
+        { title: 'It settles with your next payout', body: 'The charge is deducted from your next payout or invoice, never from your bank account.' },
+      ])}
+      {{else}}
+      ${B.stepList([
+        { title: 'The refund is on its way', body: 'It returns to the traveller&rsquo;s original payment method, usually within 5&ndash;10 business days.' },
+        { title: 'Your balance is unchanged', body: 'This booking had not been paid out to you yet, so there is nothing to recover.' },
+      ])}
+      {{/if}}
+      {{/if}}
+      {{#if failed}}
+      {{#if hadCharge}}
+      ${B.stepList([
+        { title: 'The charge has been reversed', body: 'It is no longer owed and will not appear on your next payout.' },
+        { title: 'Our team is following up', body: 'We are reissuing the traveller&rsquo;s refund by hand. Nothing is needed from you.' },
+      ])}
+      {{else}}
+      ${B.stepList([
+        { title: 'Nothing was charged', body: 'Your balance is unaffected by this refund.' },
+        { title: 'Our team is following up', body: 'We are reissuing the traveller&rsquo;s refund by hand. Nothing is needed from you.' },
+      ])}
+      {{/if}}
+      {{/if}}
+      {{#if rejected}}
+      ${B.stepList([
+        { title: 'Nothing to pay', body: 'The booking and your balance stay exactly as they were.' },
+        { title: 'If you have new evidence', body: 'Reply to this email or contact support and our team will review it again.' },
+      ])}
+      {{/if}}
+
+      ${B.sectionHeading('Your request')}
+      ${B.detailCard([
+        { label: 'Request reference', value: '{{requestNumber}}' },
+        { label: 'Filed', value: '{{filedAtLabel}}' },
+        { label: 'Tour operated', value: '{{operatedLabel}}' },
+        { label: 'Customer attended', value: '{{attendedLabel}}' },
       ])}
       {{#if decisionNote}}
       ${B.callout('Note from our team: <strong>{{decisionNote}}</strong>', 'info')}
       {{/if}}
-      {{#if approved}}
-      ${B.callout('The charge appears in your charges list and is settled against your next payout. It is not taken from your bank account.', 'info')}
-      {{/if}}
-      ${B.buttons([
+
+      ${B.pillButtons([
         { label: 'View booking', href: '{{supplierBookingUrl}}' },
-        { label: 'Your charges', href: '{{chargesUrl}}', kind: 'secondary' },
+        { label: 'View charges', href: '{{chargesUrl}}', kind: 'secondary' },
       ])}
     `, { variant: 'gyg', footer: 'supplier' });
   },
@@ -1955,6 +2120,8 @@ const TEMPLATE_DEFS = [
   customerCancelledNoRefund,
   refundProcessing,
   refundCompleted,
+  customerRefundRequested,
+  customerRefundDeclined,
   supplierChangedBooking,
   supplierCancelledBooking,
   supplierCancellationFee,

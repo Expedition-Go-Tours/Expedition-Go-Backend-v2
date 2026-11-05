@@ -357,6 +357,31 @@ const SAMPLE_OVERRIDES = {
   'supplier-refund-decision': {
     refundAmountLabel: '$151.22',
     chargeLabel: '$120.98',
+    reversedChargeLabel: '$120.98',
+    approved: true,
+    rejected: false,
+    failed: false,
+    chargeApplied: true,
+    hadCharge: true,
+    bookingStatusLabel: 'Completed',
+    bookingStatusTone: 'success',
+    refundKindLabel: 'Full booking refund',
+    balanceAfterLabel: '$2,728.84',
+    reasonLabel: 'Service quality fell short',
+    operatedLabel: 'Yes',
+    attendedLabel: 'No',
+    filedAtLabel: '5 November 2026',
+    decisionBadge: 'Approved',
+    decisionTone: 'success',
+    decisionTitle: 'Refund approved',
+    decisionBody:
+      'Hello Sample Experiences Ltd, we approved refund request <strong>SR-20261102-4F2A</strong>. $151.22 has been returned to the traveller, and $120.98 is now on your balance.',
+    chargeTitle: 'Netted off your next payout',
+    chargeBody:
+      '$120.98 appears in your charges and settles against your next payout or invoice. It is never taken from your bank account.',
+    decisionNote: '',
+    supplierBookingUrl: 'https://supplier.travioghana.com/bookings?bookingId=b1',
+    chargesUrl: 'https://supplier.travioghana.com/finance?tab=payouts',
   },
 };
 

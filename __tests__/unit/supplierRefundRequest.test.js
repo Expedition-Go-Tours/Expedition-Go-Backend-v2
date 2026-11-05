@@ -20,7 +20,7 @@ jest.mock('../../src/core/services/prismaClient', () => ({
     update: jest.fn(),
     updateMany: jest.fn(),
   },
-  supplierCharge: { create: jest.fn(), aggregate: jest.fn() },
+  supplierCharge: { create: jest.fn(), update: jest.fn(), aggregate: jest.fn() },
 }));
 
 jest.mock('../../src/core/services/payments', () => ({
@@ -35,6 +35,8 @@ jest.mock('../../src/core/services/emailService', () => ({
   sendSupplierRefundRequestedEmail: jest.fn(() => Promise.resolve()),
   sendSupplierRefundDecisionEmail: jest.fn(() => Promise.resolve()),
   sendRefundCompletedEmail: jest.fn(() => Promise.resolve()),
+  sendCustomerRefundRequestedEmail: jest.fn(() => Promise.resolve()),
+  sendCustomerRefundDeclinedEmail: jest.fn(() => Promise.resolve()),
 }));
 
 jest.mock('../../src/core/services/ga4Measurement', () => ({
@@ -45,8 +47,19 @@ jest.mock('../../src/core/services/financeHelpers', () => ({
   eligibleBookingsWhere: jest.fn(() => ({ payoutStatus: 'ELIGIBLE' })),
 }));
 
+jest.mock('../../src/core/services/queue', () => ({
+  enqueueNotification: jest.fn(() => Promise.resolve()),
+  enqueueEmail: jest.fn(() => Promise.resolve()),
+}));
+
+jest.mock('../../src/core/services/adminNotificationService', () => ({
+  notifyAdmin: jest.fn(() => Promise.resolve()),
+}));
+
 const prisma = require('../../src/core/services/prismaClient');
 const { refundBookingPayment } = require('../../src/core/services/payments');
+const { enqueueNotification } = require('../../src/core/services/queue');
+const { notifyAdmin } = require('../../src/core/services/adminNotificationService');
 const service = require('../../src/core/services/supplierRefundRequest');
 
 const past = new Date(Date.now() - 48 * 3600 * 1000);
@@ -211,8 +224,15 @@ describe('createRefundRequest', () => {
     })).rejects.toThrow(/reason/i);
   });
 
-  it('infers "did not attend" when the tour did not operate', async () => {
-    // The modal hides the second question in this case; the server must not
+  it('emails the traveller that a refund request is under review', async () => {
+    const { sendCustomerRefundRequestedEmail } = require('../../src/core/services/emailService');
+    await service.createRefundRequest({
+      bookingId: 'b1', supplierId: 's1', actor: { id: 'u1' }, payload: payload(),
+    });
+    expect(sendCustomerRefundRequestedEmail).toHaveBeenCalledWith('r1');
+  });
+
+  it('infers "did not attend" when the tour did not operate', async () => {    // The modal hides the second question in this case; the server must not
     // leave the field to chance, and must record that it was inferred.
     await service.createRefundRequest({
       bookingId: 'b1', supplierId: 's1', actor: { id: 'u1' },
@@ -420,6 +440,15 @@ describe('approveRefundRequest', () => {
     expect(refundBookingPayment.mock.calls[0][2].idempotencyKey).toBe('supplier-refund-r1');
   });
 
+  it('sends the traveller the executed amount, not the booking’s cumulative total', async () => {
+    const { sendRefundCompletedEmail } = require('../../src/core/services/emailService');
+    await service.approveRefundRequest({ requestId: 'r1', adminUser: { id: 'a1' } });
+    expect(sendRefundCompletedEmail).toHaveBeenCalledWith(
+      'b1',
+      expect.objectContaining({ refundAmount: 151.22 }),
+    );
+  });
+
   it('selects every booking field the eligibility check reads', async () => {
     // `status` is the one that went missing: Prisma then returned undefined and
     // the eligibility check rejected every booking, whatever its real state.
@@ -505,6 +534,12 @@ describe('rejectRefundRequest', () => {
     expect(prisma.supplierRefundRequest.update).not.toHaveBeenCalled();
   });
 
+  it('closes the loop for the traveller after a decline', async () => {
+    const { sendCustomerRefundDeclinedEmail } = require('../../src/core/services/emailService');
+    await service.rejectRefundRequest({ requestId: 'r1', adminUser: { id: 'a1' }, note: 'No evidence' });
+    expect(sendCustomerRefundDeclinedEmail).toHaveBeenCalledWith('r1');
+  });
+
   it('records the decision and the note only when still pending', async () => {
     await service.rejectRefundRequest({ requestId: 'r1', adminUser: { id: 'a1' }, note: 'No evidence provided' });
     expect(prisma.supplierRefundRequest.updateMany).toHaveBeenCalledWith({
@@ -520,5 +555,150 @@ describe('rejectRefundRequest', () => {
     await expect(service.rejectRefundRequest({
       requestId: 'r1', adminUser: { id: 'a1' }, note: 'Late rejection',
     })).rejects.toThrow(/not awaiting a decision.*COMPLETED/i);
+  });
+});
+
+describe('supplier refund decisions reach the bell', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.$transaction.mockImplementation(async (fn) => fn(prisma));
+    prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'r1' }]);
+    prisma.booking.update.mockResolvedValue({});
+    prisma.supplierCharge.create.mockResolvedValue({ id: 'c1' });
+    refundBookingPayment.mockResolvedValue({ id: 're_1', status: 'succeeded' });
+  });
+
+  it('notifies the supplier when a refund is approved', async () => {
+    prisma.supplierRefundRequest.findUnique.mockResolvedValue({
+      id: 'r1', requestNumber: 'SR-1', bookingId: 'b1', supplierId: 's1',
+      status: 'PENDING_APPROVAL', payload: payload({ value: 100 }), preview: {},
+    });
+    prisma.booking.findUnique.mockImplementation(async ({ select } = {}) => {
+      const full = booking({ status: 'COMPLETED', payoutStatus: 'PAID', refundAmount: 0 });
+      return select
+        ? Object.fromEntries(Object.keys(select).filter((k) => select[k]).map((k) => [k, full[k]]))
+        : full;
+    });
+    prisma.supplierRefundRequest.update.mockImplementation(async ({ data }) => ({
+      id: 'r1', requestNumber: 'SR-1', bookingId: 'b1', supplierId: 's1',
+      status: data.status, decisionNote: data.decisionNote, preview: data.preview || {},
+      booking: { id: 'b1', bookingNumber: 'TRG-1', tour: { title: 'Tour' } },
+    }));
+
+    await service.approveRefundRequest({ requestId: 'r1', adminUser: { id: 'a1' } });
+
+    expect(enqueueNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 's1',
+        type: 'SUPPLIER_REFUND_APPROVED',
+        dedupeKey: 'supplier-refund-r1-approved',
+        data: expect.objectContaining({ bookingId: 'b1', refundRequestId: 'r1' }),
+      }),
+    );
+  });
+
+  it('notifies the supplier when a refund is declined — no money moved', async () => {
+    prisma.supplierRefundRequest.updateMany.mockResolvedValue({ count: 1 });
+    prisma.supplierRefundRequest.findUnique.mockResolvedValue({
+      id: 'r1', requestNumber: 'SR-1', bookingId: 'b1', supplierId: 's1',
+      status: 'REJECTED', decisionNote: 'Tour operated as booked',
+      booking: { id: 'b1', tour: { title: 'Tour' } },
+    });
+
+    await service.rejectRefundRequest({ requestId: 'r1', adminUser: { id: 'a1' }, note: 'Tour operated as booked' });
+
+    expect(enqueueNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'SUPPLIER_REFUND_REJECTED',
+        dedupeKey: 'supplier-refund-r1-rejected',
+      }),
+    );
+    const { message } = enqueueNotification.mock.calls.at(-1)[0];
+    expect(message).toMatch(/no money moved/i);
+    expect(message).toMatch(/Tour operated as booked/);
+  });
+});
+
+describe('reverseFailedRefund — a provider refund that failed after approval', () => {
+  const completed = (overrides = {}) => ({
+    id: 'r1',
+    requestNumber: 'SR-1',
+    bookingId: 'b1',
+    supplierId: 's1',
+    status: 'COMPLETED',
+    refundedAmount: 151.22,
+    chargeId: 'c1',
+    refundReference: 're_1',
+    preview: { currency: 'USD', proposed: 151.22, charge: 120.98, isFull: true },
+    payload: payload(),
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.$transaction.mockImplementation(async (fn) => fn(prisma));
+    prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'r1' }]);
+    prisma.booking.update.mockResolvedValue({});
+    prisma.supplierCharge.update.mockResolvedValue({});
+    prisma.supplierRefundRequest.findUnique.mockResolvedValue(completed());
+    prisma.supplierRefundRequest.update.mockImplementation(async ({ data }) => ({
+      ...completed(), ...data,
+    }));
+    // The approval had already made a full-refund booking terminal.
+    prisma.booking.findUnique.mockResolvedValue(
+      booking({ status: 'REFUNDED', paymentStatus: 'REFUNDED', refundAmount: 151.22 }),
+    );
+  });
+
+  it('undoes the booking, the charge and the request, then tells both sides', async () => {
+    const result = await service.reverseFailedRefund({
+      requestId: 'r1',
+      refundId: 're_1',
+      failureReason: 'insufficient_funds',
+    });
+
+    expect(result.reversed).toBe(true);
+    expect(prisma.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          refundAmount: 0,
+          refundStatus: 'FAILED',
+          status: 'COMPLETED',
+          paymentStatus: 'SUCCEEDED',
+        }),
+      }),
+    );
+    expect(prisma.supplierCharge.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'c1' }, data: { status: 'REVERSED' } }),
+    );
+    expect(prisma.supplierRefundRequest.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'FAILED', failureReason: 'insufficient_funds' }),
+      }),
+    );
+    expect(enqueueNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'SUPPLIER_REFUND_FAILED', dedupeKey: 'supplier-refund-r1-failed' }),
+    );
+    expect(notifyAdmin).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'REFUND_NEEDS_ATTENTION' }),
+    );
+  });
+
+  it('is idempotent — a second delivery changes nothing', async () => {
+    prisma.supplierRefundRequest.findUnique.mockResolvedValue(completed({ status: 'FAILED' }));
+
+    const result = await service.reverseFailedRefund({ requestId: 'r1', refundId: 're_1' });
+
+    expect(result.reversed).toBe(false);
+    expect(prisma.booking.update).not.toHaveBeenCalled();
+    expect(prisma.supplierCharge.update).not.toHaveBeenCalled();
+    expect(enqueueNotification).not.toHaveBeenCalled();
+  });
+
+  it('ignores a failure for a different refund on the same booking', async () => {
+    const result = await service.reverseFailedRefund({ requestId: 'r1', refundId: 're_other' });
+
+    expect(result.reversed).toBe(false);
+    expect(prisma.booking.update).not.toHaveBeenCalled();
   });
 });

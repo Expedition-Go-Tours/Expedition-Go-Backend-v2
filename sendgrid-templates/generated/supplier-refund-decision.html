@@ -130,63 +130,372 @@
                   </td>
                 </tr>
                 
+      {{#if approved}}<tr><td class="pad" style="padding:14px 40px 0 40px;" align="center"><span style="display:inline-block;background-color:#E9F6F0;color:#06603F;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:11px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;border-radius:999px;padding:7px 13px;line-height:1;margin:0 auto;">Approved</span></td></tr>{{/if}}
+      {{#if failed}}<tr><td class="pad" style="padding:14px 40px 0 40px;" align="center"><span style="display:inline-block;background-color:#FFF7E8;color:#7A4B00;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:11px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;border-radius:999px;padding:7px 13px;line-height:1;margin:0 auto;">Update</span></td></tr>{{/if}}
+      {{#if rejected}}<tr><td class="pad" style="padding:14px 40px 0 40px;" align="center"><span style="display:inline-block;background-color:#FEF2F1;color:#B42318;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:11px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;border-radius:999px;padding:7px 13px;line-height:1;margin:0 auto;">Declined</span></td></tr>{{/if}}
       
-  <tr><td class="media-header-background" bgcolor="#001F3F" style="padding:0;background-color:#001F3F;background-size:cover;background-position:center;background-repeat:no-repeat;"{{#if tourImageUrl}} background="{{tourImageUrl}}"{{/if}}>
-    <!--[if gte mso 9]>
-    <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:640px;height:248px;">
-      <v:fill color="#001F3F" />
-      <v:textbox inset="0,0,0,0">
-    <![endif]-->
-    <div>
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="media-header-scrim" style="border-collapse:separate;border-spacing:0;background-color:rgba(0,31,63,0.45);border-radius:0;overflow:hidden;">
-      <tr>
-        <td valign="bottom" class="pad" style="padding:120px 34px 28px 34px;">
-          <div style="margin:0 0 14px 0;"><span style="display:inline-block;background-color:#F59E0B;color:#3B2500;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:11px;font-weight:800;letter-spacing:0.9px;text-transform:uppercase;border-radius:999px;padding:7px 14px;line-height:1;">{{decisionBadge}}</span></div>
-          <div style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:26px;font-weight:800;color:#ffffff;line-height:1.24;text-shadow:0 1px 3px rgba(0,0,0,0.45);">{{decisionTitle}}</div>
-          <div style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:500;color:#E8EEF5;line-height:1.5;padding-top:8px;text-shadow:0 1px 3px rgba(0,0,0,0.45);">{{tourTitle}} &middot; {{dateLabel}}</div>
-        </td>
-      </tr>
-    </table></div>
-    <!--[if gte mso 9]>
-      </v:textbox>
-    </v:rect>
-    <![endif]-->
+  <tr><td class="pad" style="padding:26px 40px 0 40px;">
+    <h1 class="font-main dm-text" style="margin:0;font-size:30px;font-weight:800;color:#1A2B49;line-height:1.22;text-align:center;letter-spacing:-0.3px;">{{decisionTitle}}</h1>
+    <p class="font-main dm-muted" style="margin:10px 0 0 0;font-size:16px;color:#63687A;line-height:1.6;text-align:center;">{{tourTitle}} &middot; {{dateLabel}}</p>
   </td></tr>
+      {{#if approved}}
       
-  <tr><td class="pad" style="padding:20px 40px 0 40px;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-      <tr>
-        <td valign="middle" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-          <span class="dm-muted" style="display:inline-block;font-size:10.5px;font-weight:800;letter-spacing:1.3px;text-transform:uppercase;color:#64748B;vertical-align:middle;">Ref</span>
-          <span class="dm-chip" style="display:inline-block;margin-left:8px;font-family:'SFMono-Regular',Menlo,Consolas,'Courier New',monospace;font-size:15px;font-weight:700;color:#001F3F;background-color:#EEF2F7;border-radius:7px;padding:5px 11px;letter-spacing:0.4px;vertical-align:middle;">{{requestNumber}}</span>
-        </td>
-        <td class="dm-muted" valign="middle" align="right" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;color:#64748B;white-space:nowrap;">{{bookingNumber}}</td>
-      </tr>
+  <tr><td style="padding:30px 0 0 0;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:{{accentSoft}};border-top:1px solid {{accentSoft}};border-bottom:1px solid {{accentSoft}};">
+      <tr><td style="padding:22px 40px;" class="pad">
+        <div style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:11px;font-weight:800;letter-spacing:0.9px;text-transform:uppercase;color:{{accentDark}};line-height:1;">Traveller refund</div>
+        <div class="font-main dm-text" style="padding-top:8px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:32px;font-weight:800;color:#1A2B49;line-height:1.1;letter-spacing:-0.5px;">{{refundAmountLabel}}</div>
+        <div class="dm-text" style="padding-top:8px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#3F4A5F;line-height:1.6;">{{refundKindLabel}}. Returned to the traveller&rsquo;s original payment method.</div>
+      </td></tr>
     </table>
   </td></tr>
+      {{/if}}
+      {{#if failed}}
+      
+  <tr><td style="padding:30px 0 0 0;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#FFF7E8;border-top:1px solid #F3E2BF;border-bottom:1px solid #F3E2BF;">
+      <tr><td style="padding:22px 40px;" class="pad">
+        <div style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:11px;font-weight:800;letter-spacing:0.9px;text-transform:uppercase;color:#7A4B00;line-height:1;">Refund not completed</div>
+        <div class="font-main dm-text" style="padding-top:8px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:32px;font-weight:800;color:#1A2B49;line-height:1.1;letter-spacing:-0.5px;">{{refundAmountLabel}}</div>
+        <div class="dm-text" style="padding-top:8px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#3F4A5F;line-height:1.6;">The traveller did not receive this refund, and you are not charged for it.</div>
+      </td></tr>
+    </table>
+  </td></tr>
+      {{/if}}
       
   <tr><td class="pad" style="padding:14px 40px 0 40px;">
     <p class="dm-text" style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;color:#3F4A5F;line-height:1.68;text-align:left;">{{decisionBody}}</p>
   </td></tr>
+
       
-  <tr><td class="pad" style="padding:28px 40px 4px 40px;">
-    <div class="h2 font-main dm-text" style="font-size:15px;font-weight:800;color:#001F3F;letter-spacing:0.4px;text-transform:uppercase;line-height:1.3;">Request summary</div>
+  <tr><td class="pad" style="padding:28px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid #E7EAEF;border-radius:12px;border-collapse:separate;border-spacing:0;overflow:hidden;">
+      <tr><td style="padding:16px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+          <tr>
+            <td width="88" valign="top" style="width:88px;padding-right:14px;">
+              <div style="width:88px;height:88px;border-radius:8px;overflow:hidden;background-color:{{accentSoft}};">
+                {{#if tourImageUrl}}<img src="{{tourImageUrl}}" width="88" height="88" alt="{{tourTitle}}" style="display:block;width:88px;height:88px;border-radius:8px;object-fit:cover;border:0;outline:none;">{{/if}}
+              </div>
+            </td>
+            <td valign="top">
+              <div style="padding-bottom:8px;"><span style="display:inline-block;background-color:#EBEEF1;color:#1A2B49;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:11px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;border-radius:999px;padding:7px 13px;line-height:1;">{{bookingStatusLabel}}</span></div>
+              <div class="font-main dm-text" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;font-weight:800;color:#1A2B49;line-height:1.4;">{{tourTitle}}</div>
+              {{#if locationLabel}}<div class="dm-muted" style="padding-top:4px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#63687A;line-height:1.45;">{{locationLabel}}</div>{{/if}}
+            </td>
+          </tr>
+        </table>
+      </td></tr>
+      <tr><td style="padding:0 16px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="border-top:1px solid #E7EAEF;font-size:0;line-height:0;">&nbsp;</td></tr></table></td></tr>
+      <tr><td style="padding:12px 16px 16px 16px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+          
+      <tr>
+        <td class="dm-muted" style="padding:5px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#63687A;line-height:1.5;width:46%;vertical-align:top;">Booking reference</td>
+        <td class="dm-text" style="padding:5px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;font-weight:600;color:#1A2B49;line-height:1.5;text-align:right;">{{bookingNumber}}</td>
+      </tr>
+      <tr>
+        <td class="dm-muted" style="padding:5px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#63687A;line-height:1.5;width:46%;vertical-align:top;">Activity date</td>
+        <td class="dm-text" style="padding:5px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;font-weight:600;color:#1A2B49;line-height:1.5;text-align:right;">{{dateLabel}}</td>
+      </tr>
+      <tr>
+        <td class="dm-muted" style="padding:5px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#63687A;line-height:1.5;width:46%;vertical-align:top;">Travellers</td>
+        <td class="dm-text" style="padding:5px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;font-weight:600;color:#1A2B49;line-height:1.5;text-align:right;">{{travelersLabel}}</td>
+      </tr>
+      <tr>
+        <td class="dm-muted" style="padding:5px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#63687A;line-height:1.5;width:46%;vertical-align:top;">Booking total</td>
+        <td class="dm-text" style="padding:5px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;font-weight:800;color:#1A2B49;line-height:1.5;text-align:right;">{{totalLabel}}</td>
+      </tr>
+        </table>
+      </td></tr>
+    </table>
+  </td></tr>
+
+      
+  <tr><td class="pad" style="padding:30px 40px 0 40px;">
+    <h2 class="font-main dm-text" style="margin:0;font-size:18px;font-weight:800;color:#1A2B49;line-height:1.35;letter-spacing:-0.1px;">What this means for you</h2>
+  </td></tr>
+      {{#if rejected}}
+      
+  <tr><td class="pad" style="padding:12px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-card" style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:14px;border-collapse:separate;border-spacing:0;overflow:hidden;">
+      
+      <tr>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Refund requested</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{refundAmountLabel}}</span></td>
+      </tr>
+      <tr>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Reason given</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{reasonLabel}}</span></td>
+      </tr>
+    </table>
+  </td></tr>
+      
+  <tr><td class="pad" style="padding:24px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#F7F8FA;border:1px solid #E7EAEF;border-radius:10px;border-collapse:separate;border-spacing:0;">
+      <tr><td style="padding:16px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;color:#3F4A5F;line-height:1.65;">
+        <div style="font-weight:800;color:#1A2B49;padding-bottom:4px;">Nothing has changed</div>
+        No money was refunded and nothing was charged to your balance. The booking stays as it is.
+      </td></tr>
+    </table>
+  </td></tr>
+      {{else}}
+      {{#if failed}}
+      
+  <tr><td class="pad" style="padding:12px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-card" style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:14px;border-collapse:separate;border-spacing:0;overflow:hidden;">
+      
+      <tr>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Refund attempted</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{refundAmountLabel}}</span></td>
+      </tr>
+      <tr>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Charge raised on approval</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{chargeLabel}}</span></td>
+      </tr>
+      <tr>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Reason given</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{reasonLabel}}</span></td>
+      </tr>
+    </table>
+  </td></tr>
+      
+  <tr><td class="pad" style="padding:24px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#FFF7E8;border:1px solid #F3E2BF;border-radius:10px;border-collapse:separate;border-spacing:0;">
+      <tr><td style="padding:16px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;color:#7A4B00;line-height:1.65;">
+        <div style="font-weight:800;color:#7A4B00;padding-bottom:4px;">{{chargeTitle}}</div>
+        {{chargeBody}}
+      </td></tr>
+    </table>
+  </td></tr>
+      {{else}}
+      
+  <tr><td class="pad" style="padding:12px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-card" style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:14px;border-collapse:separate;border-spacing:0;overflow:hidden;">
+      
+      <tr>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Refund to the traveller</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{refundAmountLabel}}</span></td>
+      </tr>{{#if chargeApplied}}
+      <tr>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Charged to your balance</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{chargeLabel}}</span></td>
+      </tr>{{/if}}
+      <tr>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Balance available now</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{balanceAfterLabel}}</span></td>
+      </tr>
+      <tr>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Reason given</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{reasonLabel}}</span></td>
+      </tr>
+    </table>
+  </td></tr>
+      {{#if chargeApplied}}
+      
+  <tr><td class="pad" style="padding:24px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#EEF4FF;border:1px solid #D8E4FB;border-radius:10px;border-collapse:separate;border-spacing:0;">
+      <tr><td style="padding:16px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;color:#1D4ED8;line-height:1.65;">
+        <div style="font-weight:800;color:#1D4ED8;padding-bottom:4px;">{{chargeTitle}}</div>
+        {{chargeBody}}
+      </td></tr>
+    </table>
+  </td></tr>
+      {{else}}
+      
+  <tr><td class="pad" style="padding:24px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#E9F6F0;border:1px solid #CBE9DA;border-radius:10px;border-collapse:separate;border-spacing:0;">
+      <tr><td style="padding:16px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;color:#06603F;line-height:1.65;">
+        <div style="font-weight:800;color:#06603F;padding-bottom:4px;">{{chargeTitle}}</div>
+        {{chargeBody}}
+      </td></tr>
+    </table>
+  </td></tr>
+      {{/if}}
+      {{/if}}
+      {{/if}}
+
+      
+  <tr><td class="pad" style="padding:30px 40px 0 40px;">
+    <h2 class="font-main dm-text" style="margin:0;font-size:18px;font-weight:800;color:#1A2B49;line-height:1.35;letter-spacing:-0.1px;">What happens next</h2>
+  </td></tr>
+      {{#if approved}}
+      {{#if chargeApplied}}
+      
+  <tr><td class="pad" style="padding:12px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+    <tr>
+      <td width="40" valign="top" style="padding:0 12px 16px 0;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
+          <td width="26" height="26" align="center" style="background-color:#001F3F;border-radius:50%;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#ffffff;">1</td>
+        </tr></table>
+      </td>
+      <td valign="top" style="padding:2px 0 16px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+        <div class="dm-text" style="font-size:14px;font-weight:700;color:#001F3F;line-height:1.4;">The refund is on its way</div>
+        <div class="dm-muted" style="font-size:13px;color:#475569;line-height:1.6;padding-top:3px;">It returns to the traveller&rsquo;s original payment method, usually within 5&ndash;10 business days.</div>
+      </td>
+    </tr>
+    <tr>
+      <td width="40" valign="top" style="padding:0 12px 16px 0;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
+          <td width="26" height="26" align="center" style="background-color:#001F3F;border-radius:50%;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#ffffff;">2</td>
+        </tr></table>
+      </td>
+      <td valign="top" style="padding:2px 0 16px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+        <div class="dm-text" style="font-size:14px;font-weight:700;color:#001F3F;line-height:1.4;">The charge is on your balance</div>
+        <div class="dm-muted" style="font-size:13px;color:#475569;line-height:1.6;padding-top:3px;">{{chargeLabel}} appears in your charges list straight away.</div>
+      </td>
+    </tr>
+    <tr>
+      <td width="40" valign="top" style="padding:0 12px 16px 0;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
+          <td width="26" height="26" align="center" style="background-color:#001F3F;border-radius:50%;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#ffffff;">3</td>
+        </tr></table>
+      </td>
+      <td valign="top" style="padding:2px 0 16px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+        <div class="dm-text" style="font-size:14px;font-weight:700;color:#001F3F;line-height:1.4;">It settles with your next payout</div>
+        <div class="dm-muted" style="font-size:13px;color:#475569;line-height:1.6;padding-top:3px;">The charge is deducted from your next payout or invoice, never from your bank account.</div>
+      </td>
+    </tr></table>
+  </td></tr>
+      {{else}}
+      
+  <tr><td class="pad" style="padding:12px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+    <tr>
+      <td width="40" valign="top" style="padding:0 12px 16px 0;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
+          <td width="26" height="26" align="center" style="background-color:#001F3F;border-radius:50%;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#ffffff;">1</td>
+        </tr></table>
+      </td>
+      <td valign="top" style="padding:2px 0 16px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+        <div class="dm-text" style="font-size:14px;font-weight:700;color:#001F3F;line-height:1.4;">The refund is on its way</div>
+        <div class="dm-muted" style="font-size:13px;color:#475569;line-height:1.6;padding-top:3px;">It returns to the traveller&rsquo;s original payment method, usually within 5&ndash;10 business days.</div>
+      </td>
+    </tr>
+    <tr>
+      <td width="40" valign="top" style="padding:0 12px 16px 0;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
+          <td width="26" height="26" align="center" style="background-color:#001F3F;border-radius:50%;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#ffffff;">2</td>
+        </tr></table>
+      </td>
+      <td valign="top" style="padding:2px 0 16px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+        <div class="dm-text" style="font-size:14px;font-weight:700;color:#001F3F;line-height:1.4;">Your balance is unchanged</div>
+        <div class="dm-muted" style="font-size:13px;color:#475569;line-height:1.6;padding-top:3px;">This booking had not been paid out to you yet, so there is nothing to recover.</div>
+      </td>
+    </tr></table>
+  </td></tr>
+      {{/if}}
+      {{/if}}
+      {{#if failed}}
+      {{#if hadCharge}}
+      
+  <tr><td class="pad" style="padding:12px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+    <tr>
+      <td width="40" valign="top" style="padding:0 12px 16px 0;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
+          <td width="26" height="26" align="center" style="background-color:#001F3F;border-radius:50%;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#ffffff;">1</td>
+        </tr></table>
+      </td>
+      <td valign="top" style="padding:2px 0 16px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+        <div class="dm-text" style="font-size:14px;font-weight:700;color:#001F3F;line-height:1.4;">The charge has been reversed</div>
+        <div class="dm-muted" style="font-size:13px;color:#475569;line-height:1.6;padding-top:3px;">It is no longer owed and will not appear on your next payout.</div>
+      </td>
+    </tr>
+    <tr>
+      <td width="40" valign="top" style="padding:0 12px 16px 0;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
+          <td width="26" height="26" align="center" style="background-color:#001F3F;border-radius:50%;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#ffffff;">2</td>
+        </tr></table>
+      </td>
+      <td valign="top" style="padding:2px 0 16px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+        <div class="dm-text" style="font-size:14px;font-weight:700;color:#001F3F;line-height:1.4;">Our team is following up</div>
+        <div class="dm-muted" style="font-size:13px;color:#475569;line-height:1.6;padding-top:3px;">We are reissuing the traveller&rsquo;s refund by hand. Nothing is needed from you.</div>
+      </td>
+    </tr></table>
+  </td></tr>
+      {{else}}
+      
+  <tr><td class="pad" style="padding:12px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+    <tr>
+      <td width="40" valign="top" style="padding:0 12px 16px 0;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
+          <td width="26" height="26" align="center" style="background-color:#001F3F;border-radius:50%;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#ffffff;">1</td>
+        </tr></table>
+      </td>
+      <td valign="top" style="padding:2px 0 16px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+        <div class="dm-text" style="font-size:14px;font-weight:700;color:#001F3F;line-height:1.4;">Nothing was charged</div>
+        <div class="dm-muted" style="font-size:13px;color:#475569;line-height:1.6;padding-top:3px;">Your balance is unaffected by this refund.</div>
+      </td>
+    </tr>
+    <tr>
+      <td width="40" valign="top" style="padding:0 12px 16px 0;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
+          <td width="26" height="26" align="center" style="background-color:#001F3F;border-radius:50%;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#ffffff;">2</td>
+        </tr></table>
+      </td>
+      <td valign="top" style="padding:2px 0 16px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+        <div class="dm-text" style="font-size:14px;font-weight:700;color:#001F3F;line-height:1.4;">Our team is following up</div>
+        <div class="dm-muted" style="font-size:13px;color:#475569;line-height:1.6;padding-top:3px;">We are reissuing the traveller&rsquo;s refund by hand. Nothing is needed from you.</div>
+      </td>
+    </tr></table>
+  </td></tr>
+      {{/if}}
+      {{/if}}
+      {{#if rejected}}
+      
+  <tr><td class="pad" style="padding:12px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+    <tr>
+      <td width="40" valign="top" style="padding:0 12px 16px 0;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
+          <td width="26" height="26" align="center" style="background-color:#001F3F;border-radius:50%;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#ffffff;">1</td>
+        </tr></table>
+      </td>
+      <td valign="top" style="padding:2px 0 16px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+        <div class="dm-text" style="font-size:14px;font-weight:700;color:#001F3F;line-height:1.4;">Nothing to pay</div>
+        <div class="dm-muted" style="font-size:13px;color:#475569;line-height:1.6;padding-top:3px;">The booking and your balance stay exactly as they were.</div>
+      </td>
+    </tr>
+    <tr>
+      <td width="40" valign="top" style="padding:0 12px 16px 0;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
+          <td width="26" height="26" align="center" style="background-color:#001F3F;border-radius:50%;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:800;color:#ffffff;">2</td>
+        </tr></table>
+      </td>
+      <td valign="top" style="padding:2px 0 16px 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+        <div class="dm-text" style="font-size:14px;font-weight:700;color:#001F3F;line-height:1.4;">If you have new evidence</div>
+        <div class="dm-muted" style="font-size:13px;color:#475569;line-height:1.6;padding-top:3px;">Reply to this email or contact support and our team will review it again.</div>
+      </td>
+    </tr></table>
+  </td></tr>
+      {{/if}}
+
+      
+  <tr><td class="pad" style="padding:30px 40px 0 40px;">
+    <h2 class="font-main dm-text" style="margin:0;font-size:18px;font-weight:800;color:#1A2B49;line-height:1.35;letter-spacing:-0.1px;">Your request</h2>
   </td></tr>
       
   <tr><td class="pad" style="padding:12px 40px 0 40px;">
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-card" style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:14px;border-collapse:separate;border-spacing:0;overflow:hidden;">
       
       <tr>
-        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Traveller refund</td>
-        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{refundAmountLabel}}</span></td>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Request reference</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{requestNumber}}</span></td>
       </tr>
       <tr>
-        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Charged to your balance</td>
-        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{chargeLabel}}</span></td>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Filed</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{filedAtLabel}}</span></td>
       </tr>
       <tr>
-        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Reason</td>
-        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{reasonLabel}}</span></td>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Tour operated</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{operatedLabel}}</span></td>
+      </tr>
+      <tr>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Customer attended</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{attendedLabel}}</span></td>
       </tr>
     </table>
   </td></tr>
@@ -198,24 +507,20 @@
     </table>
   </td></tr>
       {{/if}}
-      {{#if approved}}
+
       
-  <tr><td class="pad" style="padding:20px 40px 0 40px;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-info-soft" style="background-color:#EFF6FF;border-radius:10px;border-collapse:separate;border-spacing:0;">
-      <tr><td class="dm-info" style="padding:14px 18px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;color:#1D4ED8;line-height:1.6;font-weight:600;">The charge appears in your charges list and is settled against your next payout. It is not taken from your bank account.</td></tr>
+  <tr><td class="pad" style="padding:26px 40px 0 40px;" align="center">
+    <table role="presentation" class="btn-wrap" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
+      <tr><td bgcolor="{{accentColor}}" align="center" style="border-radius:999px;background-color:{{accentColor}};">
+        <a href="{{supplierBookingUrl}}" class="btn" style="display:inline-block;padding:14px 28px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;font-weight:700;line-height:1.2;text-decoration:none;border-radius:999px;color:#FFFFFF;">View booking</a>
+      </td></tr>
     </table>
   </td></tr>
-      {{/if}}
-      
-  <tr><td class="pad" style="padding:28px 40px 8px 40px;">
+  <tr><td class="pad" style="padding:10px 40px 0 40px;" align="center">
     <table role="presentation" class="btn-wrap" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
-      <tr>
-        <td style="padding:0 8px 0 0;vertical-align:middle;">
-          <a href="{{supplierBookingUrl}}" class="btn" style="display:inline-block;background-color:#007A4D;color:#ffffff;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">View booking</a>
-        </td>
-        <td style="padding:0 8px 0 0;vertical-align:middle;">
-          <a href="{{chargesUrl}}" class="btn dm-card dm-text" style="display:inline-block;background-color:#FFFFFF;border:1px solid #E2E8F0;color:#001F3F;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;padding:12px 22px;line-height:1.2;">Your charges</a>
-        </td></tr>
+      <tr><td bgcolor="{{accentSoft}}" align="center" style="border-radius:999px;background-color:{{accentSoft}};">
+        <a href="{{chargesUrl}}" class="btn" style="display:inline-block;padding:14px 28px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;font-weight:700;line-height:1.2;text-decoration:none;border-radius:999px;color:{{accentDark}};">View charges</a>
+      </td></tr>
     </table>
   </td></tr>
     

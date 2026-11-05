@@ -513,6 +513,15 @@ async function createRefundRequest({
     console.error('[SupplierRefund] request email failed:', err.message);
   }
 
+  // The traveller is told a refund is being reviewed — no promise of money.
+  // The decision email (approved or declined) closes the loop.
+  try {
+    const { sendCustomerRefundRequestedEmail } = require('./emailService');
+    await sendCustomerRefundRequestedEmail(request.id);
+  } catch (err) {
+    console.error('[SupplierRefund] customer request email failed:', err.message);
+  }
+
   const full = await prisma.supplierRefundRequest.findUnique({
     where: { id: request.id },
     include: BOOKING_INCLUDE,
@@ -776,6 +785,9 @@ async function approveRefundRequest({ requestId, adminUser, note = null, req }) 
       where: { id: requestId },
       data: {
         status: 'COMPLETED',
+        // Persist the recomputed figures: the email/notification and any later
+        // failure reversal must use what was executed, not what was filed.
+        preview,
         executedBy: adminUser?.id || null,
         executedAt: new Date(),
         refundReference: refund?.id || refund?.refundId || null,
@@ -814,11 +826,20 @@ async function approveRefundRequest({ requestId, adminUser, note = null, req }) 
   } catch (err) {
     console.error('[SupplierRefund] supplier decision email failed:', err.message);
   }
+  // The bell entry is independent of the email: a mail outage must not leave
+  // the supplier with no signal that their balance changed.
+  await notifySupplierRefundOutcome({
+    request: result.request,
+    preview: result.preview,
+    decision: 'approved',
+  });
   try {
     const { sendRefundCompletedEmail } = require('./emailService');
     await sendRefundCompletedEmail(result.booking.id, {
       refundReference: serialized.refundReference,
       refundedAt: new Date(),
+      // Quote THIS refund, not the booking's cumulative refundAmount.
+      refundAmount: result.preview.proposed,
     });
   } catch (err) {
     console.error('[SupplierRefund] customer refund email failed:', err.message);
@@ -896,7 +917,203 @@ async function rejectRefundRequest({ requestId, adminUser, note, req }) {
     console.error('[SupplierRefund] rejection email failed:', err.message);
   }
 
+  // The traveller was told the request was under review; close that loop.
+  try {
+    const { sendCustomerRefundDeclinedEmail } = require('./emailService');
+    await sendCustomerRefundDeclinedEmail(requestId);
+  } catch (err) {
+    console.error('[SupplierRefund] customer decline email failed:', err.message);
+  }
+
+  await notifySupplierRefundOutcome({ request: updated, decision: 'rejected' });
+
   return serialize(updated);
+}
+
+/** Currency label for notification copy; never throws on an odd code. */
+function moneyLabel(amount, currency = 'USD') {
+  const value = toNumber(amount) || 0;
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency || 'USD' }).format(value);
+  } catch {
+    return `${currency || 'USD'} ${value.toFixed(2)}`;
+  }
+}
+
+/**
+ * The supplier's in-app bell entry for a decision.
+ *
+ * The email already existed; the bell did not, so an approval or a decline
+ * changed the booking and the ledger while the sidebar stayed silent. The
+ * category (`payments`) decides which team members receive it through the
+ * normal fan-out, and the dedupe key keeps a retried approval from notifying
+ * twice.
+ */
+async function notifySupplierRefundOutcome({ request, preview = null, decision }) {
+  const stored = request.preview || {};
+  const currency = preview?.currency || stored.currency || 'USD';
+  const amount = preview?.proposed ?? request.refundedAmount ?? stored.proposed ?? 0;
+  const charge = preview?.charge ?? stored.charge ?? 0;
+  const data = {
+    bookingId: request.bookingId,
+    refundRequestId: request.id,
+    requestNumber: request.requestNumber,
+    amount: round2(toNumber(amount)),
+    charge: round2(toNumber(charge)),
+    currency,
+  };
+
+  let type;
+  let title;
+  let message;
+  if (decision === 'approved') {
+    type = 'SUPPLIER_REFUND_APPROVED';
+    title = `Refund approved — ${moneyLabel(amount, currency)}`;
+    message = toNumber(charge) > 0
+      ? `${moneyLabel(amount, currency)} refunded to the traveller. ${moneyLabel(charge, currency)} is on your balance and settles against your next payout.`
+      : `${moneyLabel(amount, currency)} refunded to the traveller. Nothing is charged to your balance — this booking had not been paid out yet.`;
+  } else if (decision === 'rejected') {
+    type = 'SUPPLIER_REFUND_REJECTED';
+    title = `Refund request declined — ${request.requestNumber}`;
+    message = `No money moved.${request.decisionNote ? ` Reason: ${String(request.decisionNote).slice(0, 180)}` : ' See the decision note in your dashboard.'}`;
+  } else {
+    type = 'SUPPLIER_REFUND_FAILED';
+    title = 'Refund could not be completed';
+    data.charge = 0;
+    data.reversedCharge = round2(toNumber(stored.charge));
+    message = `The ${moneyLabel(amount, currency)} refund to the traveller did not go through. ${toNumber(stored.charge) > 0 ? `The ${moneyLabel(stored.charge, currency)} charge on your balance has been reversed — you owe nothing for it.` : 'Nothing was charged to your balance.'} Our team is following up.`;
+  }
+
+  try {
+    const { enqueueNotification } = require('./queue');
+    await enqueueNotification({
+      userId: request.supplierId,
+      type,
+      title,
+      message,
+      data,
+      dedupeKey: `supplier-refund-${request.id}-${decision}`,
+    });
+  } catch (err) {
+    // The money already moved; a notification failure must not surface as a
+    // failed decision to the admin.
+    console.error('[SupplierRefund] in-app notification failed:', err.message);
+  }
+}
+
+/**
+ * Undo an approval whose provider refund failed after Stripe accepted it.
+ *
+ * `refunds.create` can return `pending` and only fail later (`refund.failed`).
+ * By then the booking has been flipped, the SupplierCharge written and the
+ * supplier told the money is on its way. Leaving that state would overstate
+ * the refund, keep a charge for money nobody received, and leave the booking
+ * terminal. This reverses all three — in one transaction, idempotently — and
+ * only when the failing refund is the one this request issued.
+ */
+async function reverseFailedRefund({ requestId, refundId = null, failureReason = null } = {}) {
+  if (!requestId) return { reversed: false, reason: 'no-request-id' };
+
+  const outcome = await prisma.$transaction(async (tx) => {
+    await tx.$queryRawUnsafe(
+      'SELECT id FROM "SupplierRefundRequest" WHERE id = $1 FOR UPDATE',
+      requestId,
+    );
+
+    const request = await tx.supplierRefundRequest.findUnique({ where: { id: requestId } });
+    if (!request) return { reversed: false, reason: 'not-found' };
+    if (request.status !== 'COMPLETED') {
+      // Already reversed, or never executed. Both are safe to ignore.
+      return { reversed: false, reason: `status-${request.status}` };
+    }
+    if (refundId && request.refundReference && request.refundReference !== refundId) {
+      return { reversed: false, reason: 'different-refund' };
+    }
+
+    const booking = await tx.booking.findUnique({
+      where: { id: request.bookingId },
+      select: REFUND_BOOKING_SELECT,
+    });
+    if (!booking) return { reversed: false, reason: 'booking-not-found' };
+
+    const refunded = round2(toNumber(request.refundedAmount));
+    const nextRefunded = round2(Math.max(0, toNumber(booking.refundAmount) - refunded));
+    const gross = round2(toNumber(booking.grossAmount));
+    // This refund was the one that made the booking terminal only if taking it
+    // back drops it below the full amount again.
+    const restoresTerminal = booking.status === 'REFUNDED' && nextRefunded < gross - 0.005;
+
+    await tx.booking.update({
+      where: { id: booking.id },
+      data: {
+        refundAmount: nextRefunded,
+        refundedAt: nextRefunded > 0 ? booking.refundedAt : null,
+        refundStatus: 'FAILED',
+        ...(restoresTerminal ? { status: 'COMPLETED', paymentStatus: 'SUCCEEDED' } : {}),
+      },
+    });
+
+    if (request.chargeId) {
+      await tx.supplierCharge
+        .update({ where: { id: request.chargeId }, data: { status: 'REVERSED' } })
+        .catch((err) => console.error('[SupplierRefund] charge reversal failed:', err.message));
+    }
+
+    const updated = await tx.supplierRefundRequest.update({
+      where: { id: request.id },
+      data: {
+        status: 'FAILED',
+        failureReason: failureReason
+          ? String(failureReason).slice(0, 500)
+          : 'The provider refund failed',
+      },
+    });
+
+    return { reversed: true, request: updated, booking, refunded };
+  });
+
+  if (!outcome.reversed) {
+    console.warn(`[SupplierRefund] refund failure ignored for ${requestId}: ${outcome.reason}`);
+    return outcome;
+  }
+
+  // Post-commit: the supplier must hear that the charge is gone, and ops must
+  // see the failed refund — the traveller was already emailed that the money
+  // was on its way, so someone has to follow up by hand.
+  await notifySupplierRefundOutcome({ request: outcome.request, decision: 'failed' });
+
+  try {
+    const { sendSupplierRefundDecisionEmail } = require('./emailService');
+    await sendSupplierRefundDecisionEmail(requestId);
+  } catch (err) {
+    console.error('[SupplierRefund] failure email failed:', err.message);
+  }
+
+  try {
+    const { notifyAdmin } = require('./adminNotificationService');
+    await notifyAdmin({
+      type: 'REFUND_NEEDS_ATTENTION',
+      title: 'Supplier refund failed at the provider',
+      message: `Request ${outcome.request.requestNumber} — the ${moneyLabel(outcome.refunded, outcome.request.preview?.currency)} refund to the traveller failed${failureReason ? ` (${failureReason})` : ''}. The supplier charge was reversed. The traveller was already emailed, so follow up with them.`,
+      data: { bookingId: outcome.booking.id, requestId: outcome.request.id },
+    });
+  } catch (err) {
+    console.error('[SupplierRefund] admin alert failed:', err.message);
+  }
+
+  await logActivity({
+    userId: null,
+    action: 'booking.refund_request_failed',
+    resource: 'Booking',
+    resourceId: outcome.booking.id,
+    metadata: {
+      requestId: outcome.request.id,
+      refunded: outcome.refunded,
+      failureReason: failureReason || null,
+    },
+  }).catch(() => {});
+
+  return outcome;
 }
 
 module.exports = {
@@ -913,6 +1130,7 @@ module.exports = {
   getAdminRefundRequest,
   approveRefundRequest,
   rejectRefundRequest,
+  reverseFailedRefund,
   computePreview,
   eligibilityError,
   refundableOf,
