@@ -1131,6 +1131,7 @@ module.exports = {
   approveRefundRequest,
   rejectRefundRequest,
   reverseFailedRefund,
+  notifySupplierRefundOutcome,
   computePreview,
   eligibilityError,
   refundableOf,
