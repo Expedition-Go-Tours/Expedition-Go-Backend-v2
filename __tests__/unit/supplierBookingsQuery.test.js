@@ -342,7 +342,8 @@ describe('the CSV export', () => {
 
 describe('the summary the stat cards read', () => {
   it('counts statuses over the whole result set, not the current page', async () => {
-    prisma.booking.count.mockResolvedValue(812);
+    // First count is the list total, second is the Refunds tab.
+    prisma.booking.count.mockResolvedValueOnce(812).mockResolvedValueOnce(0);
     prisma.booking.aggregate.mockResolvedValue({ _sum: { grossAmount: 5400, supplierPayout: 4590 }, _count: 812 });
     prisma.booking.groupBy.mockResolvedValue([
       { status: 'CONFIRMED', _count: { _all: 400 } },
@@ -352,20 +353,40 @@ describe('the summary the stat cards read', () => {
 
     const { payload } = await invoke({ page: 3, limit: 25 });
 
-    expect(payload.summary.counts).toEqual({ CONFIRMED: 400, COMPLETED: 380, CANCELLED: 32 });
+    expect(payload.summary.counts).toEqual({ CONFIRMED: 400, COMPLETED: 380, CANCELLED: 32, REFUNDS: 0 });
     expect(payload.summary.totalBookings).toBe(812);
     expect(payload.summary.totalRevenue).toBe(5400);
     expect(payload.pagination).toMatchObject({ currentPage: 3, totalCount: 812, limit: 25 });
   });
 
-  it('runs the counts against the same filters as the list', async () => {
+  it('counts every tab from the filtered set, not from the active tab', async () => {
     prisma.booking.groupBy.mockResolvedValue([{ status: 'PENDING', _count: { _all: 4 } }]);
 
     const { payload } = await invoke({ search: 'Ama', status: 'PENDING' });
 
     const where = prisma.booking.groupBy.mock.calls[0][0].where;
+    // Search still applies to the counts; the selected tab does not, or the
+    // other tabs would all read zero while one is open.
     expect(where.AND).toBeDefined();
-    expect(where.status).toBe('PENDING');
-    expect(payload.summary.counts).toEqual({ PENDING: 4 });
+    expect(where.status).toBeUndefined();
+    expect(payload.summary.counts).toEqual({ PENDING: 4, REFUNDS: 0 });
+  });
+
+  it('reports a Refunds count beside the status buckets', async () => {
+    prisma.booking.count.mockResolvedValue(7);
+
+    const { payload } = await invoke();
+
+    expect(payload.summary.counts.REFUNDS).toBe(7);
+  });
+
+  it('turns the Refunds tab into a refund predicate, not a status value', async () => {
+    await invoke({ status: 'REFUNDS' });
+
+    expect(whereUsed().OR).toEqual([
+      { status: 'REFUNDED' },
+      { refundStatus: { in: ['PENDING', 'SUCCEEDED', 'FAILED'] } },
+    ]);
+    expect(whereUsed().status).toBeUndefined();
   });
 });

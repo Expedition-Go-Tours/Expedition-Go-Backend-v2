@@ -2076,7 +2076,18 @@ function buildSupplierBookingsFilter(supplierId, query = {}) {
     // (Travio Ghana or Expedition storefront) is visible here. The frontend
     // shows which platform each booking came from via the source field.
   };
-  if (status) where.status = status;
+  // "Refunds" is a tab, not a BookingStatus: it spans bookings whose refund
+  // has been issued, is pending, or failed, plus any row whose status is
+  // already REFUNDED. Sending it through as a status would simply match
+  // nothing.
+  if (status === 'REFUNDS' || status === 'REFUNDED') {
+    where.OR = [
+      { status: 'REFUNDED' },
+      { refundStatus: { in: ['PENDING', 'SUCCEEDED', 'FAILED'] } },
+    ];
+  } else if (status) {
+    where.status = status;
+  }
   if (customerId) where.customerId = customerId;
   if (tourId) where.tourId = tourId;
 
@@ -2182,11 +2193,24 @@ const getSupplierBookings = catchAsync(async (req, res, next) => {
 
   // Shared with the CSV export so the file can never disagree with the screen.
   const { where, orderBy } = buildSupplierBookingsFilter(supplierId, req.query);
+  // Each tab's count describes that tab, so the selected tab must not filter
+  // the counts. Search and date filters still apply.
+  const { where: countWhere } = buildSupplierBookingsFilter(supplierId, {
+    ...req.query,
+    status: undefined,
+  });
+  const refundsWhere = {
+    ...countWhere,
+    OR: [
+      { status: 'REFUNDED' },
+      { refundStatus: { in: ['PENDING', 'SUCCEEDED', 'FAILED'] } },
+    ],
+  };
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
   const take = Math.min(parseInt(limit), 100);
 
-  const [bookings, totalCount, revenueAgg, statusGroups] = await Promise.all([
+  const [bookings, totalCount, revenueAgg, statusGroups, refundsCount] = await Promise.all([
     prisma.booking.findMany({
       where,
       include: {
@@ -2224,15 +2248,19 @@ const getSupplierBookings = catchAsync(async (req, res, next) => {
     // supplier with more than one page.
     prisma.booking.groupBy({
       by: ['status'],
-      where,
+      where: countWhere,
       _count: { _all: true },
     }),
+    prisma.booking.count({ where: refundsWhere }),
   ]);
 
   const counts = statusGroups.reduce((acc, group) => {
     acc[group.status] = group._count?._all ?? group._count ?? 0;
     return acc;
   }, {});
+  // A booking can be CANCELLED with a refund, so this is its own tab rather
+  // than another BookingStatus bucket.
+  counts.REFUNDS = refundsCount;
 
   // Admin-approval gate: open cancellation requests ride along as chips.
   const { pendingRequestsForBookingIds } = require('../../core/services/cancellationRequestService');
