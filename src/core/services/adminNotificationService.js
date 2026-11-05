@@ -120,6 +120,11 @@ function mirrorToDiscord(type, title, message, data) {
 }
 
 async function notifyAdmin({ type, title, message, data = {}, storefront = null }) {
+  // Backstop: a supplier↔customer thread is private to those two parties. No
+  // call site may put it in the admin bell, whatever it passes.
+  if (type === 'NEW_MESSAGE' && data?.conversationType === 'SUPPLIER_CUSTOMER') {
+    return { success: true, skipped: 'supplier-customer-chat' };
+  }
   try {
     // Auto-detect storefront from supplier if not explicitly provided
     let resolvedStorefront = storefront;

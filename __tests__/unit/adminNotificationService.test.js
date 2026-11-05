@@ -29,6 +29,31 @@ describe('adminNotificationService', () => {
   });
 
   describe('notifyAdmin', () => {
+    it('never puts a supplier↔customer thread in the admin bell', async () => {
+      const result = await service.notifyAdmin({
+        type: 'NEW_MESSAGE',
+        title: 'New message from Supplier',
+        message: 'Move tomorrow to 9am?',
+        data: { conversationId: 'c-1', conversationType: 'SUPPLIER_CUSTOMER', chatType: 'customers' },
+      });
+
+      expect(prisma.adminNotification.create).not.toHaveBeenCalled();
+      expect(mockIo.emit).not.toHaveBeenCalled();
+      expect(result).toEqual({ success: true, skipped: 'supplier-customer-chat' });
+    });
+
+    it('still accepts a supplier→platform message', async () => {
+      const result = await service.notifyAdmin({
+        type: 'NEW_MESSAGE',
+        title: 'New message from Supplier',
+        message: 'Invoice question',
+        data: { conversationId: 'c-2', conversationType: 'SUPPLIER_ADMIN', chatType: 'suppliers' },
+      });
+
+      expect(prisma.adminNotification.create).toHaveBeenCalled();
+      expect(result.success).toBe(true);
+    });
+
     it('creates admin notification and emits socket event', async () => {
       const result = await service.notifyAdmin({ type: 'TEST', title: 'Test', message: 'Hello', data: { key: 'val' } });
 

@@ -329,9 +329,11 @@ async function ingestReceivedEmail(emailId) {
     });
     if (!result?.success) console.error(`[ChatEmailIngest] notification failed for ${o.userId}`);
 
-    // Admin/expedition recipients also ring the platform admin bell.
+    // Admin/expedition recipients also ring the platform admin bell — but only
+    // in a platform inbox. A supplier↔customer thread never reaches the admin
+    // feed, even when the customer account happens to hold an admin role.
     const roles = Array.isArray(o.user?.roles) ? o.user.roles : [];
-    if (roles.includes('admin') || roles.includes('expedition')) {
+    if (conversation.type !== 'SUPPLIER_CUSTOMER' && (roles.includes('admin') || roles.includes('expedition'))) {
       notifyAdmin({
         type: 'NEW_MESSAGE',
         title: `New message from ${author.user.name || 'Email reply'}`,

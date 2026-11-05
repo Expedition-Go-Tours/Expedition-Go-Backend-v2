@@ -523,8 +523,16 @@ async function sendMessage(conversationId, accessId, actorId, content, attachmen
     chatType = 'customers';
   }
 
-  if (sender) {
-    if (sender.roles.includes('supplier')) {
+  // A supplier↔customer thread is private to those two parties: the platform
+  // is not a participant. Routing it into the admin bell put 47 third-party
+  // conversations into the dashboard (every time a supplier replied to their
+  // own traveller). Only the platform's own inboxes may notify admins.
+  const isPlatformConversation = participant.conversation.type !== 'SUPPLIER_CUSTOMER';
+
+  if (sender && isPlatformConversation) {
+    // Supplier → platform. A supplier in any other conversation is a customer
+    // of that conversation, not a party to platform support.
+    if (sender.roles.includes('supplier') && participant.conversation.type === 'SUPPLIER_ADMIN') {
       console.log('[ChatService] notifyAdmin called:', { conversationId, conversationType: participant.conversation.type, chatType, senderRoles: sender.roles, senderName: sender.name });
       notifyAdmin({
         type: 'NEW_MESSAGE',

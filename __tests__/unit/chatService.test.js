@@ -266,13 +266,13 @@ describe('chatService', () => {
       );
     });
 
-    it('notifies both admin and customer for SUPPLIER_CUSTOMER type', async () => {
+    it('notifies the customer but never the admin in a SUPPLIER_CUSTOMER thread', async () => {
       prisma.conversationParticipant.findUnique.mockResolvedValue({
         ...mockUniqueParticipant,
         conversation: {
           id: 'c-1',
           type: 'SUPPLIER_CUSTOMER',
-          participants: [{ userId: 'u-1' }, { userId: 'customer-1' }, { userId: 'admin-1' }],
+          participants: [{ userId: 'u-1' }, { userId: 'customer-1' }],
         },
       });
       prisma.user.findUnique.mockResolvedValue({ roles: ['supplier'], name: 'Supplier' });
@@ -281,8 +281,27 @@ describe('chatService', () => {
       await chatService.sendMessage('c-1', 'u-1', 'u-1', 'Hello');
 
       const calls = enqueueNotification.mock.calls;
-      const customerCalls = calls.filter(c => c[0].userId === 'customer-1');
-      expect(customerCalls.length).toBeGreaterThan(0);
+      expect(calls.some((c) => c[0].userId === 'customer-1')).toBe(true);
+      // The platform is not a party to a supplier↔customer conversation.
+      expect(notifyAdmin).not.toHaveBeenCalled();
+    });
+
+    it('does not ring the admin bell for a customer replying to a supplier', async () => {
+      prisma.conversationParticipant.findUnique.mockResolvedValue({
+        ...mockUniqueParticipant,
+        userId: 'customer-1',
+        conversation: {
+          id: 'c-1',
+          type: 'SUPPLIER_CUSTOMER',
+          participants: [{ userId: 'u-1' }, { userId: 'customer-1' }],
+        },
+      });
+      prisma.user.findUnique.mockResolvedValue({ roles: ['customer'], name: 'Traveller' });
+      enqueueNotification.mockResolvedValue();
+
+      await chatService.sendMessage('c-1', 'customer-1', 'customer-1', 'Hello');
+
+      expect(notifyAdmin).not.toHaveBeenCalled();
     });
   });
 
