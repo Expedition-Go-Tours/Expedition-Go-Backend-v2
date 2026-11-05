@@ -183,9 +183,27 @@ function salesPaymentRecovered({ amount, currency, paymentIntentId, email }) {
   };
 }
 
-function salesRefundIssued({ amount, currency, chargeId, bookingNumber, provider = 'Stripe' }) {
+/**
+ * A refund left the platform. The sales channel uses this to reconcile money,
+ * so it carries the people and the booking behind the charge: an amount and a
+ * charge id alone cannot tell support who was refunded, by whom, or for what.
+ */
+function salesRefundIssued({
+  amount,
+  currency,
+  chargeId,
+  bookingNumber,
+  provider = 'Stripe',
+  customerName,
+  customerEmail,
+  supplierName,
+  tourTitle,
+  issuedBy,
+  reason,
+}) {
   const isPaypal = String(provider).toLowerCase() === 'paypal';
   const referenceLabel = isPaypal ? 'Capture' : 'Charge';
+  const customer = [customerName, customerEmail].filter(Boolean).join(' · ');
   return {
     content: `Refund issued for ${referenceLabel} \`${chargeId || 'unknown'}\``,
     opts: {
@@ -195,6 +213,11 @@ function salesRefundIssued({ amount, currency, chargeId, bookingNumber, provider
         { name: 'Amount Refunded', value: money(amount, currency), inline: true },
         { name: 'Booking #', value: bookingNumber ? bookingLink(bookingNumber) : '—', inline: true },
         { name: referenceLabel, value: `\`${chargeId || 'unknown'}\``, inline: true },
+        ...(customer ? [{ name: 'Customer', value: customer, inline: true }] : []),
+        ...(supplierName ? [{ name: 'Supplier', value: supplierName, inline: true }] : []),
+        ...(tourTitle ? [{ name: 'Tour', value: tourTitle, inline: true }] : []),
+        ...(issuedBy ? [{ name: 'Issued by', value: issuedBy, inline: true }] : []),
+        ...(reason ? [{ name: 'Reason', value: reason, inline: true }] : []),
       ],
       cooldownKey: chargeId,
     },

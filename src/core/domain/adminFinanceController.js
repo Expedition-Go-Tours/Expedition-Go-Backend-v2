@@ -814,7 +814,13 @@ exports.resolveDispute = catchAsync(async (req, res, next) => {
     if (hasRefundablePayment && dispute.booking.paymentStatus === 'SUCCEEDED') {
       try {
         const { refundBookingPayment } = require('../services/payments');
-        const refund = await refundBookingPayment(dispute.booking, Math.round(amount * 100));
+        const refund = await refundBookingPayment(dispute.booking, Math.round(amount * 100), {
+          metadata: {
+            reason: 'dispute_release',
+            bookingId: dispute.booking.id,
+            adminId: req.user?.id || null,
+          },
+        });
         stripeRefundId = refund?.id || null;
       } catch (err) {
         console.error(`[Dispute] Refund failed for booking ${dispute.booking.id}:`, err.message);

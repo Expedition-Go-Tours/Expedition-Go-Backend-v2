@@ -206,24 +206,74 @@ exports.handleStripeWebhook = catchAsync(async (req, res, next) => {
       } else if (event.type === 'charge.refunded') {
         const ch = event.data.object || {};
         // The refund notification is the only Discord message for a refunded
-        // booking, so it needs to carry the booking number. The PaymentIntent
-        // metadata was stamped at checkout.
-        let bookingNumber = null;
+        // booking, so it carries the booking, the people and the decision
+        // behind the charge — support reconciles from this message alone.
+        let booking = null;
         try {
           const piId = ch.payment_intent;
           if (piId) {
-            const booking = await prisma.booking.findFirst({
+            booking = await prisma.booking.findFirst({
               where: { stripePaymentIntentId: piId },
-              select: { bookingNumber: true },
+              select: {
+                bookingNumber: true,
+                customer: { select: { name: true, email: true } },
+                tour: {
+                  select: {
+                    title: true,
+                    supplier: { select: { name: true } },
+                  },
+                },
+              },
             });
-            bookingNumber = booking?.bookingNumber || null;
           }
         } catch { /* best effort — the refund is the critical part */ }
+
+        // The newest refund carries our metadata (reason / requestId / adminId).
+        const refunds = (ch.refunds && ch.refunds.data) || [];
+        const newest = refunds.reduce(
+          (acc, r) => ((r && (r.created || 0)) > (acc && (acc.created || 0)) ? r : acc),
+          refunds[0],
+        );
+        const meta = (newest && newest.metadata) || {};
+        const reasonLabels = {
+          supplier_refund_request: 'Supplier refund request',
+          customer_refund_claim: 'Customer refund claim',
+          booking_modify: 'Booking modification',
+          dispute_release: 'Refund request resolved by admin',
+        };
+
+        let issuedBy = null;
+        try {
+          let adminId = meta.adminId || null;
+          if (!adminId && meta.requestId) {
+            const request = await prisma.supplierRefundRequest.findUnique({
+              where: { id: meta.requestId },
+              select: { executedBy: true, decidedBy: true },
+            });
+            adminId = request?.executedBy || request?.decidedBy || null;
+          }
+          if (adminId) {
+            const admin = await prisma.user.findUnique({
+              where: { id: adminId },
+              select: { name: true, email: true },
+            });
+            issuedBy = admin
+              ? (admin.name ? `${admin.name} (${admin.email})` : admin.email)
+              : null;
+          }
+        } catch { /* the name is a bonus, never a reason to lose the alert */ }
+
         const refunded = salesRefundIssued({
           amount: (ch.amount_refunded || 0) / 100,
           currency: ch.currency || 'USD',
           chargeId: ch.id,
-          bookingNumber,
+          bookingNumber: booking?.bookingNumber || null,
+          customerName: booking?.customer?.name || null,
+          customerEmail: booking?.customer?.email || null,
+          supplierName: booking?.tour?.supplier?.name || null,
+          tourTitle: booking?.tour?.title || null,
+          issuedBy,
+          reason: reasonLabels[meta.reason] || null,
         });
         notifyDiscord('sales', refunded.content, refunded.opts);
       }

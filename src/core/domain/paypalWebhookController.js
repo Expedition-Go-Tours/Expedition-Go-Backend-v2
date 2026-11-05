@@ -66,7 +66,14 @@ async function handleCaptureRefunded(capture) {
   const fullyRefunded = String(capture.status || '').toUpperCase() === 'REFUNDED';
   const booking = await prisma.booking.findFirst({
     where: { paypalCaptureId: captureId },
-    select: { id: true, bookingNumber: true, status: true, paymentStatus: true },
+    select: {
+      id: true,
+      bookingNumber: true,
+      status: true,
+      paymentStatus: true,
+      customer: { select: { name: true, email: true } },
+      tour: { select: { title: true, supplier: { select: { name: true } } } },
+    },
   });
 
   if (booking) {
@@ -100,6 +107,10 @@ async function handleCaptureRefunded(capture) {
       currency: capture?.amount?.currency_code || 'USD',
       chargeId: captureId,
       bookingNumber: booking?.bookingNumber || null,
+      customerName: booking?.customer?.name || null,
+      customerEmail: booking?.customer?.email || null,
+      supplierName: booking?.tour?.supplier?.name || null,
+      tourTitle: booking?.tour?.title || null,
       provider: 'PayPal',
     });
     notifyDiscord('sales', message.content, message.opts);

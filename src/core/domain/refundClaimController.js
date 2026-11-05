@@ -498,7 +498,13 @@ exports.adminRelease = catchAsync(async (req, res, next) => {
       const cents = Math.round(releasedAmount * 100);
       try {
         await refundBookingPayment(booking, cents, {
-          metadata: { reason: 'customer_refund_claim', claimId: claim.id, bookingId: booking.id },
+          metadata: {
+            reason: 'customer_refund_claim',
+            claimId: claim.id,
+            bookingId: booking.id,
+            // Lets the sales-channel refund alert name the admin who released it.
+            adminId: req.user?.id || null,
+          },
         });
       } catch (refundErr) {
         console.error('[RefundClaim] Stripe refund failed:', refundErr.message);

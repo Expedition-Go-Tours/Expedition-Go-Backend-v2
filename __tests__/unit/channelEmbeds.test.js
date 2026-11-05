@@ -80,6 +80,37 @@ describe('channelEmbeds — sales', () => {
     const rf = salesRefundIssued({ amount: 20, currency: 'USD', chargeId: 'ch_1' });
     expect(rf.opts.fields.find((x) => x.name === 'Amount Refunded').value).toContain('20.00');
   });
+
+  it('salesRefundIssued names the people, the tour and who issued it', () => {
+    const rf = salesRefundIssued({
+      amount: 35,
+      currency: 'usd',
+      chargeId: 'ch_3UU48z',
+      bookingNumber: 'TRG-45236279-2026-54',
+      customerName: 'Ama Mensah',
+      customerEmail: 'ama@example.com',
+      supplierName: 'Expedition-Go Tours LTD',
+      tourTitle: 'Accra Guided City Tour',
+      issuedBy: 'Peter Mensah (ops@example.com)',
+      reason: 'Supplier refund request',
+    });
+    const byName = (name) => rf.opts.fields.find((f) => f.name === name)?.value;
+
+    expect(byName('Customer')).toBe('Ama Mensah · ama@example.com');
+    expect(byName('Supplier')).toBe('Expedition-Go Tours LTD');
+    expect(byName('Tour')).toBe('Accra Guided City Tour');
+    expect(byName('Issued by')).toBe('Peter Mensah (ops@example.com)');
+    expect(byName('Reason')).toBe('Supplier refund request');
+  });
+
+  it('salesRefundIssued omits fields it cannot fill rather than printing blanks', () => {
+    const rf = salesRefundIssued({ amount: 20, currency: 'USD', chargeId: 'ch_1' });
+    const names = rf.opts.fields.map((f) => f.name);
+    expect(names).not.toContain('Customer');
+    expect(names).not.toContain('Supplier');
+    expect(names).not.toContain('Issued by');
+    expect(names).toContain('Amount Refunded');
+  });
 });
 
 describe('channelEmbeds — verification', () => {
