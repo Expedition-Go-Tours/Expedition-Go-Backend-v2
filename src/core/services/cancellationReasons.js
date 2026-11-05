@@ -88,6 +88,69 @@ const SYSTEM_CODES = Object.freeze({
   PAYMENT_NOT_COLLECTED: 'Payment could not be collected before the activity',
 });
 
+/**
+ * The customer's own reason, as offered by the storefront cancellation modal.
+ *
+ * This is a second axis, not another fault category: the taxonomy above says
+ * who is responsible, this says why the traveller left. The storefront sends
+ * these codes and older rows already hold them in `cancellationReason`, so the
+ * codes stay stable; the label is the only thing a person should ever read.
+ */
+const CUSTOMER_REASONS = Object.freeze([
+  { code: 'SCHEDULE_CHANGED', label: 'My schedule changed' },
+  { code: 'HEALTH_MEDICAL', label: 'Health or medical reasons' },
+  { code: 'TRANSPORTATION', label: 'Transportation issues' },
+  { code: 'WEATHER_SAFETY', label: 'Weather or safety concerns' },
+  { code: 'FOUND_ALTERNATIVE', label: 'Found a better option' },
+  { code: 'OTHER', label: 'Other' },
+]);
+
+const CUSTOMER_REASON_BY_CODE = Object.freeze(
+  CUSTOMER_REASONS.reduce((acc, r) => { acc[r.code] = r; return acc; }, {})
+);
+
+// SCREAMING_SNAKE identifiers (HEALTH_MEDICAL, FOUND_SOMETHING_NEW). Free text
+// such as "Payment not collected before the activity" never matches.
+const CODE_LIKE = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/;
+
+function humanizeReasonCode(code) {
+  const words = String(code || '').trim().toLowerCase().replace(/_+/g, ' ').trim();
+  if (!words) return null;
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
+ * The one place a cancellation becomes readable text.
+ *
+ * Order matters:
+ *   1. Customer-initiated cancellations carry the specific choice in
+ *      `cancellationReason`; the taxonomy code on those rows is just
+ *      CUSTOMER_REQUESTED_CANCEL, which names nobody's reason.
+ *   2. Supplier/system rows carry a taxonomy code — use its label.
+ *   3. Anything left is either prose or a code we do not know yet. Humanise
+ *      code-like strings instead of printing underscores at a person; an
+ *      unknown code should still say something, and the raw value stays
+ *      available to logs and support.
+ */
+function displayCancellationReason(booking = {}) {
+  const origin = String(booking.cancellationOrigin || '').trim().toUpperCase();
+  const raw = typeof booking.cancellationReason === 'string'
+    ? booking.cancellationReason.trim()
+    : '';
+  const customerReason = raw ? CUSTOMER_REASON_BY_CODE[raw.toUpperCase()] : null;
+
+  if (origin === 'CUSTOMER' && raw) {
+    return customerReason?.label || (CODE_LIKE.test(raw) ? humanizeReasonCode(raw) : raw);
+  }
+
+  const taxonomy = booking.cancellationCode ? getReason(booking.cancellationCode) : null;
+  if (taxonomy) return taxonomy.label;
+
+  if (!raw) return null;
+  return CODE_LIKE.test(raw) ? humanizeReasonCode(raw) : raw;
+}
+
+
 // Category defaults — a category without a matching code still resolves.
 const CATEGORY_RULES = Object.freeze({
   [CATEGORIES.OPERATIONAL]: { countsTowardRate: true, feeApplies: true },
@@ -276,9 +339,13 @@ module.exports = {
   REFUND_STATES,
   REASONS,
   SYSTEM_CODES,
+  CUSTOMER_REASONS,
+  CUSTOMER_REASON_BY_CODE,
   CATEGORY_RULES,
   getReason,
   getReasonsByCategory,
+  humanizeReasonCode,
+  displayCancellationReason,
   rateAndFeeFor,
   cancellationFeePct,
   calcCancellationFee,

@@ -246,8 +246,7 @@ describe('getCancellationRecords — same window as the summary', () => {
     expect(record.countsTowardRate).toBe(true);
   });
 
-  it('orders records by cancellation date, newest first', async () => {
-    const mk = (id, cancelledAt) => ({
+  it('orders records by cancellation date, newest first', async () => {    const mk = (id, cancelledAt) => ({
       id,
       status: 'CANCELLED',
       travelDate: daysAgo(1),
@@ -281,5 +280,37 @@ describe('getCancellationRecords — same window as the summary', () => {
       'middle',
       'older',
     ]);
+  });
+
+  it('shows the customer’s chosen reason, not the generic customer label', async () => {
+    prisma.booking.findMany.mockResolvedValue([
+      {
+        id: 'r-customer',
+        status: 'CANCELLED',
+        travelDate: daysAgo(2),
+        cancelledAt: daysAgo(1),
+        cancellationReason: 'HEALTH_MEDICAL',
+        cancellationCode: 'CUSTOMER_REQUESTED_CANCEL',
+        cancellationCategory: 'CUSTOMER_REQUESTED',
+        cancellationOrigin: 'CUSTOMER',
+        countsTowardRate: false,
+        cancellationNote: null,
+        cancellationFee: null,
+        refundStatus: null,
+        bookingNumber: 'TRG-2',
+        refundAmount: null,
+        grossAmount: 160,
+        tour: { id: 't-1', title: 'Shai Hills Safari' },
+      },
+    ]);
+
+    const req = { user: { id: 'supplier-1' }, query: { days: 30 } };
+    const res = makeRes();
+    await controller.getCancellationRecords(req, res);
+
+    const record = res.json.mock.calls[0][0].data.records[0];
+    expect(record.reason).toBe('Health or medical reasons');
+    expect(record.reason).not.toContain('_');
+    expect(record.countsTowardRate).toBe(false);
   });
 });

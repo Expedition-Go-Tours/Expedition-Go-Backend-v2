@@ -9,7 +9,7 @@ const { placeRankFor, normalizeRegion } = require('../../core/services/placeReso
 const { enqueueEvent, enqueueEmail, enqueueNotification } = require('../../core/services/queue');
 const { sendSupplierCancellationEmail } = require('../../core/services/emailService');
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy, isValidEmail } = require('../../core/services/bookingHelpers');
-const { withChoiceToken } = require('../../core/services/cancellationReasons');
+const { withChoiceToken, displayCancellationReason } = require('../../core/services/cancellationReasons');
 const { notifyDiscord } = require('../../core/services/discordNotifier');
 const { salesBookingCancelled } = require('../../core/services/channelEmbeds');
 const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('../../core/services/tourHelpers');
@@ -2265,7 +2265,13 @@ const getSupplierBookings = catchAsync(async (req, res, next) => {
       bookings: scopeBookings(req, sanitizeBookingPaymentInternals(
         bookingsWithAttention.map((b) =>
           supplierContact.withSupplierContact(
-            { ...b, pendingCancellation: pendingMap.get(b.id) || null },
+            {
+              ...b,
+              pendingCancellation: pendingMap.get(b.id) || null,
+              // Readable reason for the list/drawer. Raw codes stay on the
+              // row for support; nothing user-facing prints them.
+              cancellationReasonLabel: displayCancellationReason(b),
+            },
             contacts.get(b.id) || null,
           ),
         ),
@@ -2551,7 +2557,11 @@ const getSupplierBookingDetail = catchAsync(async (req, res, next) => {
     data: {
       booking: scopeBooking(req, sanitizeBookingPaymentInternals(
         supplierContact.withSupplierContact(
-          { ...bookingWithAttention, pendingCancellation: pendingMap.get(booking.id) || null },
+          {
+            ...bookingWithAttention,
+            pendingCancellation: pendingMap.get(booking.id) || null,
+            cancellationReasonLabel: displayCancellationReason(bookingWithAttention),
+          },
           contact,
         ),
       )),

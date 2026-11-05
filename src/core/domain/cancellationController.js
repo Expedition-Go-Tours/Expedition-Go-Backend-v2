@@ -1,7 +1,7 @@
 const prisma = require('../services/prismaClient');
 const catchAsync = require('../services/catchAsync');
 const { enqueueNotification } = require('../services/queue');
-const { getReason, ORIGINS } = require('../services/cancellationReasons');
+const { getReason, ORIGINS, displayCancellationReason } = require('../services/cancellationReasons');
 
 // Legacy heuristic — ONLY used for rows that predate the structured fields
 // (countsTowardRate IS NULL, i.e. before backfillCancellationFields.js ran).
@@ -339,10 +339,7 @@ exports.getCancellationRecords = catchAsync(async (req, res, next) => {
         id: r.id,
         travelDate: r.travelDate.toISOString().split('T')[0],
         cancelledOn: cancellationDate(r).toISOString().split('T')[0],
-        reason:
-          (r.cancellationCode && getReason(r.cancellationCode)?.label) ||
-          r.cancellationReason ||
-          'Unknown',
+        reason: displayCancellationReason(r) || 'Unknown',
         note: r.cancellationNote || null,
         category: r.cancellationCategory || null,
         origin: r.cancellationOrigin || null,

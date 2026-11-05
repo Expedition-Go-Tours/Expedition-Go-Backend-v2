@@ -22,6 +22,7 @@ const { getBrand } = require('../../config/brands');
 const { computeFunnel } = require('./services/funnelEngine');
 const { getActivityFeed } = require('./services/activityFeed');
 const { viewerCalendar } = require('./services/viewerCalendar');
+const { displayCancellationReason } = require('./services/cancellationReasons');
 const { Prisma } = require('@prisma/client');
 
 function makeAdminController(brandKey) {
@@ -1415,6 +1416,9 @@ controller.getBookings = catchAsync(async (req, res, next) => {
     return {
       ...rest,
       pendingCancellation: cancellationRequests && cancellationRequests[0] ? cancellationRequests[0] : null,
+      // Human-readable cancellation reason; the raw `cancellationReason` on a
+      // customer cancel is a storefront code (HEALTH_MEDICAL).
+      cancellationReasonLabel: displayCancellationReason(b),
     };
   });
 
@@ -1503,6 +1507,7 @@ controller.getBookingById = catchAsync(async (req, res, next) => {
     data: {
       ...bookingRest,
       pendingCancellation: cancellationRequests && cancellationRequests[0] ? cancellationRequests[0] : null,
+      cancellationReasonLabel: displayCancellationReason(booking),
     },
   });
 });

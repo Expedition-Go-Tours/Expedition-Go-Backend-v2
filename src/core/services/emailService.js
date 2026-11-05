@@ -18,6 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const { Resend } = require('resend');
 const prisma = require('./prismaClient');
+const { displayCancellationReason } = require('./cancellationReasons');
 const getConfig = require('./getConfig');
 const { render } = require('./emailRenderer');
 const fmt = require('./emailFormatting');
@@ -1234,7 +1235,7 @@ function cancellationEmailData(base, b, outcome) {
     cancellationPolicyText: cancellationPolicyTextFor(b.tour),
     cancelledAtLabel: fmt.formatDateTime(outcome.cancelledAt),
     cancellationDeadlineLabel: deadline ? fmt.formatDateTime(deadline) : '',
-    cancellationReason: b.cancellationReason || '',
+    cancellationReason: displayCancellationReason(b) || '',
     refundAmountLabel: fmt.formatCurrency(outcome.refundAmount || 0, currency),
     refundStatusLabel,
     refundTimeline,
@@ -1377,7 +1378,7 @@ async function sendSupplierCancelledBookingEmail(booking, { reason, refundAmount
     key: 'supplier-cancelled-booking',
     data: {
       ...data,
-      cancellationReason: reason || b.cancellationReason || '',
+      cancellationReason: reason || displayCancellationReason(b) || '',
       ...(openChoice
         ? {
             choiceUrl: emailUrls.cancellationChoice(
@@ -1408,7 +1409,7 @@ async function sendSupplierCancellationFeeEmail(booking, { feeAmount } = {}) {
     grossAmountLabel: fmt.formatCurrency(b.grossAmount, b.currency),
     refundAmountLabel: fmt.formatCurrency(b.refundAmount ?? b.grossAmount, b.currency),
     payoutsUrl: `${emailUrls.dashboardBaseForBrand(base.brandKey)}/earnings`,
-    reasonLabel: b.cancellationReason || '',
+    reasonLabel: displayCancellationReason(b) || '',
   };
   return sendRendered({
     to: supplier.email,
@@ -2131,7 +2132,7 @@ async function sendSupplierPlatformCancelledEmail(booking, { reason, compensatio
   });
   const data = {
     ...cancellationEmailData(base, b, outcome),
-    cancellationReason: reason || b.cancellationReason || '',
+    cancellationReason: reason || displayCancellationReason(b) || '',
     compensationLabel: fmt.formatCurrency(compensation ?? 0, b.currency),
   };
   return sendRendered({
@@ -2148,7 +2149,7 @@ async function sendSupplierCancellationRecordedEmail(booking, { reason } = {}) {
   const supplier = b.tour?.supplier || {};
   const data = {
     ...base,
-    cancellationReason: reason || b.cancellationReason || '',
+    cancellationReason: reason || displayCancellationReason(b) || '',
     refundAmountLabel: fmt.formatCurrency(b.refundAmount ?? b.grossAmount, b.currency),
   };
   return sendRendered({
