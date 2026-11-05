@@ -15,6 +15,55 @@ const { notifyDiscord } = require('../services/discordNotifier');
 const prisma = require('../services/prismaClient');
 
 /**
+ * Name a rejected delivery without trusting it.
+ *
+ * A signature failure means "we could not read this money event", and the
+ * default log said only that. The next occurrence has to explain itself: which
+ * event id/type claimed to arrive, when the sender says it signed it, how many
+ * signatures it offered, and how the body reached us. The payload is
+ * UNVERIFIED — these fields are logged for diagnosis only and are never acted
+ * on, so we deliberately read just the envelope (id/type/mode/account) and
+ * never the customer data inside it.
+ */
+function describeRejectedDelivery(req, signature) {
+  const fields = String(signature || '').split(',').map((entry) => entry.trim());
+  const signedAt = fields.find((entry) => entry.startsWith('t='));
+  const signaturesOffered = fields.filter((entry) => entry.startsWith('v1=')).length;
+
+  const raw = req.body;
+  const bytes = Buffer.isBuffer(raw) ? raw.length : (typeof raw === 'string' ? Buffer.byteLength(raw) : 0);
+
+  let envelope = null;
+  try {
+    const parsed = JSON.parse(raw);
+    envelope = parsed && typeof parsed === 'object'
+      ? {
+          id: parsed.id || null,
+          type: parsed.type || null,
+          livemode: typeof parsed.livemode === 'boolean' ? parsed.livemode : null,
+          // Set when the event belongs to a Connect account — a second Stripe
+          // account posting here would show up as a mismatched signature.
+          account: parsed.account || null,
+        }
+      : null;
+  } catch {
+    envelope = { parse: 'not-json' };
+  }
+
+  return JSON.stringify({
+    signedAt: signedAt ? signedAt.slice(2) : null,
+    signaturesOffered,
+    bytes,
+    contentType: req.headers['content-type'] || null,
+    // A compressed body would fail verification: the signature covers the
+    // bytes Stripe sent, not what they decompress to.
+    contentEncoding: req.headers['content-encoding'] || null,
+    userAgent: req.headers['user-agent'] || null,
+    envelope, // unverified
+  });
+}
+
+/**
  * Handle Stripe webhooks
  */
 exports.handleStripeWebhook = catchAsync(async (req, res, next) => {
@@ -50,7 +99,9 @@ exports.handleStripeWebhook = catchAsync(async (req, res, next) => {
     event = verifyWebhookSignature(req.body, signature, endpointSecret);
     console.log(`🔔 Stripe webhook received: ${event.type}`);
   } catch (error) {
-    console.error('❌ Webhook signature verification failed:', error.message);
+    console.error(
+      `❌ Webhook signature verification failed: ${error.message} | ${describeRejectedDelivery(req, signature)}`,
+    );
     return next(new AppError('Invalid webhook signature', 400));
   }
 
