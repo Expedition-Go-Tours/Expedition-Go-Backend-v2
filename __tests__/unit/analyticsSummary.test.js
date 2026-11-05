@@ -8,7 +8,7 @@
  */
 jest.mock('../../src/core/services/prismaClient', () => ({
   booking: { findMany: jest.fn() },
-  tour: { findMany: jest.fn() },
+  tour: { findMany: jest.fn(), findFirst: jest.fn() },
   supplierProfile: { findUnique: jest.fn() },
   review: { count: jest.fn() },
 }));
@@ -27,8 +27,8 @@ function makeRes() {
   return { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
 }
 
-async function invoke(handler, query = {}) {
-  const req = { supplierId: 'supplier-1', user: { id: 'user-1' }, query };
+async function invoke(handler, query = {}, params = {}) {
+  const req = { supplierId: 'supplier-1', user: { id: 'user-1' }, query, params };
   const res = makeRes();
   const next = jest.fn();
   await handler(req, res, next);
@@ -151,5 +151,76 @@ describe('getProductAnalytics', () => {
       revenue: 100,
       payout: 80,
     });
+  });
+});
+
+describe('getProductPerformance', () => {
+  const paid = { grossAmount: 1000, supplierPayout: 800, paidAt: daysAgo(1), status: 'CONFIRMED', createdAt: daysAgo(6), travelDate: daysAgo(-4), paymentStatus: 'SUCCEEDED' };
+  const previousPaid = { grossAmount: 500, supplierPayout: 400, paidAt: daysAgo(45), status: 'CONFIRMED', createdAt: daysAgo(50), travelDate: daysAgo(40) };
+  const cancelled = {
+    id: 'b-cancelled',
+    grossAmount: 200,
+    supplierPayout: 160,
+    paidAt: daysAgo(8),
+    createdAt: daysAgo(20),
+    travelDate: daysAgo(1),
+    cancelledAt: daysAgo(2),
+    status: 'CANCELLED',
+    cancellationOrigin: 'SUPPLIER',
+    cancellationCode: 'VEHICLE_BREAKDOWN',
+    countsTowardRate: true,
+    paymentStatus: 'SUCCEEDED',
+  };
+
+  it('refuses a tour that is not the supplier’s', async () => {
+    prisma.tour.findFirst.mockResolvedValue(null);
+    const res = makeRes();
+    const next = jest.fn();
+
+    await controller.getProductPerformance(
+      { supplierId: 'supplier-1', params: { tourId: 'other' }, query: { period: '30d' } },
+      res,
+      next,
+    );
+
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
+  });
+
+  it('returns revenue, the booking window and cancellations for one product', async () => {
+    prisma.tour.findFirst.mockResolvedValue({
+      id: 't1', title: 'Shai Hills Safari', coverPhoto: null, averageRating: 4.5,
+    });
+    prisma.review.count.mockImplementation(({ where }) => Promise.resolve(where.rating ? 1 : 10));
+    prisma.booking.findMany.mockResolvedValue([paid, previousPaid, cancelled]);
+
+    const data = await invoke(controller.getProductPerformance, { period: '30d' }, { tourId: 't1' });
+
+    expect(data.product).toMatchObject({ id: 't1', name: 'Shai Hills Safari' });
+    expect(data.revenue).toMatchObject({ gross: 1200, payout: 960, paid: 2, previousGross: 500 });
+    expect(data.bookings.total).toBe(2); // created inside the window: paid + cancelled
+    expect(data.bookings.leadTime.averageDays).toBeGreaterThan(0);
+    expect(data.bookings.leadTime.distribution.reduce((sum, bucket) => sum + bucket.count, 0)).toBe(2);
+    expect(data.cancellations).toMatchObject({
+      total: 1,
+      supplierCaused: 1,
+      atRisk: 1,
+      rate: 100,
+      lostValue: 200,
+    });
+    expect(data.series.buckets).toHaveLength(30);
+    expect(data.series.previous).toHaveLength(30);
+  });
+
+  it('scopes the series to the product and buckets paid money by paid date', async () => {
+    prisma.tour.findFirst.mockResolvedValue({
+      id: 't1', title: 'Shai Hills Safari', coverPhoto: null, averageRating: 4.5,
+    });
+    prisma.booking.findMany.mockResolvedValue([paid]);
+    prisma.review.count.mockResolvedValue(0);
+
+    const data = await invoke(controller.getProductPerformance, { period: '30d' }, { tourId: 't1' });
+
+    expect(prisma.booking.findMany.mock.calls[0][0].where.tourId).toBe('t1');
+    expect(data.series.buckets.reduce((sum, bucket) => sum + bucket.revenue, 0)).toBe(1000);
   });
 });

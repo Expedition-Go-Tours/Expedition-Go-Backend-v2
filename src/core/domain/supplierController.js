@@ -1105,6 +1105,182 @@ exports.getAnalyticsTimeseries = catchAsync(async (req, res) => {
   });
 });
 
+/**
+ * GET /suppliers/analytics/products/:tourId?period=30d|90d|12m
+ *
+ * One product's performance for the drill-down page: revenue and bookings for
+ * the window, the same figures for the previous window, the booking window
+ * (how far ahead people book), rating and cancellations.
+ *
+ * The booking window is the one number only our own data can produce — GA4
+ * cannot see it — and it is what tells a supplier whether to work on
+ * last-minute availability or on being found earlier.
+ */
+exports.getProductPerformance = catchAsync(async (req, res, next) => {
+  const supplierId = req.supplierId;
+  const { tourId } = req.params;
+  const period = resolveAnalyticsPeriod(req.query.period);
+
+  const tour = await prisma.tour.findFirst({
+    where: { id: tourId, supplierId },
+    select: { id: true, title: true, coverPhoto: true, averageRating: true },
+  });
+  if (!tour) {
+    return next(new AppError('Product not found or not yours', 404));
+  }
+
+  const { isSupplierCaused, cancellationDate } = require('./cancellationController');
+
+  const [bookings, reviewCount, lowRatings] = await Promise.all([
+    prisma.booking.findMany({
+      where: {
+        tourId,
+        isSimulated: false,
+        OR: [
+          { createdAt: { gte: period.previousStart, lt: period.end } },
+          { paidAt: { gte: period.previousStart, lt: period.end } },
+          { travelDate: { gte: period.start, lt: period.end } },
+          { cancelledAt: { gte: period.start, lt: period.end } },
+        ],
+      },
+      select: {
+        id: true,
+        status: true,
+        paymentStatus: true,
+        grossAmount: true,
+        supplierPayout: true,
+        paidAt: true,
+        createdAt: true,
+        travelDate: true,
+        cancelledAt: true,
+        cancellationCode: true,
+        cancellationCategory: true,
+        cancellationOrigin: true,
+        countsTowardRate: true,
+        cancellationReason: true,
+      },
+    }),
+    prisma.review.count({ where: { tourId, status: 'APPROVED' } }),
+    prisma.review.count({ where: { tourId, status: 'APPROVED', rating: { lte: 3 } } }),
+  ]);
+
+  const within = (date, from, to) => Boolean(date) && date >= from && date < to;
+
+  const money = (from, to) => bookings.reduce((acc, booking) => {
+    if (!within(booking.paidAt, from, to)) return acc;
+    acc.gross += Number(booking.grossAmount) || 0;
+    acc.payout += Number(booking.supplierPayout) || 0;
+    acc.paid += 1;
+    return acc;
+  }, { gross: 0, payout: 0, paid: 0 });
+
+  const currentMoney = money(period.start, period.end);
+  const previousMoney = money(period.previousStart, period.previousEnd);
+
+  const currentBookings = bookings.filter((b) => within(b.createdAt, period.start, period.end));
+  const previousBookings = bookings.filter((b) => within(b.createdAt, period.previousStart, period.previousEnd));
+  const countStatus = (status) => currentBookings.filter((b) => b.status === status).length;
+
+  const leadTimes = currentBookings
+    .map((b) => (new Date(b.travelDate).getTime() - new Date(b.createdAt).getTime()) / DAY_MS)
+    .filter((days) => Number.isFinite(days) && days >= 0);
+  const LEAD_BUCKETS = [
+    { label: '0–3 days', min: 0, max: 3 },
+    { label: '4–7 days', min: 4, max: 7 },
+    { label: '8–14 days', min: 8, max: 14 },
+    { label: '15–30 days', min: 15, max: 30 },
+    { label: '30+ days', min: 31, max: Infinity },
+  ];
+
+  const cancellations = bookings
+    .filter((b) => b.status === 'CANCELLED' || b.status === 'REFUNDED')
+    .filter((b) => within(cancellationDate(b), period.start, period.end));
+  const supplierCaused = cancellations.filter(isSupplierCaused);
+  const atRisk = new Set([
+    ...bookings.filter((b) => within(b.travelDate, period.start, period.end)).map((b) => b.id),
+    ...cancellations.map((b) => b.id),
+  ]);
+
+  const current = makeBuckets(period.start, period.end, period.granularity);
+  const previous = makeBuckets(period.previousStart, period.previousEnd, period.granularity);
+  accumulateBookings(current, bookings);
+  accumulateBookings(previous, bookings);
+  const offset = previous.length - current.length;
+
+  res.json({
+    status: 'success',
+    data: {
+      period: {
+        key: period.key,
+        label: period.label,
+        from: period.start.toISOString(),
+        to: period.end.toISOString(),
+      },
+      product: {
+        id: tour.id,
+        name: tour.title,
+        photo: tour.coverPhoto || null,
+        rating: Number(tour.averageRating) || 0,
+      },
+      revenue: {
+        gross: round2(currentMoney.gross),
+        payout: round2(currentMoney.payout),
+        paid: currentMoney.paid,
+        previousGross: round2(previousMoney.gross),
+        previousPayout: round2(previousMoney.payout),
+        avgValue: currentMoney.paid ? round2(currentMoney.gross / currentMoney.paid) : 0,
+        currency: 'USD',
+      },
+      bookings: {
+        total: currentBookings.length,
+        previousTotal: previousBookings.length,
+        confirmed: countStatus('CONFIRMED'),
+        pending: countStatus('PENDING'),
+        completed: countStatus('COMPLETED'),
+        cancelled: countStatus('CANCELLED'),
+        leadTime: {
+          averageDays: leadTimes.length
+            ? round2(leadTimes.reduce((sum, days) => sum + days, 0) / leadTimes.length)
+            : null,
+          distribution: LEAD_BUCKETS.map((bucket) => ({
+            label: bucket.label,
+            count: leadTimes.filter((days) => {
+              const rounded = Math.floor(days);
+              return rounded >= bucket.min && rounded <= bucket.max;
+            }).length,
+          })),
+        },
+      },
+      rating: {
+        average: Number(tour.averageRating) || 0,
+        count: reviewCount,
+        lowShare: reviewCount ? round2((lowRatings / reviewCount) * 100) : 0,
+      },
+      cancellations: {
+        rate: atRisk.size ? round2((supplierCaused.length / atRisk.size) * 100) : 0,
+        total: cancellations.length,
+        supplierCaused: supplierCaused.length,
+        atRisk: atRisk.size,
+        lostValue: round2(supplierCaused.reduce((sum, b) => sum + (Number(b.grossAmount) || 0), 0)),
+      },
+      series: {
+        granularity: period.granularity,
+        buckets: current.map(({ label, revenue, bookings: count }) => ({
+          label,
+          revenue: round2(revenue),
+          bookings: count,
+        })),
+        previous: current.map((_, index) => {
+          const bucket = previous[offset + index];
+          return bucket
+            ? { revenue: round2(bucket.revenue), bookings: bucket.bookings }
+            : { revenue: 0, bookings: 0 };
+        }),
+      },
+    },
+  });
+});
+
 exports.getMonthlyRevenue = catchAsync(async (req, res) => {
   const supplierId = req.supplierId;
   const months = Math.min(24, Math.max(1, parseInt(req.query.months, 10) || 12));

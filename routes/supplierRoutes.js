@@ -555,6 +555,8 @@ router.get('/analytics/summary', resolveSupplier, requireTeamPermission('analyti
  */
 router.get('/analytics/timeseries', resolveSupplier, requireTeamPermission('analytics.view'), supplierController.getAnalyticsTimeseries);
 
+router.get('/analytics/products/:tourId', resolveSupplier, requireTeamPermission('analytics.view'), supplierController.getProductPerformance);
+
 /**
  * @swagger
  * /suppliers/analytics/ga4-funnel:
