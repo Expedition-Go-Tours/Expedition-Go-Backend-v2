@@ -155,6 +155,10 @@ describe('finance controllers — every Prisma query matches the real schema', (
     assertRecordedQueriesValid('getDisputes');
     await supplier.getDisputes(supplierReq({ query: { status: 'OPEN' } }), makeRes(), jest.fn());
     assertRecordedQueriesValid('getDisputes(status)');
+    // The notification deep link resolves one refund by id (?disputeId=…).
+    await supplier.getDisputes(supplierReq({ query: { disputeId: 'dp-9' } }), makeRes(), jest.fn());
+    const captured = assertRecordedQueriesValid('getDisputes(disputeId)');
+    expect(captured).toBeGreaterThan(0);
   });
 
   it('getSupplierCharges', async () => {

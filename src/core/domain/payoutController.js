@@ -11,10 +11,13 @@ const { viewerCalendar } = require('../services/viewerCalendar');
  * Get payout history for the authenticated supplier
  */
 exports.getMyPayouts = catchAsync(async (req, res, next) => {
-  const { page = 1, limit = 20, status } = req.query;
+  const { page = 1, limit = 20, status, id } = req.query;
 
   const where = { supplierId: req.supplierId };
   if (status) where.status = status;
+  // One payout by id: a notification's payoutId deep link must resolve to the
+  // payout it is about, whatever page the history list is showing.
+  if (id) where.id = String(id);
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
 

@@ -101,6 +101,20 @@ describe('payoutController', () => {
       );
     });
 
+    it('fetches the one payout a notification deep link names', async () => {
+      // ?payoutId=… resolves to a single record: the history list is capped,
+      // so the payout the bell is about is often not on the open page.
+      req.user = { id: 's-1' };
+      req.supplierId = 's-1';
+      req.query = { id: 'po-9' };
+      await controller.getMyPayouts(req, res, next);
+      expect(prisma.payout.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: 'po-9', supplierId: 's-1' }),
+        })
+      );
+    });
+
     it('supports pagination', async () => {
       req.user = { id: 's-1' };
       req.supplierId = 's-1';

@@ -812,6 +812,12 @@ exports.getDisputes = catchAsync(async (req, res) => {
   if (req.query.status) {
     where.status = { in: String(req.query.status).split(',').map((s) => s.trim()).filter(Boolean) };
   }
+  // Deep links from notifications (?disputeId=…) resolve whatever the list is
+  // paginated to: a supplier must land on the refund the bell is about, not on
+  // page 1 of a list that may not contain it.
+  if (req.query.disputeId) {
+    where.id = String(req.query.disputeId);
+  }
 
   const [disputes, totalCount] = await Promise.all([
     prisma.dispute.findMany({
