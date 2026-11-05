@@ -1850,6 +1850,9 @@ async function sendSupplierRefundDecisionEmail(requestId) {
     filedAtLabel: fmt.formatLongDate(request.createdAt),
     decisionNote: request.decisionNote || '',
     supplierBookingUrl: `${SUPPLIER_BASE}/bookings?bookingId=${encodeURIComponent(request.bookingId)}`,
+    // The decision lives on the Refunds tab, where the supplier can see the
+    // request, its status and the balance effect. That is the primary CTA.
+    refundRequestUrl: `${SUPPLIER_BASE}/finance?tab=refunds&refundRequestId=${encodeURIComponent(request.id)}`,
     // Platform charges are listed on the payouts tab; /finance alone opens
     // Earnings, where the charge the email is talking about is not visible.
     chargesUrl: `${SUPPLIER_BASE}/finance?tab=payouts`,

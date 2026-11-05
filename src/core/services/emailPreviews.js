@@ -381,6 +381,7 @@ const SAMPLE_OVERRIDES = {
       '$120.98 appears in your charges and settles against your next payout or invoice. It is never taken from your bank account.',
     decisionNote: '',
     supplierBookingUrl: 'https://supplier.travioghana.com/bookings?bookingId=b1',
+    refundRequestUrl: 'https://supplier.travioghana.com/finance?tab=refunds&refundRequestId=r1',
     chargesUrl: 'https://supplier.travioghana.com/finance?tab=payouts',
   },
 };

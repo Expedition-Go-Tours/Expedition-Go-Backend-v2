@@ -1251,7 +1251,7 @@ const supplierRefundDecision = {
       {{/if}}
 
       ${B.pillButtons([
-        { label: 'View booking', href: '{{supplierBookingUrl}}' },
+        { label: 'View refund request', href: '{{refundRequestUrl}}' },
         { label: 'View charges', href: '{{chargesUrl}}', kind: 'secondary' },
       ])}
     `, { variant: 'gyg', footer: 'supplier' });

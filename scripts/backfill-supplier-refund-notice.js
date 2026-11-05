@@ -120,4 +120,9 @@ function decisionOf(request) {
     console.error('Backfill failed:', err.message);
     process.exitCode = 1;
   })
-  .finally(() => prisma.$disconnect());
+  .finally(async () => {
+    await prisma.$disconnect().catch(() => {});
+    // The notification queue keeps Redis sockets open, so the event loop never
+    // drains on its own — the script would finish its work and then hang.
+    process.exit(process.exitCode || 0);
+  });

@@ -35,6 +35,7 @@ const BASE = {
   filedAtLabel: '5 November 2026',
   decisionNote: '',
   supplierBookingUrl: 'https://supplier.travioghana.com/bookings?bookingId=b1',
+  refundRequestUrl: 'https://supplier.travioghana.com/finance?tab=refunds&refundRequestId=r1',
   chargesUrl: 'https://supplier.travioghana.com/finance?tab=payouts',
 };
 
@@ -86,7 +87,7 @@ describe('supplier-refund-decision email', () => {
     expect(html).toContain('Netted off your next payout');
     expect(html).toContain('Balance available now');
     expect(html).toContain('What happens next');
-    expect(html).toContain('View booking');
+    expect(html).toContain('View refund request');
     // No declined-copy bleed-through.
     expect(html).not.toContain('Nothing has changed');
     expect(html).not.toContain('Refund request declined');
@@ -124,9 +125,10 @@ describe('supplier-refund-decision email', () => {
     expect(declined()).not.toContain('Note from our team');
   });
 
-  it('links the supplier to the booking and the charges tab', () => {
+  it('links the supplier to the refund request and the charges tab', () => {
     const html = approved();
-    expect(html).toContain('bookings?bookingId=b1');
+    expect(html).toContain('/finance?tab=refunds');
+    expect(html).toContain('refundRequestId=r1');
     expect(html).toContain('finance?tab=payouts');
   });
 });
