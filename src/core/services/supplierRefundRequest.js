@@ -53,6 +53,36 @@ const ELIGIBLE_STATUSES = Object.freeze(['COMPLETED', 'NO_SHOW']);
 const SETTLED_PAYOUT_STATES = Object.freeze(['INVOICED', 'REQUESTED', 'PAID']);
 
 /**
+ * Every booking field the refund decision reads — `eligibilityError` and
+ * `computePreview` must both run against exactly these.
+ *
+ * This is a shared constant because the approve path used a hand-written
+ * `select` and lost `status`: Prisma returned the row without it, every
+ * check saw `undefined` instead of COMPLETED, and approving any supplier
+ * refund answered 409 "Only a completed or no-show trip can be refunded."
+ * Unit tests missed it because their booking mock ignored `select` and
+ * returned the full row. Keep the select here, always, so the two call sites
+ * cannot drift from the checks they feed.
+ */
+const REFUND_BOOKING_SELECT = Object.freeze({
+  id: true,
+  bookingNumber: true,
+  status: true,
+  origin: true,
+  grossAmount: true,
+  refundAmount: true,
+  supplierPayout: true,
+  currency: true,
+  paymentStatus: true,
+  payoutStatus: true,
+  refundedAt: true,
+  travelDate: true,
+  stripePaymentIntentId: true,
+  paypalCaptureId: true,
+  paymentProvider: true,
+});
+
+/**
  * A request in one of these states means the booking is already in the refund
  * queue or mid-execution. A supplier must not file a second one while it is
  * unresolved. The database partial unique index enforces the two live states;
@@ -575,16 +605,7 @@ async function getAdminRefundRequest(id) {
   // booking may have been refunded elsewhere since it was filed.
   const booking = await prisma.booking.findUnique({
     where: { id: row.bookingId },
-    select: {
-      id: true,
-      grossAmount: true,
-      refundAmount: true,
-      supplierPayout: true,
-      currency: true,
-      payoutStatus: true,
-      paymentStatus: true,
-      refundedAt: true,
-    },
+    select: REFUND_BOOKING_SELECT,
   });
   const [charges, balance] = await Promise.all([
     prisma.supplierCharge.aggregate({
@@ -600,6 +621,13 @@ async function getAdminRefundRequest(id) {
     live = computePreview(booking, row.payload);
   } catch (err) {
     blocked = err.message;
+  }
+
+  // A request that can still be decided carries the same eligibility answer
+  // the approve endpoint would give. The drawer disables "Approve & refund"
+  // and shows why, instead of letting the admin click and collect a 409.
+  if (row.status === 'PENDING_APPROVAL' || row.status === 'FAILED') {
+    blocked = eligibilityError(booking) || blocked;
   }
 
   return {
@@ -669,22 +697,7 @@ async function approveRefundRequest({ requestId, adminUser, note = null, req }) 
 
     const booking = await tx.booking.findUnique({
       where: { id: request.bookingId },
-      select: {
-        id: true,
-        bookingNumber: true,
-        grossAmount: true,
-        refundAmount: true,
-        supplierPayout: true,
-        currency: true,
-        paymentStatus: true,
-        payoutStatus: true,
-        refundedAt: true,
-        origin: true,
-        travelDate: true,
-        stripePaymentIntentId: true,
-        paypalCaptureId: true,
-        paymentProvider: true,
-      },
+      select: REFUND_BOOKING_SELECT,
     });
     if (!booking) throw new AppError('Booking not found', 404);
 

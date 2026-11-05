@@ -354,7 +354,16 @@ describe('approveRefundRequest', () => {
     prisma.$transaction.mockImplementation(async (fn) => fn(prisma));
     prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'r1' }]);
     prisma.supplierRefundRequest.findUnique.mockResolvedValue(pending());
-    prisma.booking.findUnique.mockResolvedValue(booking());
+    // Emulate Prisma: return ONLY the fields the select asks for. A mock that
+    // ignored `select` hid a dropped `status` in production — every approval
+    // 409'd with "Only a completed or no-show trip can be refunded."
+    prisma.booking.findUnique.mockImplementation(async ({ select } = {}) => {
+      const full = booking();
+      if (!select) return full;
+      return Object.fromEntries(
+        Object.keys(select).filter((key) => select[key]).map((key) => [key, full[key]]),
+      );
+    });
     prisma.booking.update.mockResolvedValue({});
     prisma.supplierCharge.create.mockResolvedValue({ id: 'c1' });
     prisma.supplierRefundRequest.update.mockImplementation(async ({ data }) => ({
@@ -411,11 +420,72 @@ describe('approveRefundRequest', () => {
     expect(refundBookingPayment.mock.calls[0][2].idempotencyKey).toBe('supplier-refund-r1');
   });
 
+  it('selects every booking field the eligibility check reads', async () => {
+    // `status` is the one that went missing: Prisma then returned undefined and
+    // the eligibility check rejected every booking, whatever its real state.
+    await service.approveRefundRequest({ requestId: 'r1', adminUser: { id: 'a1' } });
+    const { select } = prisma.booking.findUnique.mock.calls[0][0];
+    for (const field of [
+      'status', 'origin', 'paymentStatus', 'payoutStatus', 'travelDate',
+      'grossAmount', 'refundAmount', 'supplierPayout', 'stripePaymentIntentId',
+      'paypalCaptureId', 'currency',
+    ]) {
+      expect(select[field]).toBe(true);
+    }
+  });
+
   it('blocks approval when the booking became ineligible after filing', async () => {
     prisma.booking.findUnique.mockResolvedValue(booking({ refundAmount: 151.22 }));
     await expect(service.approveRefundRequest({ requestId: 'r1', adminUser: { id: 'a1' } }))
       .rejects.toThrow(/already been fully refunded/i);
     expect(refundBookingPayment).not.toHaveBeenCalled();
+  });
+});
+
+describe('getAdminRefundRequest — what the decision drawer shows', () => {
+  const adminRow = (overrides = {}) => ({
+    id: 'r1',
+    requestNumber: 'SR-1',
+    bookingId: 'b1',
+    supplierId: 's1',
+    status: 'PENDING_APPROVAL',
+    payload: payload(),
+    preview: {},
+    booking: { id: 'b1', bookingNumber: 'TRG-1', tour: { title: 'Tour', slug: 'tour' } },
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.supplierRefundRequest.findUnique.mockResolvedValue(adminRow());
+    prisma.booking.aggregate.mockResolvedValue({ _sum: { supplierPayout: 500 } });
+    prisma.supplierCharge.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+  });
+
+  it('reports the eligibility reason the approve endpoint would refuse with', async () => {
+    prisma.booking.findUnique.mockResolvedValue(booking({ status: 'CONFIRMED' }));
+
+    const data = await service.getAdminRefundRequest('r1');
+
+    expect(data.blocked).toMatch(/completed or no-show/i);
+  });
+
+  it('is not blocked while the booking is still eligible', async () => {
+    prisma.booking.findUnique.mockResolvedValue(booking());
+
+    const data = await service.getAdminRefundRequest('r1');
+
+    expect(data.blocked).toBeNull();
+    expect(data.live).toEqual(expect.objectContaining({ refundable: 151.22, proposed: 151.22 }));
+  });
+
+  it('leaves a settled request unblocked — eligibility is the approver’s question', async () => {
+    prisma.supplierRefundRequest.findUnique.mockResolvedValue(adminRow({ status: 'REJECTED' }));
+    prisma.booking.findUnique.mockResolvedValue(booking({ status: 'CANCELLED' }));
+
+    const data = await service.getAdminRefundRequest('r1');
+
+    expect(data.blocked).toBeNull();
   });
 });
 
