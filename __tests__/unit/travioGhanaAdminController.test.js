@@ -1,7 +1,7 @@
 jest.mock('../../src/core/services/prismaClient', () => ({
   tour: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), update: jest.fn(), delete: jest.fn() },
   user: { findMany: jest.fn(), findUnique: jest.fn(), update: jest.fn(), count: jest.fn() },
-  booking: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), update: jest.fn() },
+  booking: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), groupBy: jest.fn(), update: jest.fn() },
   supplierProfile: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn() },
   travioGhanaTour: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), update: jest.fn(), delete: jest.fn() },
   travioAfricaTour: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), count: jest.fn(), update: jest.fn(), delete: jest.fn() },
@@ -132,5 +132,43 @@ describe('reviewTour (brand-scoped) — supplier notification', () => {
 
     expect(next).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(200);
+  });
+});
+
+describe('getBookings — payment source filter', () => {
+  let req;
+  let res;
+  let next;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.booking.findMany.mockResolvedValue([]);
+    prisma.booking.count.mockResolvedValue(0);
+    prisma.booking.groupBy.mockResolvedValue([]);
+    req = { query: {}, params: {}, body: {}, user: { id: 'admin-1' } };
+    res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+    next = jest.fn();
+  });
+
+  it('passes a normalised provider through to the query', async () => {
+    req.query = { paymentProvider: 'paypal' };
+
+    await ghanaAdmin.getBookings(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(prisma.booking.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ paymentProvider: 'PAYPAL' }),
+      }),
+    );
+  });
+
+  it('rejects an unknown provider before touching the database', async () => {
+    req.query = { paymentProvider: 'CASH' };
+
+    await ghanaAdmin.getBookings(req, res, next);
+
+    expect(prisma.booking.findMany).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
   });
 });

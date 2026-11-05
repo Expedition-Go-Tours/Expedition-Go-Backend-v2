@@ -1273,7 +1273,7 @@ controller.searchTours = catchAsync(async (req, res, next) => {
  */
 controller.getBookings = catchAsync(async (req, res, next) => {
   const {
-    page = 1, limit = 20, status, paymentStatus,
+    page = 1, limit = 20, status, paymentStatus, paymentProvider,
     startDate, endDate, search, sortBy = 'createdAt', sortOrder = 'desc',
   } = req.query;
 
@@ -1286,6 +1286,15 @@ controller.getBookings = catchAsync(async (req, res, next) => {
   const extra = {};
   if (status) extra.status = status.toUpperCase();
   if (paymentStatus) extra.paymentStatus = paymentStatus.toUpperCase();
+  if (paymentProvider) {
+    // An unknown value would reach Prisma as an invalid enum and surface as a
+    // 500. Reject it here with the two values the schema actually stores.
+    const provider = String(paymentProvider).trim().toUpperCase();
+    if (provider !== 'STRIPE' && provider !== 'PAYPAL') {
+      return next(new AppError('paymentProvider must be STRIPE or PAYPAL', 400));
+    }
+    extra.paymentProvider = provider;
+  }
   if (startDate || endDate) {
     extra.createdAt = {};
     if (startDate) extra.createdAt.gte = new Date(startDate);
