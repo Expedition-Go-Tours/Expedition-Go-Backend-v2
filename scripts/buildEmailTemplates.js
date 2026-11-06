@@ -1935,6 +1935,42 @@ const supplierReviewInvite = {
   },
 };
 
+const supplierReviewReceived = {
+  key: 'supplier-review-received',
+  name: 'Supplier · New review received',
+  build() {
+    return B.shell('New {{rating}}-star review', `
+      ${B.photoHeader({ height: 220 })}
+      ${B.displayHeading({
+        text: 'New {{rating}}-star review',
+        subtext: '{{tourTitle}}',
+        align: 'left',
+        size: 28,
+      })}
+      ${B.textBlock('{{customerName}} reviewed your experience.', { center: false })}
+      ${B.reviewCard()}
+      ${B.sectionHeading('Review details')}
+      ${B.detailCard([
+        { label: 'Experience', value: '{{tourTitle}}' },
+        { label: 'Traveller', value: '{{customerName}}' },
+        { label: 'Reviewed', value: '{{reviewDateLabel}}' },
+        { label: 'Booking', value: '{{bookingNumber}}', if: '{{bookingNumber}}', raw: '<span class="dm-text" style="color:#1A2B49;font-weight:600;white-space:nowrap;">{{bookingNumber}}</span>' },
+      ])}
+      ${B.pillButtons([
+        { label: 'Read the review', href: '{{supplierReviewUrl}}' },
+        { label: 'Reply to {{customerFirstName}}', href: '{{supplierReplyUrl}}', kind: 'secondary' },
+      ])}
+      ${B.hairline({ padding: '26px 40px 0 40px' })}
+      ${B.textBlock('Your reply is public and appears under the review. A short, specific response helps future travellers and shows you are listening.', { muted: true, small: true, center: false, padding: '14px 40px 0 40px' })}
+    `, {
+      variant: 'gyg',
+      footer: 'supplier',
+      footerTitle: 'Questions about this review?',
+      footerBody: 'Reply from your dashboard, or contact us at <a href="mailto:{{supportEmail}}" style="color:#1A2B49;text-decoration:underline;font-weight:600;">{{supportEmail}}</a>.',
+    });
+  },
+};
+
 // ---------------------------------------------------------------------------
 // Chat & messaging notifications (GetYourGuide / Viator-style)
 // ---------------------------------------------------------------------------
@@ -2154,6 +2190,7 @@ const TEMPLATE_DEFS = [
   supplierProductSubmitted,
   supplierProductUpdateSubmitted,
   supplierReviewInvite,
+  supplierReviewReceived,
   chatNewMessage,
   teamInvite,
   teamInviteRevoked,

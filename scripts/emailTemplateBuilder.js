@@ -289,6 +289,13 @@ function gygShell(title, bodyHtml, options = {}) {
     .map((l) => `<a href="${l.href}" class="dm-accent" style="color:{{accentColor}};text-decoration:none;font-weight:700;">${l.label}</a>`)
     .join(`<span style="color:${GYG.footerLine};padding:0 10px;">|</span>`);
 
+  // Not every GYG-shell email is about a booking. A review notification, for
+  // example, must not tell the supplier we are here to help "with this
+  // booking". Callers can override the band copy without rebuilding the shell.
+  const footerTitle = options.footerTitle || 'Need a hand?';
+  const footerBody = options.footerBody
+    || `We are here to help with this booking at <a href="mailto:{{supportEmail}}" style="color:${GYG.ink};text-decoration:underline;font-weight:600;">{{supportEmail}}</a>.`;
+
   return `<!DOCTYPE html>
 <html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>${HEAD_META}<title>${title}</title>
@@ -316,9 +323,9 @@ function gygShell(title, bodyHtml, options = {}) {
                 <tr><td style="padding:34px 0 0 0;">
                   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="${GYG.footer}" style="background-color:${GYG.footer};">
                     <tr><td style="padding:24px 40px 26px 40px;" class="pad">
-                      <div class="dm-text" style="font-family:${FONT};font-size:14px;font-weight:800;color:${GYG.ink};line-height:1.4;">Need a hand?</div>
+                      <div class="dm-text" style="font-family:${FONT};font-size:14px;font-weight:800;color:${GYG.ink};line-height:1.4;">${footerTitle}</div>
                       <div class="dm-muted" style="padding-top:5px;font-family:${FONT};font-size:13px;color:${GYG.muted};line-height:1.65;">
-                        We are here to help with this booking at <a href="mailto:{{supportEmail}}" style="color:${GYG.ink};text-decoration:underline;font-weight:600;">{{supportEmail}}</a>.
+                        ${footerBody}
                       </div>
                       ${linkHtml ? `<div style="padding-top:14px;font-family:${FONT};font-size:13px;line-height:1.8;">${linkHtml}</div>` : ''}
                     </td></tr>
@@ -561,6 +568,37 @@ function starRating({ count = 5, urls = ['{{rating1Url}}', '{{rating2Url}}', '{{
   <tr><td class="pad" style="padding:22px 40px 0 40px;" align="center">
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
       <tr>${cells}</tr>
+    </table>
+  </td></tr>`;
+}
+
+/**
+ * A review as it should read in an inbox: the score, the words, and who wrote
+ * it. Gold stars carry the rating at a glance; the quote is optional because a
+ * traveller can rate without writing. A soft card (not a table row) keeps the
+ * reviewer's own words from competing with the surrounding labels.
+ */
+function reviewCard() {
+  return `
+  <tr><td class="pad" style="padding:24px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#F7F8FA;border:1px solid ${GYG.line};border-radius:12px;border-collapse:separate;border-spacing:0;">
+      <tr><td style="padding:22px 24px;">
+        <div style="font-family:${FONT};font-size:30px;line-height:1;color:${GYG.star};letter-spacing:2px;">{{ratingStars}}</div>
+        <div style="padding-top:9px;font-family:${FONT};font-size:12px;font-weight:700;letter-spacing:0.02em;color:${GYG.muted};">{{rating}} out of 5</div>
+        {{#if reviewComment}}
+        <p style="margin:16px 0 0 0;font-family:${FONT};font-size:18px;line-height:1.6;color:${GYG.ink};font-weight:600;">&ldquo;{{reviewComment}}&rdquo;</p>
+        {{/if}}
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin-top:18px;">
+          <tr>
+            <td style="padding-right:10px;vertical-align:middle;">
+              <div style="width:36px;height:36px;border-radius:18px;background-color:{{accentSoft}};color:{{accentDark}};font-family:${FONT};font-size:13px;font-weight:800;line-height:36px;text-align:center;">{{customerInitials}}</div>
+            </td>
+            <td style="font-family:${FONT};font-size:13px;color:${GYG.muted};line-height:1.45;vertical-align:middle;">
+              <strong style="color:${GYG.ink};">{{customerName}}</strong><br>{{reviewDateLabel}}
+            </td>
+          </tr>
+        </table>
+      </td></tr>
     </table>
   </td></tr>`;
 }
@@ -1496,6 +1534,7 @@ module.exports = {
   pillButtons,
   starRating,
   helpBand,
+  reviewCard,
   photoHeader,
   staticList,
 };

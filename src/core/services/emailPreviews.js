@@ -46,6 +46,17 @@ const SAMPLE = {
   brandName: 'Travio Ghana',
   customerName: 'Ada Mensah',
   customerInitials: 'AM',
+  customerFirstName: 'Ada',
+  // A sample review, including the fields the supplier review email needs.
+  rating: 5,
+  ratingStars: '&#9733;&#9733;&#9733;&#9733;&#9733;',
+  reviewComment:
+    'A really thoughtful morning. Our guide knew the history of every stop and made time for questions.',
+  reviewDateLabel: '6 November 2026',
+  supplierReviewUrl:
+    'https://supplier.travioghana.com/reviews?reviewId=cmv2v1rxj0200i4nqlq9n1fau',
+  supplierReplyUrl:
+    'https://supplier.travioghana.com/reviews?reviewId=cmv2v1rxj0200i4nqlq9n1fau&reply=1',
   // No avatar URL: the contact card falls back to the initials circle, which
   // is exactly what most accounts look like.
   customerAvatarUrl: '',
@@ -238,6 +249,7 @@ const CHANGED = new Set([
   'supplier-customer-cancelled-late',
   'supplier-platform-cancelled',
   'review-request',
+  'supplier-review-received',
 ]);
 
 // Grouping is presentation-only: first matching prefix wins, else "Other".

@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <meta name="color-scheme" content="light dark">
+  <meta name="supported-color-schemes" content="light dark">
+<title>New {{rating}}-star review</title>
+<style>
+  body { margin:0; padding:0; width:100% !important; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; background-color:#F8FAFC; }
+  table, td { mso-table-lspace:0pt; mso-table-rspace:0pt; border-collapse:collapse; }
+  img { border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic; }
+  .font-main { font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  /* Key-facts tiles: two per row, or one spanning the full row when a grid
+     ends on an odd tile. Widths are duplicated on the td's width attribute
+     and inline styles because Outlook desktop ignores <style> entirely. */
+  .kf-cell { width:50%; }
+  .kf-cell-wide { width:100%; }
+  /* Media header. The tour photo rides on the outer td's HTML background
+     ATTRIBUTE, never in CSS: Gmail rewrites inline background-image (it
+     removes the comma between multiple values, turning gradient+url() into
+     invalid CSS) and can delete the whole style attribute when it finds a
+     url() in it - caniemail issues #343/#395. background-size/position are
+     duplicated inline on the td so they survive <style>-less clients too. */
+  .media-header-background { background-position:center !important; background-size:cover !important; background-repeat:no-repeat !important; }
+  /* Scrim. The gradient lives here (style block) because Gmail Android
+     mishandles it inline; !important background-color:transparent stops it
+     stacking on the inline flat tint, so supported clients keep the original
+     gradient-over-photo look and the inline rgba() remains as the scrim
+     wherever this rule is dropped. */
+  .media-header-scrim { background-image:linear-gradient(180deg, rgba(0,31,63,0.08) 0%, rgba(0,31,63,0.55) 55%, rgba(0,31,63,0.9) 100%) !important; background-color:transparent !important; }
+  @media only screen and (max-width:640px) {
+    .container { width:100% !important; }
+    /* Two padding jobs, one class: the shell wrapper AND every content row
+       carried .pad, so phones paid 20px twice (40px per side of a 375px
+       viewport) and the card read as a slim strip. The wrapper now has its
+       own .shell-pad hook: a thin 8px gutter that frames the rounded card
+       without eating the text column. */
+    .shell-pad { padding-left:8px !important; padding-right:8px !important; }
+    .pad { padding-left:16px !important; padding-right:16px !important; }
+    .pad-top { padding-top:28px !important; }
+    .stack { display:block !important; width:100% !important; box-sizing:border-box !important; }
+    .stack-td { display:block !important; width:100% !important; box-sizing:border-box !important; text-align:left !important; }
+    /* Key-facts grid opts back OUT of the one-per-row stack: the values it
+       carries are short (date, time, duration, travellers), so two tiles per
+       row fit comfortably and halve the section's height. These rules MUST
+       sit after .stack-td - equal specificity, source order decides - or the
+       tiles silently revert to one per row. */
+    .kf-cell { display:table-cell !important; width:50% !important; }
+    .kf-cell-wide { display:table-cell !important; width:100% !important; }
+    /* Compact tiles for the ~130-155px column the 2-up grid leaves them:
+       smaller badge and padding, slightly reduced label/value sizes. */
+    .kf-pad { padding:12px 14px 14px 14px !important; }
+    .kf-icon { width:32px !important; height:32px !important; border-radius:9px !important; }
+    .kf-lbl { padding-top:11px !important; font-size:10px !important; }
+    .kf-val { font-size:14px !important; }
+    .btn { width:100% !important; display:block !important; text-align:center !important; box-sizing:border-box !important; padding-left:16px !important; padding-right:16px !important; }
+    /* The button wrapper is a shrink-to-fit table, so the .btn width:100%
+       rule alone resolves against a content-width cell and the label wraps
+       onto three lines on a 320px phone. Collapsing the wrapper AND its
+       row-group/row to blocks is required: blockifying only the <table>
+       leaves the <tr> as a table-row, which the engine wraps in a
+       shrink-to-fit anonymous table and width:100% resolves against that
+       instead of the container. */
+    .btn-wrap, .btn-wrap tbody, .btn-wrap tr { display:block !important; width:100% !important; }
+    .btn-wrap td { display:block !important; width:100% !important; box-sizing:border-box !important; padding:0 0 8px 0 !important; }
+    .h1 { font-size:24px !important; }
+    .h2 { font-size:18px !important; }
+    .body-lg { font-size:16px !important; }
+    /* Brand lockup. The wordmark is wide (TravioGhana), so a 150-180px image
+       reads as huge on a 360px phone; scale it with the column instead of
+       letting the desktop width ride along. The width ATTRIBUTE on the <img>
+       (150/180) still governs Outlook desktop, which ignores this block. */
+    .brand-logo { width:128px !important; max-width:128px !important; }
+    .hide-mobile { display:none !important; }
+  }
+  /* Dark mode.
+     Clients that honour prefers-color-scheme (Apple Mail, Outlook.com, iOS
+     Gmail) swap these classes. Every tinted surface and its matching text
+     colour has a dark counterpart: a light background whose text flips light
+     is unreadable, so the surface must move with the text. Clients that force
+     colour inversion instead (some Android Gmail builds) simply ignore these
+     and keep the already-legible light styling. */
+  @media (prefers-color-scheme: dark) {
+    .dm-bg { background-color:#0B1220 !important; }
+    .dm-card { background-color:#111827 !important; border-color:#1F2937 !important; }
+    .dm-surface { background-color:#111827 !important; border-color:#1F2937 !important; }
+    .dm-chip { background-color:#1F2937 !important; color:#E5E7EB !important; }
+    .dm-text { color:#E5E7EB !important; }
+    .dm-muted { color:#9CA3AF !important; }
+    .dm-accent { color:#34D399 !important; }
+    .dm-info { color:#60A5FA !important; }
+    .dm-warning { color:#FBBF24 !important; }
+    .dm-danger { color:#F87171 !important; }
+    /* Soft tinted surfaces (callouts, badges) */
+    .dm-accent-soft { background-color:#0F2A22 !important; }
+    .dm-info-soft { background-color:#101F33 !important; }
+    .dm-warning-soft { background-color:#2A2110 !important; }
+    .dm-danger-soft { background-color:#2A1414 !important; }
+    .dm-navy-soft { background-color:#1F2937 !important; }
+    /* Key-facts tiles: surface + its accent label */
+    .dm-tile-green { background-color:#0F2A22 !important; }
+    .dm-tile-blue { background-color:#101F33 !important; }
+    .dm-tile-amber { background-color:#2A2110 !important; }
+    .dm-tile-purple { background-color:#1E1733 !important; }
+    .dm-label-green { color:#34D399 !important; }
+    .dm-label-blue { color:#60A5FA !important; }
+    .dm-label-amber { color:#FBBF24 !important; }
+    .dm-label-purple { color:#C4B5FD !important; }
+  }
+</style>
+</head>
+<body class="dm-bg" style="margin:0;padding:0;background-color:#F3F4F6;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F3F4F6" class="dm-bg">
+    <tr>
+      <td align="center" style="padding:28px 14px;" class="shell-pad">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="container" style="max-width:600px;">
+          <!-- Preheader (hidden) -->
+          <tr><td style="display:none;max-height:0;overflow:hidden;mso-hide:all;">{{preheader}}</td></tr>
+          <!-- Canvas -->
+          <tr>
+            <td class="dm-card" bgcolor="#FFFFFF" style="background-color:#FFFFFF;border-radius:6px;padding:0;overflow:hidden;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <!-- Logo: centred, with generous top space -->
+                <tr>
+                  <td align="center" style="padding:30px 40px 14px 40px;" class="pad">
+                    <img src="{{logoUrl}}" alt="{{brandName}}" width="150" class="brand-logo" style="display:block;width:150px;max-width:100%;height:auto;margin:0 auto;border:0;outline:none;">
+                  </td>
+                </tr>
+                
+      
+  <tr><td style="padding:0;font-size:0;line-height:0;background-color:{{accentSoft}};">
+    {{#if tourImageUrl}}<img src="{{tourImageUrl}}" width="600" alt="{{tourTitle}}" style="display:block;width:100%;max-width:600px;height:220px;object-fit:cover;border:0;outline:none;">{{/if}}
+  </td></tr>
+      
+  <tr><td class="pad" style="padding:26px 40px 0 40px;">
+    <h1 class="font-main dm-text" style="margin:0;font-size:28px;font-weight:800;color:#1A2B49;line-height:1.22;text-align:left;letter-spacing:-0.3px;">New {{rating}}-star review</h1>
+    <p class="font-main dm-muted" style="margin:10px 0 0 0;font-size:16px;color:#63687A;line-height:1.6;text-align:left;">{{tourTitle}}</p>
+  </td></tr>
+      
+  <tr><td class="pad" style="padding:14px 40px 0 40px;">
+    <p class="dm-text" style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;color:#3F4A5F;line-height:1.68;text-align:left;">{{customerName}} reviewed your experience.</p>
+  </td></tr>
+      
+  <tr><td class="pad" style="padding:24px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#F7F8FA;border:1px solid #E7EAEF;border-radius:12px;border-collapse:separate;border-spacing:0;">
+      <tr><td style="padding:22px 24px;">
+        <div style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:30px;line-height:1;color:#F2A900;letter-spacing:2px;">{{ratingStars}}</div>
+        <div style="padding-top:9px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:12px;font-weight:700;letter-spacing:0.02em;color:#63687A;">{{rating}} out of 5</div>
+        {{#if reviewComment}}
+        <p style="margin:16px 0 0 0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:18px;line-height:1.6;color:#1A2B49;font-weight:600;">&ldquo;{{reviewComment}}&rdquo;</p>
+        {{/if}}
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin-top:18px;">
+          <tr>
+            <td style="padding-right:10px;vertical-align:middle;">
+              <div style="width:36px;height:36px;border-radius:18px;background-color:{{accentSoft}};color:{{accentDark}};font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;font-weight:800;line-height:36px;text-align:center;">{{customerInitials}}</div>
+            </td>
+            <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#63687A;line-height:1.45;vertical-align:middle;">
+              <strong style="color:#1A2B49;">{{customerName}}</strong><br>{{reviewDateLabel}}
+            </td>
+          </tr>
+        </table>
+      </td></tr>
+    </table>
+  </td></tr>
+      
+  <tr><td class="pad" style="padding:30px 40px 0 40px;">
+    <h2 class="font-main dm-text" style="margin:0;font-size:18px;font-weight:800;color:#1A2B49;line-height:1.35;letter-spacing:-0.1px;">Review details</h2>
+  </td></tr>
+      
+  <tr><td class="pad" style="padding:12px 40px 0 40px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-card" style="background-color:#F8FAFC;border:1px solid #E2E8F0;border-radius:14px;border-collapse:separate;border-spacing:0;overflow:hidden;">
+      
+      <tr>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Experience</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{tourTitle}}</span></td>
+      </tr>
+      <tr>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Traveller</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{customerName}}</span></td>
+      </tr>
+      <tr>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Reviewed</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#001F3F;font-weight:600;">{{reviewDateLabel}}</span></td>
+      </tr>{{#if bookingNumber}}
+      <tr>
+        <td class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#475569;line-height:1.5;padding:10px 18px;width:42%;vertical-align:top;border-bottom:1px solid #E2E8F0;">Booking</td>
+        <td style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;line-height:1.5;padding:10px 18px;vertical-align:top;border-bottom:1px solid #E2E8F0;"><span class="dm-text" style="color:#1A2B49;font-weight:600;white-space:nowrap;">{{bookingNumber}}</span></td>
+      </tr>{{/if}}
+    </table>
+  </td></tr>
+      
+  <tr><td class="pad" style="padding:26px 40px 0 40px;" align="center">
+    <table role="presentation" class="btn-wrap" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
+      <tr><td bgcolor="{{accentColor}}" align="center" style="border-radius:999px;background-color:{{accentColor}};">
+        <a href="{{supplierReviewUrl}}" class="btn" style="display:inline-block;padding:14px 28px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;font-weight:700;line-height:1.2;text-decoration:none;border-radius:999px;color:#FFFFFF;">Read the review</a>
+      </td></tr>
+    </table>
+  </td></tr>
+  <tr><td class="pad" style="padding:10px 40px 0 40px;" align="center">
+    <table role="presentation" class="btn-wrap" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;">
+      <tr><td bgcolor="{{accentSoft}}" align="center" style="border-radius:999px;background-color:{{accentSoft}};">
+        <a href="{{supplierReplyUrl}}" class="btn" style="display:inline-block;padding:14px 28px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:15px;font-weight:700;line-height:1.2;text-decoration:none;border-radius:999px;color:{{accentDark}};">Reply to {{customerFirstName}}</a>
+      </td></tr>
+    </table>
+  </td></tr>
+      <tr><td class="pad" style="padding:26px 40px 0 40px;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td style="border-top:1px solid #E7EAEF;font-size:0;line-height:0;">&nbsp;</td></tr></table></td></tr>
+      
+  <tr><td class="pad" style="padding:14px 40px 0 40px;">
+    <p class="dm-muted" style="margin:0;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#63687A;line-height:1.68;text-align:left;">Your reply is public and appears under the review. A short, specific response helps future travellers and shows you are listening.</p>
+  </td></tr>
+    
+                <!-- Footer band -->
+                <tr><td style="padding:34px 0 0 0;">
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#FFF4EC" style="background-color:#FFF4EC;">
+                    <tr><td style="padding:24px 40px 26px 40px;" class="pad">
+                      <div class="dm-text" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:14px;font-weight:800;color:#1A2B49;line-height:1.4;">Questions about this review?</div>
+                      <div class="dm-muted" style="padding-top:5px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;color:#63687A;line-height:1.65;">
+                        Reply from your dashboard, or contact us at <a href="mailto:{{supportEmail}}" style="color:#1A2B49;text-decoration:underline;font-weight:600;">{{supportEmail}}</a>.
+                      </div>
+                      <div style="padding-top:14px;font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:13px;line-height:1.8;"><a href="{{dashboardUrl}}" class="dm-accent" style="color:{{accentColor}};text-decoration:none;font-weight:700;">Open dashboard</a><span style="color:#F6E2D2;padding:0 10px;">|</span><a href="mailto:{{supportEmail}}" class="dm-accent" style="color:{{accentColor}};text-decoration:none;font-weight:700;">Contact support</a></div>
+                    </td></tr>
+                  </table>
+                </td></tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:18px 12px 0 12px;">
+              <div class="dm-muted" style="font-family:'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:11px;color:#858995;line-height:1.6;">
+                &copy; {{year}} {{brandName}}. All rights reserved.
+              </div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

@@ -14,10 +14,9 @@
 
 const prisma = require('./prismaClient');
 const { notificationCategoryForType } = require('../../../config/permissions');
-const { sendEmail, resolveEmailBrand } = require('./emailService');
+const { sendEmail, resolveEmailBrand, buildReviewEmailData } = require('./emailService');
 const { categoryForType } = require('./notificationCategories');
 const { resolveRecipients } = require('./notificationRecipientService');
-const emailUrls = require('../../../config/emailUrls');
 
 /**
  * Send notification to user
@@ -284,42 +283,27 @@ async function sendNotificationEmail(user, { type, title, message, data, templat
     subject: title,
   };
 
-  // New-review emails to suppliers carry two actions that deep-link into the
-  // supplier dashboard: a primary "View review" button and a quiet secondary
-  // "Reply to this review" link that opens the reply box on the same review.
+  // New-review emails to suppliers use the GYG-style review document: the
+  // score, the traveller's own words, the experience and one primary action.
+  // The branch is guarded to the supplier who owns the tour so a review
+  // *response* notification to the customer can never borrow this template.
   if (type === 'REVIEW_RECEIVED' && data?.reviewId) {
     const review = await prisma.review.findUnique({
       where: { id: data.reviewId },
       include: {
         customer: { select: { id: true, name: true } },
-        tour: { select: { id: true, title: true } },
+        tour: { select: { id: true, title: true, supplierId: true, coverPhoto: true, photos: true } },
+        booking: { select: { bookingNumber: true } },
       },
     });
-    if (review) {
-      const rating = review.rating ?? data.rating;
-      const customerName = review.customer?.name || 'A traveller';
-      const tourTitle = review.tour?.title || '';
-      const excerpt = (review.comment || review.title || '').trim();
-      const snippet = excerpt.length > 180 ? `${excerpt.slice(0, 177).trimEnd()}…` : excerpt;
-      const message = `${customerName} left a ${rating}-star review${tourTitle ? ` of "${tourTitle}"` : ''}${snippet ? `: "${snippet}"` : ''}.`;
-
+    if (review && review.tour?.supplierId === user.id) {
       return sendEmail({
         to,
         tagsByRecipient,
-        subject: `New ${rating}-Star Review Received`,
-        template: 'generic-notification',
+        subject: `New ${review.rating}-star review for ${review.tour.title || 'your experience'}`,
+        template: 'supplier-review-received',
         opts: { brandKey },
-        data: {
-          userName: user.name,
-          header: `New ${rating}-Star Review`,
-          message,
-          reviewDate: new Date(review.createdAt).toLocaleDateString(),
-          buttonText: 'View review',
-          buttonUrl: emailUrls.supplierReviewForUser(review.id, user),
-          secondaryButtonText: 'Reply to this review',
-          secondaryButtonUrl: emailUrls.supplierReplyReviewForUser(review.id, user),
-          ...data,
-        },
+        data: buildReviewEmailData(review, user),
       });
     }
   }

@@ -503,8 +503,10 @@ describe('sendReviewNotificationEmail', () => {
     await sendReviewNotificationEmail(mockReview);
     const payload = __send.mock.calls[0][0];
     expect(payload.to).toBe('supplier@test.com');
-    expect(payload.subject).toContain('5-Star Review');
+    expect(payload.subject).toContain('5-star review');
     expect(payload.html).toContain('Best tour ever');
+    expect(payload.html).toContain('Read the review');
+    expect(payload.html).toContain('Reply to John');
   });
 
   it('throws when supplier not found', async () => {

@@ -2600,37 +2600,91 @@ async function sendSupplierStatusEmail(email, status, data = {}) {
   });
 }
 
+function reviewInitials(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '';
+  return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
+}
+
+function reviewStarsHtml(rating) {
+  const n = Math.max(0, Math.min(5, Number(rating) || 0));
+  return `${'&#9733;'.repeat(n)}${'&#9734;'.repeat(5 - n)}`;
+}
+
+/**
+ * Shared data for the supplier "new review" email. Both the direct sender and
+ * the notification fan-out use it so the two paths cannot drift.
+ */
+function buildReviewEmailData(review, supplier) {
+  const tour = review.tour || {};
+  const customer = review.customer || {};
+  const rating = Number(review.rating) || 0;
+  const rawComment = String(review.comment || review.title || '').trim();
+  const reviewDateLabel = review.createdAt
+    ? new Date(review.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+    : '';
+  const customerName = customer.name || 'A traveller';
+  const firstName = customer.name ? customerName.trim().split(/\s+/)[0] : 'the traveller';
+  const tourTitle = tour.title || '';
+  const subjectTitle = String(tourTitle).replace(/[\r\n]+/g, ' ');
+
+  return {
+    rating,
+    ratingStars: reviewStarsHtml(rating),
+    reviewComment: htmlEscape(rawComment).replace(/\n/g, '<br>'),
+    customerName: htmlEscape(customerName),
+    customerFirstName: htmlEscape(firstName),
+    customerInitials: reviewInitials(customerName),
+    tourTitle: htmlEscape(tourTitle),
+    tourImageUrl: heroImageUrl(tour),
+    reviewDateLabel,
+    bookingNumber: htmlEscape(review.booking?.bookingNumber || ''),
+    supplierReviewUrl: emailUrls.supplierReviewForUser(review.id, supplier),
+    supplierReplyUrl: emailUrls.supplierReplyReviewForUser(review.id, supplier),
+    dashboardUrl: emailUrls.supplierDashboardForUser(supplier),
+    supplierName: htmlEscape(supplier?.name || ''),
+    preheader: `${htmlEscape(customerName)} rated ${htmlEscape(subjectTitle || 'your experience')} ${rating} out of 5.`,
+  };
+}
+
 async function sendReviewNotificationEmail(review) {
-  const tour = review.tour
-    ? review.tour
-    : await prisma.tour.findUnique({ where: { id: review.tourId }, select: { id: true, title: true, supplierId: true } });
+  let tour = review.tour;
+  if (!tour) {
+    tour = await prisma.tour.findUnique({
+      where: { id: review.tourId },
+      select: { id: true, title: true, supplierId: true, coverPhoto: true, photos: true },
+    });
+  } else if (!tour.coverPhoto && !(Array.isArray(tour.photos) && tour.photos.length)) {
+    // Callers often pass a review with only the tour's id/title. Fetch the
+    // image the header needs rather than sending a blank hero.
+    const enriched = await prisma.tour.findUnique({
+      where: { id: tour.id },
+      select: { coverPhoto: true, photos: true },
+    });
+    if (enriched) tour = { ...tour, ...enriched };
+  }
   if (!tour) throw new Error(`Tour ${review.tourId} not found for review ${review.id}`);
 
   const [supplier, customer] = await Promise.all([
     prisma.user.findUnique({ where: { id: tour.supplierId } }),
     prisma.user.findUnique({ where: { id: review.customerId } }),
   ]);
+  if (!supplier) throw new Error(`Supplier ${tour.supplierId} not found for review ${review.id}`);
+
+  const booking = review.booking
+    || (review.bookingId
+      ? await prisma.booking.findUnique({ where: { id: review.bookingId }, select: { bookingNumber: true } })
+      : null);
 
   const brandKey = resolveEmailBrand({ supplier });
+  const data = buildReviewEmailData({ ...review, tour, customer, booking }, supplier);
 
   return sendEmail({
-    ...await supplierRecipientList(supplier, "reviews"),
-    subject: `New ${review.rating}-Star Review Received`,
-    template: 'generic-notification',
+    ...await supplierRecipientList(supplier, 'reviews'),
+    subject: `New ${review.rating}-star review for ${tour.title || 'your experience'}`,
+    template: 'supplier-review-received',
     opts: { brandKey },
-    data: {
-      header: `New ${review.rating}-Star Review`,
-      message: `${customer?.name || 'A traveller'} reviewed "${tour.title}": "${review.comment || review.title || ''}".`,
-      buttonText: 'View review',
-      buttonUrl: emailUrls.supplierReviewForUser(review.id, supplier),
-      secondaryButtonText: 'Reply to this review',
-      secondaryButtonUrl: emailUrls.supplierReplyReviewForUser(review.id, supplier),
-      userName: supplier.name,
-      supplierName: supplier.name,
-      tourTitle: tour.title,
-      reviewUrl: emailUrls.supplierReviewForUser(review.id, supplier),
-      reviewDate: new Date(review.createdAt).toLocaleDateString(),
-    },
+    data,
   });
 }
 
@@ -3252,6 +3306,7 @@ module.exports = {
   sendBookingCancellationEmail,
   sendSupplierStatusEmail,
   sendReviewNotificationEmail,
+  buildReviewEmailData,
   sendChatMessageEmail,
   sendPayoutNotificationEmail,
   sendSupplierBookingNotification,

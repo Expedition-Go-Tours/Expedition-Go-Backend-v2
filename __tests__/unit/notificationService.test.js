@@ -1,11 +1,13 @@
 jest.mock('../../src/core/services/prismaClient', () => ({
   notification: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn(), update: jest.fn(), updateMany: jest.fn(), deleteMany: jest.fn() },
   user: { findUnique: jest.fn() },
+  review: { findUnique: jest.fn() },
 }));
 
 jest.mock('../../src/core/services/emailService', () => ({
   sendEmail: jest.fn(),
   resolveEmailBrand: jest.fn(() => 'africa'),
+  buildReviewEmailData: jest.fn(() => ({ preheader: 'A traveller rated your experience 5 out of 5.' })),
 }));
 
 let mockIo;
@@ -89,6 +91,30 @@ describe('sendNotification', () => {
   it('uses custom template when provided', async () => {
     await sendNotification({ userId: 'u-1', type: 'BOOKING_CONFIRMED', title: 'T', message: 'M', sendEmail: true, emailTemplate: 'custom-template' });
     expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ template: 'custom-template' }));
+  });
+
+  it('sends the review document for a new supplier review', async () => {
+    prisma.review.findUnique.mockResolvedValue({
+      id: 'r-1',
+      rating: 5,
+      tour: { id: 't-1', title: 'Accra Walking Tour', supplierId: 'u-1', coverPhoto: null, photos: [] },
+      customer: { id: 'c-1', name: 'Ada Mensah' },
+      booking: null,
+    });
+
+    await sendNotification({
+      userId: 'u-1',
+      type: 'REVIEW_RECEIVED',
+      title: 'New Review Received',
+      message: 'You received a 5-star review',
+      data: { reviewId: 'r-1' },
+      sendEmail: true,
+    });
+
+    expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({
+      template: 'supplier-review-received',
+      subject: expect.stringContaining('5-star review'),
+    }));
   });
 
   it('deduplicates a retried notification before creating another row', async () => {
