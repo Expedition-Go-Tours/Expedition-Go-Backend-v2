@@ -295,6 +295,7 @@ function gygShell(title, bodyHtml, options = {}) {
   const footerTitle = options.footerTitle || 'Need a hand?';
   const footerBody = options.footerBody
     || `We are here to help with this booking at <a href="mailto:{{supportEmail}}" style="color:${GYG.ink};text-decoration:underline;font-weight:600;">{{supportEmail}}</a>.`;
+  const footerBg = options.footerBg || GYG.footer;
 
   return `<!DOCTYPE html>
 <html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
@@ -321,7 +322,7 @@ function gygShell(title, bodyHtml, options = {}) {
                 ${bodyHtml}
                 <!-- Footer band -->
                 <tr><td style="padding:34px 0 0 0;">
-                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="${GYG.footer}" style="background-color:${GYG.footer};">
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="${footerBg}" style="background-color:${footerBg};border-top:1px solid ${GYG.line};">
                     <tr><td style="padding:24px 40px 26px 40px;" class="pad">
                       <div class="dm-text" style="font-family:${FONT};font-size:14px;font-weight:800;color:${GYG.ink};line-height:1.4;">${footerTitle}</div>
                       <div class="dm-muted" style="padding-top:5px;font-family:${FONT};font-size:13px;color:${GYG.muted};line-height:1.65;">
@@ -381,6 +382,14 @@ function displayHeading({ text, subtext, align = 'center', size = 30, padding = 
   <tr><td class="pad" style="padding:${padding};">
     <h1 class="font-main dm-text" style="margin:0;font-size:${size}px;font-weight:800;color:${GYG.ink};line-height:1.22;text-align:${align};letter-spacing:-0.3px;">${text}</h1>
     ${subtext ? `<p class="font-main dm-muted" style="margin:10px 0 0 0;font-size:16px;color:${GYG.muted};line-height:1.6;text-align:${align};">${subtext}</p>` : ''}
+  </td></tr>`;
+}
+
+function eyebrow(text, options = {}) {
+  const { padding = '28px 40px 0 40px' } = options;
+  return `
+  <tr><td class="pad" style="padding:${padding};">
+    <div class="dm-accent" style="font-family:${FONT};font-size:11px;font-weight:800;letter-spacing:1.1px;text-transform:uppercase;color:{{accentColor}};line-height:1;">${text}</div>
   </td></tr>`;
 }
 
@@ -573,6 +582,18 @@ function starRating({ count = 5, urls = ['{{rating1Url}}', '{{rating2Url}}', '{{
 }
 
 /**
+ * A quiet text action under a primary pill. Two equally weighted pill buttons
+ * make a transactional email feel like a dashboard; the reply is secondary.
+ */
+function textLink(label, href, options = {}) {
+  const { padding = '12px 40px 0 40px', align = 'center' } = options;
+  return `
+  <tr><td class="pad" style="padding:${padding};" align="${align}">
+    <a href="${href}" style="font-family:${FONT};font-size:13px;font-weight:700;color:{{accentColor}};text-decoration:none;">${label} &rarr;</a>
+  </td></tr>`;
+}
+
+/**
  * A review as it should read in an inbox: the score, the words, and who wrote
  * it. Gold stars carry the rating at a glance; the quote is optional because a
  * traveller can rate without writing. A soft card (not a table row) keeps the
@@ -581,20 +602,25 @@ function starRating({ count = 5, urls = ['{{rating1Url}}', '{{rating2Url}}', '{{
 function reviewCard() {
   return `
   <tr><td class="pad" style="padding:24px 40px 0 40px;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#F7F8FA;border:1px solid ${GYG.line};border-radius:12px;border-collapse:separate;border-spacing:0;">
-      <tr><td style="padding:22px 24px;">
-        <div style="font-family:${FONT};font-size:30px;line-height:1;color:${GYG.star};letter-spacing:2px;">{{ratingStars}}</div>
-        <div style="padding-top:9px;font-family:${FONT};font-size:12px;font-weight:700;letter-spacing:0.02em;color:${GYG.muted};">{{rating}} out of 5</div>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#F8F9FB;border-radius:14px;border-collapse:separate;border-spacing:0;">
+      <tr><td style="padding:24px 24px 22px 24px;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+          <tr>
+            <td style="font-family:${FONT};font-size:26px;line-height:1;color:${GYG.star};letter-spacing:2px;vertical-align:middle;">{{ratingStars}}</td>
+            <td style="padding-left:10px;font-family:${FONT};font-size:16px;font-weight:800;color:${GYG.ink};line-height:1;vertical-align:middle;">{{rating}}.0</td>
+            <td style="padding-left:5px;font-family:${FONT};font-size:12px;color:${GYG.muted};line-height:1;vertical-align:middle;">out of 5</td>
+          </tr>
+        </table>
         {{#if reviewComment}}
-        <p style="margin:16px 0 0 0;font-family:${FONT};font-size:18px;line-height:1.6;color:${GYG.ink};font-weight:600;">&ldquo;{{reviewComment}}&rdquo;</p>
+        <p style="margin:16px 0 0 0;font-family:${FONT};font-size:19px;line-height:1.55;color:${GYG.ink};font-weight:600;">&ldquo;{{reviewComment}}&rdquo;</p>
         {{/if}}
         <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin-top:18px;">
           <tr>
             <td style="padding-right:10px;vertical-align:middle;">
               <div style="width:36px;height:36px;border-radius:18px;background-color:{{accentSoft}};color:{{accentDark}};font-family:${FONT};font-size:13px;font-weight:800;line-height:36px;text-align:center;">{{customerInitials}}</div>
             </td>
-            <td style="font-family:${FONT};font-size:13px;color:${GYG.muted};line-height:1.45;vertical-align:middle;">
-              <strong style="color:${GYG.ink};">{{customerName}}</strong><br>{{reviewDateLabel}}
+            <td style="font-family:${FONT};font-size:13px;color:${GYG.ink};line-height:1.45;vertical-align:middle;font-weight:700;">
+              {{customerName}}
             </td>
           </tr>
         </table>
@@ -1524,6 +1550,7 @@ module.exports = {
   statusChip,
   statusRow,
   displayHeading,
+  eyebrow,
   sectionHeading,
   textBlock,
   hairline,
@@ -1532,6 +1559,7 @@ module.exports = {
   policyPanel,
   pillButton,
   pillButtons,
+  textLink,
   starRating,
   helpBand,
   reviewCard,

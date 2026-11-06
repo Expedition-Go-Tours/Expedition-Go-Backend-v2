@@ -505,7 +505,7 @@ describe('sendReviewNotificationEmail', () => {
     expect(payload.to).toBe('supplier@test.com');
     expect(payload.subject).toContain('5-star review');
     expect(payload.html).toContain('Best tour ever');
-    expect(payload.html).toContain('Read the review');
+    expect(payload.html).toContain('Read the full review');
     expect(payload.html).toContain('Reply to John');
   });
 
