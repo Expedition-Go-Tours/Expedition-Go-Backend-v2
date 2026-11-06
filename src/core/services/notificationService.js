@@ -297,13 +297,14 @@ async function sendNotificationEmail(user, { type, title, message, data, templat
       },
     });
     if (review && review.tour?.supplierId === user.id) {
+      const emailData = buildReviewEmailData(review, user);
       return sendEmail({
         to,
         tagsByRecipient,
         subject: `New ${review.rating}-star review for ${review.tour.title || 'your experience'}`,
         template: 'supplier-review-received',
-        opts: { brandKey },
-        data: buildReviewEmailData(review, user),
+        opts: { brandKey, text: emailData.textBody },
+        data: emailData,
       });
     }
   }

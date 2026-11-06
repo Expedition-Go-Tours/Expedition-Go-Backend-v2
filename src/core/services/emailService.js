@@ -2627,6 +2627,8 @@ function buildReviewEmailData(review, supplier) {
   const firstName = customer.name ? customerName.trim().split(/\s+/)[0] : 'the traveller';
   const tourTitle = tour.title || '';
   const subjectTitle = String(tourTitle).replace(/[\r\n]+/g, ' ');
+  const reviewUrl = emailUrls.supplierReviewForUser(review.id, supplier);
+  const replyUrl = emailUrls.supplierReplyReviewForUser(review.id, supplier);
 
   return {
     rating,
@@ -2639,11 +2641,20 @@ function buildReviewEmailData(review, supplier) {
     tourImageUrl: heroImageUrl(tour),
     reviewDateLabel,
     bookingNumber: htmlEscape(review.booking?.bookingNumber || ''),
-    supplierReviewUrl: emailUrls.supplierReviewForUser(review.id, supplier),
-    supplierReplyUrl: emailUrls.supplierReplyReviewForUser(review.id, supplier),
+    supplierReviewUrl: reviewUrl,
+    supplierReplyUrl: replyUrl,
     dashboardUrl: emailUrls.supplierDashboardForUser(supplier),
     supplierName: htmlEscape(supplier?.name || ''),
     preheader: `${htmlEscape(customerName)} rated ${htmlEscape(subjectTitle || 'your experience')} ${rating} out of 5.`,
+    // A real text part keeps text-only clients and screen readers out of the
+    // logo alt text, the hero alt and the hidden preheader.
+    textBody: [
+      `${customerName} left a ${rating}-star review for ${subjectTitle || 'your experience'}.`,
+      rawComment ? `\n"${rawComment}"` : '',
+      '',
+      `Read the review: ${reviewUrl}`,
+      `Reply: ${replyUrl}`,
+    ].filter(Boolean).join('\n'),
   };
 }
 
@@ -2683,7 +2694,7 @@ async function sendReviewNotificationEmail(review) {
     ...await supplierRecipientList(supplier, 'reviews'),
     subject: `New ${review.rating}-star review for ${tour.title || 'your experience'}`,
     template: 'supplier-review-received',
-    opts: { brandKey },
+    opts: { brandKey, text: data.textBody },
     data,
   });
 }
