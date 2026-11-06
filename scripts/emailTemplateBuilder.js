@@ -296,6 +296,7 @@ function gygShell(title, bodyHtml, options = {}) {
   const footerBody = options.footerBody
     || `We are here to help with this booking at <a href="mailto:{{supportEmail}}" style="color:${GYG.ink};text-decoration:underline;font-weight:600;">{{supportEmail}}</a>.`;
   const footerBg = options.footerBg || GYG.footer;
+  const footerBorder = options.footerBg ? `border-top:1px solid ${GYG.line};` : '';
 
   return `<!DOCTYPE html>
 <html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
@@ -322,7 +323,7 @@ function gygShell(title, bodyHtml, options = {}) {
                 ${bodyHtml}
                 <!-- Footer band -->
                 <tr><td style="padding:34px 0 0 0;">
-                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="${footerBg}" style="background-color:${footerBg};border-top:1px solid ${GYG.line};">
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="${footerBg}" style="background-color:${footerBg};${footerBorder}">
                     <tr><td style="padding:24px 40px 26px 40px;" class="pad">
                       <div class="dm-text" style="font-family:${FONT};font-size:14px;font-weight:800;color:${GYG.ink};line-height:1.4;">${footerTitle}</div>
                       <div class="dm-muted" style="padding-top:5px;font-family:${FONT};font-size:13px;color:${GYG.muted};line-height:1.65;">
