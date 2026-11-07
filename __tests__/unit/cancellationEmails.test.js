@@ -448,7 +448,9 @@ describe('review emails', () => {
     const { html, subject } = __send.mock.calls[0][0];
 
     expect(subject).toContain('Ada Lovelace');
-    expect(html).toContain('>Copy</span>');
+    expect(html).toContain('/share/review-link?url=');
+    expect(html).toContain('>Copy link</a>');
+    expect(html).not.toContain('>Copy</span>');
     expect(html).toContain('TRG-1');
     expect(html).toContain('Open booking in portal');
     expect(html).not.toMatch(/Leave a review/i);

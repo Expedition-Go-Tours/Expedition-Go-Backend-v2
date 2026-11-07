@@ -1923,7 +1923,11 @@ const supplierReviewInvite = {
       ${B.textBlock('Now is a good time to follow up and invite your guest to share their experience. Honest reviews help future travellers know what to expect and give you useful feedback.')}
       ${B.sectionHeading('Review link for {{guestName}}')}
       ${B.textBlock('Send the link below to your guest. It opens the review form for this booking.', { muted: true, small: true })}
-      ${B.copyLink('{{reviewUrl}}')}
+      ${B.copyLink('{{reviewUrl}}', {
+        copyHref: '{{reviewShareUrl}}',
+        copyIf: 'reviewShareUrl',
+        copyLabel: 'Copy link',
+      })}
       ${B.pillButton('Open booking in portal', '{{supplierBookingUrl}}')}
       {{#if bookingNumber}}
       ${B.referenceBar({ reference: '{{bookingNumber}}' })}

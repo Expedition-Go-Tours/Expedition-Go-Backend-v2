@@ -46,11 +46,15 @@ beforeEach(() => {
 // The compiled artifact
 // ---------------------------------------------------------------------------
 describe('supplier-review-invite artifact', () => {
-  it('makes the review link the hero: a copy block, not a review-submit button', () => {
+  it('makes the review link the hero: a hosted copy action, not a review-submit button', () => {
     const html = artifact();
     expect(html).toContain('{{reviewUrl}}');
-    // Copy affordance beside a fully-visible, wrapping URL.
-    expect(html).toContain('>Copy</span>');
+    // Email clients cannot write to the clipboard, so the chip must be a real
+    // link to the dashboard copy page, never a decorative span.
+    expect(html).toContain('href="{{reviewShareUrl}}"');
+    expect(html).toContain('>Copy link</a>');
+    expect(html).not.toContain('>Copy</span>');
+    expect(html).toContain('{{#if reviewShareUrl}}');
     expect(html).toContain('word-break:break-all');
     expect(html).toContain('dm-accent-soft');
     // The supplier cannot submit the guest's review, so there must be no
@@ -103,6 +107,7 @@ describe('supplier-review-invite missing-data guards', () => {
     dateLabel: 'Wed, 4 Nov 2026',
     bookingNumber: 'TRG-1',
     reviewUrl: 'https://travioghana.com/review/accra?bookingId=b1',
+    reviewShareUrl: 'https://supplier.travioghana.com/share/review-link?url=https%3A%2F%2Ftravioghana.com%2Freview%2Faccra%3FbookingId%3Db1&guest=Ada',
     supplierBookingUrl: 'https://supplier.travioghana.com/bookings?bookingId=b1',
   };
 
@@ -130,6 +135,7 @@ describe('supplier-review-invite missing-data guards', () => {
 // ---------------------------------------------------------------------------
 const booking = (overrides = {}) => ({
   id: 'booking-1',
+  source: 'GHANA',
   bookingNumber: 'TB-001',
   customerId: 'cust-1',
   tourId: 'tour-1',
@@ -167,8 +173,26 @@ describe('sendSupplierReviewInviteEmail', () => {
     expect(subject).toBe('Activity completed - send Ada Lovelace the review link (Ref: TB-001)');
     expect(html).toContain('Invite Ada Lovelace to share their experience');
     expect(html).toContain('review/test-tour?bookingId=booking-1');
+    // The supplier gets a link to the hosted copy page, with the guest and tour
+    // carried along so the page can label what is being copied.
+    expect(html).toContain('https://supplier.travioghana.com/share/review-link?url=');
+    expect(html).toContain('review%2Ftest-tour');
+    expect(html).toContain('guest=Ada+Lovelace');
+    expect(html).toContain('>Copy link</a>');
     expect(html).not.toContain('{{');
     expect(html).not.toContain('\u2014');
+  });
+
+  it('keeps the honest selectable-link block for brands without the copy page', async () => {
+    await sendSupplierReviewInviteEmail(
+      booking({ source: 'TRAVIO_AFRICA', leadTravelerName: 'Ada Lovelace' }),
+    );
+    const { html } = __send.mock.calls[0][0];
+
+    expect(html).toContain('review/test-tour?bookingId=booking-1');
+    expect(html).not.toContain('/share/review-link');
+    expect(html).not.toContain('>Copy link</a>');
+    expect(html).toContain('Select or long-press the link to copy it');
   });
 
   it('falls back to the account holder when no lead traveller is recorded', async () => {

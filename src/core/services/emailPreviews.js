@@ -186,6 +186,7 @@ const SAMPLE = {
   bookingUrl: 'https://travioghana.com/bookings/cmv2v1rxj0200i4nqlq9n1fau',
   tourUrl: 'https://travioghana.com/tour/cmv2v1rxj0200i4nqlq9n1fau/accra-flying-dress-experience',
   reviewUrl: 'https://travioghana.com/review/accra-flying-dress-experience?bookingId=cmv2v1rxj0200i4nqlq9n1fau&tourId=cmv2v1rxj0200i4nqlq9n1fau',
+  reviewShareUrl: 'https://supplier.travioghana.com/share/review-link?url=https%3A%2F%2Ftravioghana.com%2Freview%2Faccra-flying-dress-experience%3FbookingId%3Dcmv2v1rxj0200i4nqlq9n1fau%26tourId%3Dcmv2v1rxj0200i4nqlq9n1fau&guest=Ada+Mensah&tour=Accra+Flying+Dress+Experience',
   rating1Url: 'https://travioghana.com/review/accra-flying-dress-experience?bookingId=cmv2v1rxj0200i4nqlq9n1fau&tourId=cmv2v1rxj0200i4nqlq9n1fau&rating=1',
   rating2Url: 'https://travioghana.com/review/accra-flying-dress-experience?bookingId=cmv2v1rxj0200i4nqlq9n1fau&tourId=cmv2v1rxj0200i4nqlq9n1fau&rating=2',
   rating3Url: 'https://travioghana.com/review/accra-flying-dress-experience?bookingId=cmv2v1rxj0200i4nqlq9n1fau&tourId=cmv2v1rxj0200i4nqlq9n1fau&rating=3',

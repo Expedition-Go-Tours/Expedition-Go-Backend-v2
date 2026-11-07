@@ -2058,9 +2058,22 @@ async function sendSupplierReviewInviteEmail(booking) {
     ? base.leadTravelerName
     : 'your guest';
   const refSuffix = base.bookingNumber ? ` (Ref: ${base.bookingNumber})` : '';
+  // Email clients cannot write to the clipboard. Ghana and Expedition share the
+  // Ghana supplier dashboard, which hosts a public copy page that can; link
+  // there so the supplier gets a real one-tap copy. Other brands keep the
+  // selectable-link block instead of being sent to a cross-brand page.
+  const ghanaDashboard = base.brandKey === 'ghana' || base.brandKey === 'expedition';
+  const reviewShareUrl = ghanaDashboard
+    ? `${emailUrls.dashboardBaseForBrand(base.brandKey)}/share/review-link?${new URLSearchParams({
+        url: base.reviewUrl,
+        guest: guestName,
+        tour: base.tourTitle || '',
+      }).toString()}`
+    : '';
   const data = {
     ...base,
     guestName,
+    reviewShareUrl,
     preheader: `Your activity is marked as completed. Share the review link with ${guestName}.`,
   };
   return sendRendered({

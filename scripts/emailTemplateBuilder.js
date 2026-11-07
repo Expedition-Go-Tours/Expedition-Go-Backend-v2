@@ -1162,18 +1162,29 @@ function referenceBar({ reference, right }) {
  * Copy-friendly link block — the hero for "hand this URL to someone else".
  *
  * The full URL is rendered as selectable monospace text that wraps
- * (`word-break:break-all`) instead of overflowing, paired with a "Copy"
- * affordance to its right. Email clients block JavaScript, so the control
- * cannot itself write to the clipboard: it is a visual cue next to the
- * selectable link (long-press on mobile, select on desktop), which is what a
- * recipient actually copies. The layout stacks on narrow screens.
+ * (`word-break:break-all`) instead of overflowing. Email clients block
+ * JavaScript, so no control inside the email can write to the clipboard.
+ * When `copyHref` is supplied the block renders a real anchor to a hosted
+ * copy page that performs the clipboard write in a browser. When it is not,
+ * the block stays honest: just the selectable URL and a select/long-press
+ * instruction, with no fake button. The layout stacks on narrow screens.
  *
  * @param {string} url  URL (Handlebars expression allowed)
  * @param {object} [options]
  * @param {string} [options.label]  small uppercase caption above the URL
+ * @param {string} [options.copyHref]  href of the hosted copy page
+ * @param {string} [options.copyIf]  Handlebars variable that must be truthy
+ *   before the copy action/instruction variant is shown (e.g. reviewShareUrl)
+ * @param {string} [options.copyLabel]  copy action label (default "Copy link")
  */
 function copyLink(url, options = {}) {
-  const { label = '' } = options;
+  const { label = '', copyHref = '', copyIf = '', copyLabel = 'Copy link' } = options;
+  const action = copyHref
+    ? `${copyIf ? `{{#if ${copyIf}}}` : ''}<a class="dm-chip" href="${copyHref}" target="_blank" rel="noopener" style="display:inline-block;text-decoration:none;font-family:${FONT};font-size:12px;font-weight:800;letter-spacing:0.3px;color:${COLORS.navy};background-color:${COLORS.card};border:1px solid ${COLORS.border};border-radius:8px;padding:9px 16px;line-height:1;">${copyLabel}</a>${copyIf ? '{{/if}}' : ''}`
+    : '';
+  const instruction = copyHref
+    ? `${copyIf ? `{{#if ${copyIf}}}` : ''}Open ${copyLabel} for a one-tap copy, or select the link above.${copyIf ? '{{else}}Select or long-press the link to copy it, then send it to your guest.{{/if}}' : ''}`
+    : 'Select or long-press the link to copy it, then send it to your guest.';
   return `
   <tr><td class="pad" style="padding:12px 40px 0 40px;">
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="dm-surface dm-accent-soft" style="background-color:${COLORS.accentSoft};border:1px solid ${COLORS.accentSoftBorder};border-radius:14px;border-collapse:separate;border-spacing:0;overflow:hidden;">
@@ -1183,11 +1194,11 @@ function copyLink(url, options = {}) {
           <tr>
             <td class="stack-td dm-text" style="font-family:'SFMono-Regular',Menlo,Consolas,'Courier New',monospace;font-size:13px;font-weight:600;color:${COLORS.navy};line-height:1.6;word-break:break-all;overflow-wrap:anywhere;vertical-align:middle;padding:0 12px 0 0;">${url}</td>
             <td class="stack-td" width="1" align="right" style="white-space:nowrap;vertical-align:middle;padding:0;">
-              <span class="dm-chip" style="display:inline-block;font-family:${FONT};font-size:12px;font-weight:800;letter-spacing:0.3px;color:${COLORS.navy};background-color:${COLORS.card};border:1px solid ${COLORS.border};border-radius:8px;padding:9px 16px;line-height:1;">Copy</span>
+              ${action}
             </td>
           </tr>
         </table>
-        <div class="dm-muted" style="font-family:${FONT};font-size:12px;color:${COLORS.faint};line-height:1.5;padding-top:10px;">Select or long-press the link to copy it, then send it to your guest.</div>
+        <div class="dm-muted" style="font-family:${FONT};font-size:12px;color:${COLORS.faint};line-height:1.5;padding-top:10px;">${instruction}</div>
       </td></tr>
     </table>
   </td></tr>`;
