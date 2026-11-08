@@ -17,12 +17,17 @@
  */
 const prisma = require('./prismaClient');
 const AppError = require('./appError');
+const cache = require('./cacheHelper');
 const { revokeGuestAccess } = require('./guestAccess');
 const { logActivity } = require('./auditLogger');
 const { enqueueEvent } = require('./queue');
 
 const PREVIEW_LIMIT = 20;
 const CLAIM_LIMIT = 100;
+// The prompt is mounted at the app root, so "shown" is not one event per
+// login — without a brake it would be one per page load. One per account per
+// day is enough to measure the funnel.
+const PROMPT_EVENT_TTL = 24 * 60 * 60;
 
 function accountEmail(user) {
   return String(user?.email || '').trim();
@@ -37,6 +42,25 @@ function claimableWhere(email) {
       { leadTravelerEmail: { equals: email, mode: 'insensitive' } },
     ],
   };
+}
+
+/**
+ * Emit the "prompt shown" event at most once per account per day. Fire and
+ * forget: a metrics failure must never delay or break the preview.
+ */
+function recordPromptShown(userId) {
+  cache
+    .getOrSet(`guest-claim:prompted:${userId}`, async () => {
+      enqueueEvent({
+        name: 'user.guest_claim_prompted',
+        userId,
+        resource: 'User',
+        resourceId: userId,
+        properties: { surface: 'app_prompt' },
+      }).catch(() => {});
+      return true;
+    }, PROMPT_EVENT_TTL)
+    .catch(() => {});
 }
 
 function slim(booking) {
@@ -86,6 +110,8 @@ async function listClaimableGuestBookings(user) {
       select: SELECT,
     }),
   ]);
+
+  if (count > 0) recordPromptShown(user.id);
 
   return { canClaim: true, needsVerification: false, count, bookings: rows.map(slim) };
 }
@@ -146,8 +172,18 @@ async function claimGuestBookings(user, bookingIds = null) {
       }).catch(() => {});
     }
 
+    // Two names on purpose: `user.guest_bookings_claimed` is the existing
+    // activity feed name, `user.guest_claim_completed` is the funnel event the
+    // guest-claim metric reads.
     enqueueEvent({
       name: 'user.guest_bookings_claimed',
+      userId: user.id,
+      resource: 'User',
+      resourceId: user.id,
+      properties: { count: result.count },
+    }).catch(() => {});
+    enqueueEvent({
+      name: 'user.guest_claim_completed',
       userId: user.id,
       resource: 'User',
       resourceId: user.id,
@@ -158,8 +194,26 @@ async function claimGuestBookings(user, bookingIds = null) {
   return { claimed: result.count, bookings: candidates.map(slim) };
 }
 
+/**
+ * Record a "Not now". The dismissal itself lives in the client (30 days per
+ * account); this only writes the funnel event.
+ *
+ * @param {{ id: string }} user
+ */
+function recordClaimDismissed(user) {
+  if (!user?.id) return;
+  enqueueEvent({
+    name: 'user.guest_claim_dismissed',
+    userId: user.id,
+    resource: 'User',
+    resourceId: user.id,
+    properties: { surface: 'app_prompt' },
+  }).catch(() => {});
+}
+
 module.exports = {
   listClaimableGuestBookings,
   claimGuestBookings,
   claimableWhere,
+  recordClaimDismissed,
 };

@@ -305,6 +305,11 @@ function listTemplateKeys() {
  * now, pay later"; the supplier recorded it and collects the money themselves.
  */
 const SAMPLE_OVERRIDES = {
+  // Guest checkout is the default for the marketplace, so the gallery shows
+  // the account nudge that only guests receive.
+  'booking-confirmed': {
+    guestClaimUrl: 'https://www.travioghana.com/booking/access?token=sample-token&claim=1',
+  },
   'verify-email': {
     verifyUrl: 'https://www.travioghana.com/verify-email?token=sample-token',
     preheader: 'Confirm your email address to see and manage bookings made as a guest.',

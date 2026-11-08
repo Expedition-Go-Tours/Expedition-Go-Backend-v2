@@ -398,6 +398,83 @@ describe('adminController', () => {
   });
 
   // ============================
+  // getGuestClaimAnalytics — guest checkout → verified claim
+  // ============================
+  describe('getGuestClaimAnalytics', () => {
+    it('counts guest vs claimed bookings and computes time-to-claim', async () => {
+      prisma.booking.count
+        .mockResolvedValueOnce(10)   // guest bookings created in period
+        .mockResolvedValueOnce(4)    // …of which claimed
+        .mockResolvedValueOnce(30)   // account bookings created in period
+        .mockResolvedValueOnce(50)   // guest bookings, lifetime
+        .mockResolvedValueOnce(20)   // …of which claimed, lifetime
+        .mockResolvedValueOnce(150); // account bookings, lifetime
+      prisma.auditLog.findMany.mockResolvedValue([
+        // Duplicate row for the same booking: only the earliest claim counts.
+        { resourceId: 'b1', createdAt: new Date('2026-11-05T00:00:00Z') },
+        { resourceId: 'b1', createdAt: new Date('2026-11-06T00:00:00Z') },
+      ]);
+      prisma.booking.findMany.mockResolvedValue([
+        { id: 'b1', createdAt: new Date('2026-11-01T00:00:00Z') },
+      ]);
+
+      await controller.getGuestClaimAnalytics(req, res, next);
+
+      const body = res.json.mock.calls[0][0];
+      expect(body.data.guestBookings).toBe(10);
+      expect(body.data.claimedGuestBookings).toBe(4);
+      expect(body.data.accountBookings).toBe(30);
+      expect(body.data.guestShare).toBe(25); // 10 of 40 bookings in the window
+      expect(body.data.claimRate).toBe(40);
+      expect(body.data.claimsInPeriod).toBe(1);
+      expect(body.data.averageDaysToClaim).toBe(4);
+      expect(body.data.lifetime).toEqual({
+        guestBookings: 50,
+        claimedGuestBookings: 20,
+        unclaimedGuestBookings: 30,
+        accountBookings: 150,
+        guestShare: 25,
+        claimRate: 40,
+        averageDaysToClaim: 4,
+      });
+    });
+
+    it('reads the booking table, not the event feed, for the split', async () => {
+      prisma.booking.count.mockResolvedValue(0);
+
+      await controller.getGuestClaimAnalytics(req, res, next);
+
+      expect(prisma.booking.count).toHaveBeenCalledWith({
+        where: { guestId: { not: null }, createdAt: { gte: expect.any(Date) } },
+      });
+      expect(prisma.booking.count).toHaveBeenCalledWith({
+        where: { guestId: { not: null }, customerId: { not: null } },
+      });
+    });
+
+    it('handles no guest bookings without dividing by zero', async () => {
+      prisma.booking.count.mockResolvedValue(0);
+      prisma.auditLog.findMany.mockResolvedValue([]);
+
+      await controller.getGuestClaimAnalytics(req, res, next);
+
+      const body = res.json.mock.calls[0][0];
+      expect(body.data.claimRate).toBe(0);
+      expect(body.data.averageDaysToClaim).toBeNull();
+      expect(body.data.claimsInPeriod).toBe(0);
+    });
+
+    it('accepts a period query parameter', async () => {
+      req.query.period = '90d';
+
+      await controller.getGuestClaimAnalytics(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json.mock.calls[0][0].data.period).toBe('90d');
+    });
+  });
+
+  // ============================
   // getCLV
   // ============================
   describe('getCLV', () => {

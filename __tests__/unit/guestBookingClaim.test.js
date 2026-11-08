@@ -22,14 +22,21 @@ jest.mock('../../src/core/services/auditLogger', () => ({
 jest.mock('../../src/core/services/queue', () => ({
   enqueueEvent: jest.fn(() => Promise.resolve()),
 }));
+// getOrSet calls the producer once; the dedupe window itself is covered by the
+// cache helper's own tests.
+jest.mock('../../src/core/services/cacheHelper', () => ({
+  getOrSet: jest.fn((_key, fn) => fn()),
+}));
 
 const prisma = require('../../src/core/services/prismaClient');
 const { revokeGuestAccess } = require('../../src/core/services/guestAccess');
 const { logActivity } = require('../../src/core/services/auditLogger');
 const { enqueueEvent } = require('../../src/core/services/queue');
+const cache = require('../../src/core/services/cacheHelper');
 const {
   listClaimableGuestBookings,
   claimGuestBookings,
+  recordClaimDismissed,
 } = require('../../src/core/services/guestBookingClaim');
 
 const verifiedUser = { id: 'u1', email: 'ada@example.com', emailVerified: true };
@@ -80,6 +87,16 @@ describe('guest booking claim', () => {
       count: 2,
       bookings: [{ id: 'b1', bookingNumber: 'TRG-1', tourTitle: 'Accra: Shai Hills Safari' }],
     });
+    // The funnel event is deduped per account per day through the cache key.
+    expect(cache.getOrSet).toHaveBeenCalledWith(
+      'guest-claim:prompted:u1',
+      expect.any(Function),
+      24 * 60 * 60,
+    );
+    expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'user.guest_claim_prompted',
+      userId: 'u1',
+    }));
   });
 
   it('refuses a claim from an unverified account', async () => {
@@ -114,6 +131,10 @@ describe('guest booking claim', () => {
       name: 'user.guest_bookings_claimed',
       properties: { count: 2 },
     }));
+    expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'user.guest_claim_completed',
+      properties: { count: 2 },
+    }));
     expect(result.claimed).toBe(2);
   });
 
@@ -135,5 +156,22 @@ describe('guest booking claim', () => {
 
     expect(result).toEqual({ claimed: 0, bookings: [] });
     expect(prisma.booking.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('records a dismissal as a funnel event without touching a booking', () => {
+    recordClaimDismissed(verifiedUser);
+
+    expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'user.guest_claim_dismissed',
+      userId: 'u1',
+      properties: { surface: 'app_prompt' },
+    }));
+    expect(prisma.booking.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('ignores a dismissal without a user', () => {
+    recordClaimDismissed(null);
+
+    expect(enqueueEvent).not.toHaveBeenCalled();
   });
 });

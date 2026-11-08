@@ -206,6 +206,9 @@ router.get('/analytics/tour-performance', requirePermission('analytics.view'), a
  *                   $ref: '#/components/schemas/FunnelResponse'
  */
 router.get('/analytics/funnel', requirePermission('analytics.view'), adminController.getFunnel);
+// Guest checkout → verified-email claim funnel (guest vs account bookings,
+// claim rate, time-to-claim). Same read permission as the other analytics.
+router.get('/analytics/guest-claims', requirePermission('analytics.view'), adminController.getGuestClaimAnalytics);
 
 /**
  * @swagger

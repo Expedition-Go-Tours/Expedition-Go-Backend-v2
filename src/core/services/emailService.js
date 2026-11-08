@@ -674,6 +674,14 @@ async function buildBookingBase(booking, opts = {}) {
     bookingUrl: emailUrls.viewBooking(booking.id, clientOrigin, booking),
     voucherUrl: emailUrls.downloadVoucher(booking.id, clientOrigin, booking),
     manageUrl: emailUrls.manageBooking(booking.id, clientOrigin, booking),
+    // Guest-only account nudge. `claim=1` tells the confirmation page the
+    // visitor arrived from "Create an account", so it leads with the
+    // save-to-account card. Empty for account bookings and legacy storefronts,
+    // which makes the template's {{#if guestClaimUrl}} block disappear.
+    guestClaimUrl: (() => {
+      const access = emailUrls.guestBookingAccessUrl(booking, clientOrigin);
+      return access ? `${access}&claim=1` : '';
+    })(),
     managePaymentUrl: emailUrls.managePaymentMethod(booking.id, clientOrigin),
     pickupUrl: emailUrls.addPickupLocation(booking.id, clientOrigin),
     reviewUrl: emailUrls.writeReview(booking.id, clientOrigin, tour.slug, tour.id),

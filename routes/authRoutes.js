@@ -534,5 +534,6 @@ router.post('/verify-email/confirm', emailVerifyLimiter, authController.confirmE
 // MARKETPLACE guest bookings.
 router.get('/guest-bookings', protect, authController.listGuestBookings);
 router.post('/guest-bookings/claim', protect, authController.claimGuestBookings);
+router.post('/guest-bookings/dismiss', protect, authController.dismissGuestBookings);
 
 module.exports = router;

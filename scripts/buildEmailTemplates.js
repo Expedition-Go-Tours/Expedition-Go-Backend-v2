@@ -145,6 +145,11 @@ const customerBookingConfirmed = {
         { label: 'View booking', href: '{{bookingUrl}}', kind: 'secondary' },
         { label: 'Manage booking', href: '{{manageUrl}}', kind: 'secondary' },
       ])}
+      {{#if guestClaimUrl}}
+      ${B.sectionTitle('Keep it in one place')}
+      ${B.paragraph('You booked as a guest, so there is nothing else you need to do. Create an account to keep this booking, your voucher and any future trips together, and to manage your date and pickup yourself.')}
+      ${B.buttonPrimary('Create an account', '{{guestClaimUrl}}')}
+      {{/if}}
       ${B.recommendations('Similar activities', 'More experiences travellers love in the same destination.')}
     `);
   },

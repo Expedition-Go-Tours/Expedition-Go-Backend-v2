@@ -18,6 +18,7 @@ const {
 const {
   listClaimableGuestBookings: listClaimableGuestBookingsForUser,
   claimGuestBookings: claimGuestBookingsForUser,
+  recordClaimDismissed,
 } = require('../services/guestBookingClaim');
 
 exports.login = catchAsync(async (req, res, next) => {
@@ -475,7 +476,16 @@ exports.setPassword = catchAsync(async (req, res, next) => {
     status: 'success',
     message: 'Password set successfully',
     data: {
-      user: { id: user.id, name: user.name, email: user.email, photoURL: user.photoURL, roles: user.roles, hasPassword: true },
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        photoURL: user.photoURL,
+        roles: user.roles,
+        hasPassword: true,
+        // Completing a reset proves inbox control (see the update above).
+        emailVerified: true,
+      },
     },
   });
 });
@@ -728,6 +738,18 @@ exports.confirmEmailVerification = catchAsync(async (req, res) => {
   // still see `emailVerified: false` until the TTL expires.
   invalidateUserCache(result.user.id);
 
+  // Funnel event: only the first verification counts. A replayed link is a
+  // no-op and must not inflate the metric.
+  if (!result.alreadyVerified) {
+    enqueueEvent({
+      name: 'user.email_verified',
+      userId: result.user.id,
+      resource: 'User',
+      resourceId: result.user.id,
+      properties: { method: 'email_link' },
+    }).catch(() => {});
+  }
+
   logAuthEvent({
     userId: result.user.id,
     userEmail: result.user.email,
@@ -763,4 +785,15 @@ exports.listGuestBookings = catchAsync(async (req, res) => {
 exports.claimGuestBookings = catchAsync(async (req, res) => {
   const data = await claimGuestBookingsForUser(req.user, req.body?.bookingIds);
   res.status(200).json({ status: 'success', data });
+});
+
+/**
+ * POST /api/auth/guest-bookings/dismiss
+ *
+ * The "Not now" choice is remembered client-side (30 days per account); this
+ * endpoint exists only so the funnel can see the dismissal.
+ */
+exports.dismissGuestBookings = catchAsync(async (req, res) => {
+  recordClaimDismissed(req.user);
+  res.status(200).json({ status: 'success', data: { dismissed: true } });
 });

@@ -683,6 +683,114 @@ exports.getFunnel = catchAsync(async (req, res, next) => {
 });
 
 /**
+ * GET /api/admin/analytics/guest-claims
+ *
+ * Guest checkout vs. account booking, and how often a guest later claims the
+ * booking after verifying their email.
+ *
+ * Denominator note: "claim rate" is claimed guest bookings divided by all
+ * guest bookings *created in the period*. A booking created last week and
+ * claimed today counts in the numerator only if the booking itself is inside
+ * the window, so the lifetime block is the honest steady-state figure.
+ *
+ * `averageDaysToClaim` reads the `booking.guest_claimed` audit rows — the
+ * booking's createdAt to the claim's createdAt — so it measures time-to-claim,
+ * not time-to-book.
+ *
+ * Query params: period (7d | 30d | 90d | 1y) — defaults to 30d
+ */
+exports.getGuestClaimAnalytics = catchAsync(async (req, res, next) => {
+  const periodMap = { '7d': 7, '30d': 30, '90d': 90, '1y': 365 };
+  const days = periodMap[req.query.period] || 30;
+  const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const bucket = Math.floor(Date.now() / 300000);
+
+  const data = await cache.getOrSet(`admin:guestClaims:${bucket}:${days}`, async () => {
+    // guestId is set only by guest checkout; a supplier walk-in has neither a
+    // customer nor a guest. customerId then tells us whether it was claimed.
+    const guestLifetimeWhere = { guestId: { not: null } };
+    const claimedLifetimeWhere = { guestId: { not: null }, customerId: { not: null } };
+    const accountLifetimeWhere = { customerId: { not: null } };
+
+    const [
+      guestPeriod,
+      claimedPeriod,
+      accountPeriod,
+      guestLifetime,
+      claimedLifetime,
+      accountLifetime,
+      claimLogs,
+    ] = await Promise.all([
+      prisma.booking.count({ where: { ...guestLifetimeWhere, createdAt: { gte: startDate } } }),
+      prisma.booking.count({ where: { ...claimedLifetimeWhere, createdAt: { gte: startDate } } }),
+      prisma.booking.count({ where: { ...accountLifetimeWhere, createdAt: { gte: startDate } } }),
+      prisma.booking.count({ where: guestLifetimeWhere }),
+      prisma.booking.count({ where: claimedLifetimeWhere }),
+      prisma.booking.count({ where: accountLifetimeWhere }),
+      prisma.auditLog.findMany({
+        where: { action: 'booking.guest_claimed', createdAt: { gte: startDate } },
+        select: { resourceId: true, createdAt: true },
+        orderBy: { createdAt: 'desc' },
+        take: 1000,
+      }),
+    ]);
+
+    // One claim per booking by construction; dedupe anyway so a retry that
+    // somehow logged twice cannot skew the rate or the average.
+    const firstClaimAt = new Map();
+    for (const log of claimLogs) {
+      if (!log.resourceId) continue;
+      const previous = firstClaimAt.get(log.resourceId);
+      if (!previous || log.createdAt < previous) firstClaimAt.set(log.resourceId, log.createdAt);
+    }
+    const claimedIds = [...firstClaimAt.keys()];
+
+    const bookings = claimedIds.length
+      ? await prisma.booking.findMany({
+        where: { id: { in: claimedIds } },
+        select: { id: true, createdAt: true },
+      })
+      : [];
+    const createdAtById = new Map(bookings.map((b) => [b.id, b.createdAt]));
+
+    const durations = [];
+    for (const [id, claimedAt] of firstClaimAt) {
+      const created = createdAtById.get(id);
+      if (!created) continue;
+      const daysToClaim = (new Date(claimedAt).getTime() - new Date(created).getTime()) / (24 * 60 * 60 * 1000);
+      if (Number.isFinite(daysToClaim) && daysToClaim >= 0) durations.push(daysToClaim);
+    }
+
+    const rate = (claimed, total) => (total > 0 ? Number(((claimed / total) * 100).toFixed(1)) : 0);
+    const averageDaysToClaim = durations.length
+      ? Number((durations.reduce((sum, d) => sum + d, 0) / durations.length).toFixed(1))
+      : null;
+
+    return {
+      period: `${days}d`,
+      guestBookings: guestPeriod,
+      claimedGuestBookings: claimedPeriod,
+      accountBookings: accountPeriod,
+      guestShare: rate(guestPeriod, guestPeriod + accountPeriod),
+      claimRate: rate(claimedPeriod, guestPeriod),
+      claimsInPeriod: firstClaimAt.size,
+      averageDaysToClaim,
+      lifetime: {
+        guestBookings: guestLifetime,
+        claimedGuestBookings: claimedLifetime,
+        unclaimedGuestBookings: Math.max(guestLifetime - claimedLifetime, 0),
+        accountBookings: accountLifetime,
+        guestShare: rate(guestLifetime, guestLifetime + accountLifetime),
+        claimRate: rate(claimedLifetime, guestLifetime),
+        averageDaysToClaim,
+      },
+    };
+  }, 300);
+
+  res.status(200).json({ status: 'success', data });
+});
+
+/**
  * GET /api/admin/analytics/clv
  *
  * Customer Lifetime Value & Repeat Booking Rate.
