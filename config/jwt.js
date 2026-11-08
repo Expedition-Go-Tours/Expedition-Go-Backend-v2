@@ -12,6 +12,11 @@ const PASSWORD_RESET_SECRET = process.env.JWT_PASSWORD_RESET_SECRET || (process.
 // api.expeditiongotours.com and apiv1.travioafrica.com — which resolve to the
 // same deployment — sign and verify the same ticket.
 const SSO_TICKET_SECRET = process.env.JWT_SSO_SECRET || (process.env.JWT_SECRET || 'fallback-sso-secret') + '_sso';
+// Guest booking access links. A guest has no account, so the confirmation
+// email carries a signed, booking-scoped credential that the storefront
+// exchanges for a normal GuestAccess token. Derived from JWT_SECRET like the
+// other secrets so every API instance verifies the same link.
+const BOOKING_ACCESS_SECRET = process.env.JWT_BOOKING_ACCESS_SECRET || (process.env.JWT_SECRET || 'fallback-booking-access-secret') + '_booking_access';
 
 const ACCESS_TOKEN_EXPIRY = '1h';
 const REFRESH_TOKEN_EXPIRY = '7d';
@@ -21,6 +26,10 @@ const PASSWORD_RESET_EXPIRY = '15m';
 // Exported as seconds so the exchange can expire its single-use marker over
 // exactly the same window.
 const SSO_TICKET_EXPIRY_SECONDS = 120;
+// A guest confirmation email is opened days or weeks after booking, often on
+// another device, so this link must outlive the sessionStorage token. It is
+// scoped to one booking and refuses once an account owns that booking.
+const BOOKING_ACCESS_EXPIRY = process.env.BOOKING_ACCESS_EXPIRY || '30d';
 
 function signAccessToken(payload) {
   return jwt.sign(payload, ACCESS_TOKEN_SECRET, { expiresIn: ACCESS_TOKEN_EXPIRY });
@@ -100,6 +109,30 @@ function verifySsoTicket(token) {
   return jwt.verify(token, SSO_TICKET_SECRET);
 }
 
+/**
+ * Signed link from a guest confirmation email to that one booking.
+ *
+ * `purpose` is checked on verify so a token minted for another feature can
+ * never be replayed here. The payload is `{ bookingId, email, purpose }`;
+ * `email` is contextual (the address the mail went to), not a credential —
+ * the booking id is what the token authorises.
+ */
+function signBookingAccessToken(payload) {
+  return jwt.sign(
+    { ...payload, purpose: 'booking-access' },
+    BOOKING_ACCESS_SECRET,
+    { expiresIn: BOOKING_ACCESS_EXPIRY },
+  );
+}
+
+function verifyBookingAccessToken(token) {
+  const payload = jwt.verify(token, BOOKING_ACCESS_SECRET);
+  if (!payload || payload.purpose !== 'booking-access' || !payload.bookingId) {
+    throw new Error('Invalid booking access token');
+  }
+  return payload;
+}
+
 function clearLegacyAuthCookies(res) {
   if (!isProduction || COOKIE_DOMAIN) return;
   if (typeof res.clearCookie !== 'function') return;
@@ -129,11 +162,14 @@ module.exports = {
   signRefreshToken,
   signPasswordResetToken,
   signSsoTicket,
+  signBookingAccessToken,
   verifyAccessToken,
   verifyRefreshToken,
   verifyPasswordResetToken,
   verifySsoTicket,
+  verifyBookingAccessToken,
   SSO_TICKET_EXPIRY_SECONDS,
+  BOOKING_ACCESS_EXPIRY,
   setAuthCookies,
   clearAuthCookies,
 };

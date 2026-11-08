@@ -195,3 +195,36 @@ describe('resetPasswordUrl — the link must open the app the user signs in to',
     );
   });
 });
+
+describe('guest booking access links', () => {
+  const { verifyBookingAccessToken } = require('../../config/jwt');
+  const modern = 'https://expeditiongotours.vercel.app';
+  const legacy = 'https://travioafrica.com';
+  const guest = { id: 'b-guest', customerId: null, leadTravelerEmail: 'guest@example.com' };
+
+  it('mints a booking-scoped access link for a guest on a modern storefront', () => {
+    const url = emailUrls.viewBooking('b-guest', modern, guest);
+    expect(url.startsWith(`${modern}/booking/access?token=`)).toBe(true);
+
+    const token = new URL(url).searchParams.get('token');
+    const payload = verifyBookingAccessToken(token);
+    expect(payload.bookingId).toBe('b-guest');
+    expect(payload.purpose).toBe('booking-access');
+    expect(payload.email).toBe('guest@example.com');
+  });
+
+  it('uses the access link for the voucher and manage buttons too', () => {
+    expect(emailUrls.downloadVoucher('b-guest', modern, guest)).toMatch(/\/booking\/access\?token=/);
+    expect(emailUrls.manageBooking('b-guest', modern, guest)).toMatch(/\/booking\/access\?token=/);
+  });
+
+  it('keeps the dashboard link once an account owns the booking', () => {
+    const member = { id: 'b1', customerId: 'u1', leadTravelerEmail: 'member@example.com' };
+    expect(emailUrls.viewBooking('b1', modern, member)).toBe(`${modern}/dashboard/bookings?booking=b1`);
+    expect(emailUrls.manageBooking('b1', modern, member)).toBe(`${modern}/dashboard/bookings?booking=b1`);
+  });
+
+  it('does not send a legacy-storefront guest to a route it does not have', () => {
+    expect(emailUrls.viewBooking('b-guest', legacy, guest)).toBe('https://travioafrica.com/booking/b-guest');
+  });
+});

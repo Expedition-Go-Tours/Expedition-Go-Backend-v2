@@ -671,9 +671,9 @@ async function buildBookingBase(booking, opts = {}) {
 
     // customer URLs — point at the storefront the booking was made on
     tourUrl: emailUrls.viewTour(tour.id, tour.slug, clientOrigin),
-    bookingUrl: emailUrls.viewBooking(booking.id, clientOrigin),
-    voucherUrl: emailUrls.downloadVoucher(booking.id, clientOrigin),
-    manageUrl: emailUrls.manageBooking(booking.id, clientOrigin),
+    bookingUrl: emailUrls.viewBooking(booking.id, clientOrigin, booking),
+    voucherUrl: emailUrls.downloadVoucher(booking.id, clientOrigin, booking),
+    manageUrl: emailUrls.manageBooking(booking.id, clientOrigin, booking),
     managePaymentUrl: emailUrls.managePaymentMethod(booking.id, clientOrigin),
     pickupUrl: emailUrls.addPickupLocation(booking.id, clientOrigin),
     reviewUrl: emailUrls.writeReview(booking.id, clientOrigin, tour.slug, tour.id),
@@ -1363,7 +1363,7 @@ async function sendCustomerRefundRequestedEmail(requestId) {
     data: {
       ...base,
       refundAmountLabel: fmt.formatCurrency(preview.proposed ?? 0, currency),
-      manageUrl: emailUrls.manageBooking(b.id, origin),
+      manageUrl: emailUrls.manageBooking(b.id, origin, b),
     },
     opts: {
       brandKey: base.brandKey,
@@ -1393,7 +1393,7 @@ async function sendCustomerRefundDeclinedEmail(requestId) {
     key: 'customer-refund-declined',
     data: {
       ...base,
-      manageUrl: emailUrls.manageBooking(b.id, origin),
+      manageUrl: emailUrls.manageBooking(b.id, origin, b),
     },
     opts: {
       brandKey: base.brandKey,
@@ -1411,9 +1411,9 @@ async function sendSupplierChangedBookingEmail(booking, { changes = [], changeRe
     changes,
     changeReason: changeReason || '',
     needsAcceptance,
-    acceptUrl: emailUrls.manageBooking(b.id, origin),
-    rescheduleUrl: emailUrls.manageBooking(b.id, origin),
-    cancelUrl: emailUrls.viewCancellation(b.id, origin),
+    acceptUrl: emailUrls.manageBooking(b.id, origin, b),
+    rescheduleUrl: emailUrls.manageBooking(b.id, origin, b),
+    cancelUrl: emailUrls.viewCancellation(b.id, origin, b),
   };
   return sendRendered({
     to: base.customerEmail,

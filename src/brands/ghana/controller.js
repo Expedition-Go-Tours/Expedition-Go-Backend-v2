@@ -36,6 +36,7 @@ const { scopeBooking, scopeBookings, can } = require('../../core/services/suppli
 const { bookingRefundState } = require('../../core/services/bookingRefundState');
 const { attachBookingAttention } = require('../../core/services/bookingAttentionService');
 const paymentLinkService = require('../../core/services/paymentLinkService');
+const { exchangeBookingAccessToken } = require('../../core/services/bookingAccess');
 const { hasTeamPermission, toRoleArray } = require('../../../config/teamPermissions');
 const { tourMatchWhere, isTourIdParam } = require('../../core/services/tourLookup');
 
@@ -1605,6 +1606,24 @@ const getBooking = catchAsync(async (req, res, next) => {
 });
 
 /**
+ * POST /bookings/access/exchange
+ *
+ * A guest confirmation email carries a signed, booking-scoped token. The
+ * storefront posts it here, gets a normal GuestAccess token back, and continues
+ * to the confirmation page. The token itself is the credential, so this route
+ * runs without auth — but it only ever authorises the one booking it was
+ * minted for.
+ *
+ * Once an account owns the booking the exchange refuses: the account is the
+ * right way in, and minting a guest credential for a claimed booking would
+ * leave a second, weaker way to read it.
+ */
+const exchangeBookingAccess = catchAsync(async (req, res) => {
+  const data = await exchangeBookingAccessToken(req.body?.token);
+  res.status(200).json({ status: 'success', data });
+});
+
+/**
  * GET /expedition/bookings/by-session/:sessionId
  *
  * Returns the checkout status for a pay-now session. The frontend polls this
@@ -2920,6 +2939,7 @@ module.exports = {
   confirmBooking,
   getMyBookings,
   getBooking,
+  exchangeBookingAccess,
   getBookingBySession,
   getCheckoutDraft,
   releaseCheckoutDraft,

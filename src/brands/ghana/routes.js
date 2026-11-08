@@ -1019,6 +1019,23 @@ router.get('/bookings/by-paypal-order/:orderId', ...guestCapable, travioGhanaCon
  *       404:
  *         description: Booking not found
  */
+// A guest confirmation email link is a public capability. Bound guessing and
+// repeated exchanges per IP; a legitimate customer opens it once.
+const bookingAccessLimiter = createLimiter({
+  name: 'booking-access',
+  defaultMax: 30,
+  defaultWindowMs: 10 * 60 * 1000,
+  message: { status: 'fail', message: 'Too many booking-link requests, please try again later.' },
+});
+
+/**
+ * POST /api/travioghana/bookings/access/exchange
+ * Body: { token } — the signed token from a guest confirmation email.
+ * Returns a GuestAccess token for that one booking, or { requireLogin: true }
+ * once an account owns it.
+ */
+router.post('/bookings/access/exchange', bookingAccessLimiter, travioGhanaController.exchangeBookingAccess);
+
 router.get('/bookings/:id', ...guestCapable, validate(bookingIdParamSchema), travioGhanaController.getBooking);
 
 /**

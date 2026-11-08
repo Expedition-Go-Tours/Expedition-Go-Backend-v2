@@ -98,6 +98,33 @@ function qBooking(id) {
   return `/dashboard/bookings?booking=${encodeURIComponent(id)}`;
 }
 
+/**
+ * Guest confirmation link.
+ *
+ * A guest has no account, so the authed dashboard route is a dead end. Mint a
+ * signed, booking-scoped token and send them to the storefront exchange page,
+ * which swaps it for the normal GuestAccess token. Account bookings keep the
+ * existing dashboard link.
+ *
+ * Only the modern storefronts have /booking/access. Legacy bookings keep their
+ * /booking/:id links, which already work without a dashboard session.
+ */
+function guestBookingAccessUrl(booking, origin) {
+  if (!booking || booking.customerId || isLegacy(origin)) return null;
+  try {
+    const { signBookingAccessToken } = require('./jwt');
+    const token = signBookingAccessToken({
+      bookingId: booking.id,
+      email: booking.leadTravelerEmail || booking.customer?.email || '',
+    });
+    return `${baseUrl(origin)}/booking/access?token=${encodeURIComponent(token)}`;
+  } catch {
+    // Never let a signing failure break the email; fall back to the normal
+    // link and let the storefront handle the sign-in path.
+    return null;
+  }
+}
+
 // Route shapes per platform. Legacy deep links live on the old storefront;
 // the Expedition storefront routes booking management through its dashboard.
 const LEGACY_PATHS = {
@@ -212,9 +239,15 @@ module.exports = {
   adminBaseForBrand,
 
   // ── Customer (storefront) — origin = allow-listed booking frontend ──────
-  viewBooking: (bookingId, origin) => brandPath(origin, 'view', bookingId),
-  downloadVoucher: (bookingId, origin) => brandPath(origin, 'voucher', bookingId),
-  manageBooking: (bookingId, origin) => brandPath(origin, 'manage', bookingId),
+  // Pass the booking as the third argument so a guest gets a signed access
+  // link instead of the authed dashboard URL.
+  guestBookingAccessUrl,
+  viewBooking: (bookingId, origin, booking = null) =>
+    guestBookingAccessUrl(booking, origin) || brandPath(origin, 'view', bookingId),
+  downloadVoucher: (bookingId, origin, booking = null) =>
+    guestBookingAccessUrl(booking, origin) || brandPath(origin, 'voucher', bookingId),
+  manageBooking: (bookingId, origin, booking = null) =>
+    guestBookingAccessUrl(booking, origin) || brandPath(origin, 'manage', bookingId),
   managePaymentMethod: (bookingId, origin) => brandPath(origin, 'payment', bookingId),
   addPickupLocation: (bookingId, origin) => brandPath(origin, 'pickup', bookingId),
   // Review goes through the guided /review/:tourSlug flow on every storefront.
