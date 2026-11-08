@@ -8,6 +8,7 @@ jest.mock('../../src/core/services/prismaClient', () => ({
   expeditionTour: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn() },
   review: { findMany: jest.fn(), count: jest.fn() },
   event: { findMany: jest.fn(), count: jest.fn() },
+  auditLog: { findMany: jest.fn().mockResolvedValue([]) },
   notification: { findMany: jest.fn(), count: jest.fn(), updateMany: jest.fn() },
   $queryRaw: jest.fn().mockResolvedValue([]),
   $queryRawUnsafe: jest.fn().mockResolvedValue([]),
@@ -33,6 +34,7 @@ const { enqueueNotification } = require('../../src/core/services/queue');
 
 const EXPECTED_FUNCTIONS = [
   'getOverview', 'getActivityFeed', 'getRevenueTrend', 'getTourPerformance', 'getUserGrowth', 'getFunnel', 'getCLV',
+  'getGuestClaimAnalytics',
   'getSearchAnalytics', 'getTours', 'getTourDetail', 'updateTour', 'deleteTour',
   'getTourReviewQueue', 'reviewTour', 'searchTours', 'getBookings', 'getTodayBookings', 'getBookingById',
   'confirmPayment', 'getSuppliers', 'getSupplierDetail', 'suspendSupplier', 'activateSupplier',
@@ -42,14 +44,14 @@ const EXPECTED_FUNCTIONS = [
 ];
 
 describe('admin controller brand factory (Phase 2b)', () => {
-  it('Ghana admin exports all 36 functions + makeAdminController', () => {
+  it('Ghana admin exports all 37 functions + makeAdminController', () => {
     for (const name of EXPECTED_FUNCTIONS) expect(typeof ghanaAdmin[name]).toBe('function');
     expect(typeof ghanaAdmin.makeAdminController).toBe('function');
   });
 
-  it('Africa admin exports the same 36 functions (reuses the factory)', () => {
+  it('Africa admin exports the same 37 functions (reuses the factory)', () => {
     for (const name of EXPECTED_FUNCTIONS) expect(typeof africaAdmin[name]).toBe('function');
-    expect(Object.keys(africaAdmin)).toHaveLength(36);
+    expect(Object.keys(africaAdmin)).toHaveLength(37);
   });
 
   it('factory produces distinct brand instances (ghana vs africa)', () => {
@@ -299,5 +301,55 @@ describe('active users — tile and list answer the same question', () => {
     expect(next).not.toHaveBeenCalled();
     expect(res.json.mock.calls[0][0].data.users).toEqual([]);
     expect(prisma.user.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('getGuestClaimAnalytics — brand-scoped guest claims', () => {
+  let req;
+  let res;
+  let next;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.auditLog.findMany.mockResolvedValue([]);
+    prisma.booking.findMany.mockResolvedValue([]);
+    req = { query: { period: '30d' }, params: {}, body: {}, user: { id: 'admin-1' } };
+    res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+    next = jest.fn();
+  });
+
+  it('counts guest vs claimed bookings and ignores claim logs for other brands', async () => {
+    prisma.booking.count
+      .mockResolvedValueOnce(10)   // guest bookings created in period
+      .mockResolvedValueOnce(4)    // …of which claimed
+      .mockResolvedValueOnce(30)   // account bookings created in period
+      .mockResolvedValueOnce(50)   // guest bookings, lifetime
+      .mockResolvedValueOnce(20)   // …of which claimed, lifetime
+      .mockResolvedValueOnce(150); // account bookings, lifetime
+    prisma.auditLog.findMany.mockResolvedValue([
+      { resourceId: 'b1', createdAt: new Date('2026-11-05T00:00:00Z') },
+      { resourceId: 'b1', createdAt: new Date('2026-11-06T00:00:00Z') }, // duplicate
+      { resourceId: 'africa-booking', createdAt: new Date('2026-11-05T00:00:00Z') },
+    ]);
+    prisma.booking.findMany.mockResolvedValue([
+      { id: 'b1', createdAt: new Date('2026-11-01T00:00:00Z') },
+    ]);
+
+    await ghanaAdmin.getGuestClaimAnalytics(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    const body = res.json.mock.calls[0][0].data;
+    expect(body.guestBookings).toBe(10);
+    expect(body.claimRate).toBe(40);
+    expect(body.guestShare).toBe(25);
+    expect(body.claimsInPeriod).toBe(1); // the other brand's claim is dropped
+    expect(body.averageDaysToClaim).toBe(4);
+    expect(body.lifetime.unclaimedGuestBookings).toBe(30);
+
+    // Every count goes through the same Ghana booking filter as the rest of
+    // the dashboard, so a walk-in or another brand's booking never leaks in.
+    expect(prisma.booking.count).toHaveBeenCalledWith({
+      where: expect.objectContaining({ guestId: { not: null } }),
+    });
   });
 });

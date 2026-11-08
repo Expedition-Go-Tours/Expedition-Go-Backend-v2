@@ -84,6 +84,10 @@ router.get('/analytics/funnel',
   requirePermission('analytics.view'),
   ghana.getFunnel,
 );
+router.get('/analytics/guest-claims',
+  requirePermission('analytics.view'),
+  ghana.getGuestClaimAnalytics,
+);
 router.get('/analytics/clv',
   requirePermission('analytics.view'),
   ghana.getCLV,
