@@ -1,6 +1,16 @@
 const express = require('express');
 const authController = require('../src/core/domain/authController');
 const { protect } = require('../middleware/authMiddleware');
+const { createLimiter } = require('../middleware/dynamicRateLimiter');
+
+// Verification links are short-lived, but the endpoints still need a brake:
+// resends cost an email and confirms are a guessing surface.
+const emailVerifyLimiter = createLimiter({
+  name: 'email-verify',
+  defaultMax: 10,
+  defaultWindowMs: 15 * 60 * 1000,
+  message: { status: 'fail', message: 'Too many verification attempts. Please wait and try again.' },
+});
 
 const router = express.Router();
 
@@ -512,5 +522,17 @@ router.patch('/change-password', protect, authController.changePassword);
  *         $ref: '#/components/responses/UnauthorizedError'
  */
 router.post('/set-password', protect, authController.setPassword);
+
+// Email verification. The confirm endpoint is public: the signed token is the
+// credential. The send endpoint requires a session so it can only mail the
+// signed-in account's own address.
+router.post('/verify-email/send', protect, emailVerifyLimiter, authController.sendVerificationEmail);
+router.post('/verify-email/confirm', emailVerifyLimiter, authController.confirmEmailVerification);
+
+// Verified claim of guest bookings. Account-scoped, not brand-scoped: the
+// account is the same across storefronts, and the service only touches
+// MARKETPLACE guest bookings.
+router.get('/guest-bookings', protect, authController.listGuestBookings);
+router.post('/guest-bookings/claim', protect, authController.claimGuestBookings);
 
 module.exports = router;

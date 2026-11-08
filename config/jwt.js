@@ -17,6 +17,10 @@ const SSO_TICKET_SECRET = process.env.JWT_SSO_SECRET || (process.env.JWT_SECRET 
 // exchanges for a normal GuestAccess token. Derived from JWT_SECRET like the
 // other secrets so every API instance verifies the same link.
 const BOOKING_ACCESS_SECRET = process.env.JWT_BOOKING_ACCESS_SECRET || (process.env.JWT_SECRET || 'fallback-booking-access-secret') + '_booking_access';
+// Email verification. Derived from JWT_SECRET like the reset/SSO/booking
+// secrets so every API instance agrees, but with its own suffix so a token
+// minted for one purpose cannot be replayed as another.
+const EMAIL_VERIFY_SECRET = process.env.JWT_EMAIL_VERIFY_SECRET || (process.env.JWT_SECRET || 'fallback-email-verify-secret') + '_email_verify';
 
 const ACCESS_TOKEN_EXPIRY = '1h';
 const REFRESH_TOKEN_EXPIRY = '7d';
@@ -30,6 +34,11 @@ const SSO_TICKET_EXPIRY_SECONDS = 120;
 // another device, so this link must outlive the sessionStorage token. It is
 // scoped to one booking and refuses once an account owns that booking.
 const BOOKING_ACCESS_EXPIRY = process.env.BOOKING_ACCESS_EXPIRY || '30d';
+// Short by design: verification is a one-off action, and a long-lived link in
+// an old inbox is just another credential to leak.
+const EMAIL_VERIFY_EXPIRY = process.env.EMAIL_VERIFY_EXPIRY || '24h';
+const EMAIL_VERIFY_ISSUER = 'travio-api';
+const EMAIL_VERIFY_AUDIENCE = 'email-verify';
 
 function signAccessToken(payload) {
   return jwt.sign(payload, ACCESS_TOKEN_SECRET, { expiresIn: ACCESS_TOKEN_EXPIRY });
@@ -133,6 +142,36 @@ function verifyBookingAccessToken(token) {
   return payload;
 }
 
+/**
+ * Email-verification link.
+ *
+ * Bound to `{ userId, email }` so a link sent to an old address stops working
+ * after the account email changes. The `purpose` claim mirrors the booking
+ * link and makes cross-feature replay impossible even if a secret were shared.
+ */
+function signEmailVerifyToken({ userId, email }) {
+  return jwt.sign(
+    { userId, email, purpose: 'email-verify' },
+    EMAIL_VERIFY_SECRET,
+    {
+      expiresIn: EMAIL_VERIFY_EXPIRY,
+      issuer: EMAIL_VERIFY_ISSUER,
+      audience: EMAIL_VERIFY_AUDIENCE,
+    },
+  );
+}
+
+function verifyEmailVerifyToken(token) {
+  const payload = jwt.verify(token, EMAIL_VERIFY_SECRET, {
+    issuer: EMAIL_VERIFY_ISSUER,
+    audience: EMAIL_VERIFY_AUDIENCE,
+  });
+  if (!payload || payload.purpose !== 'email-verify' || !payload.userId || !payload.email) {
+    throw new Error('Invalid email verification token');
+  }
+  return payload;
+}
+
 function clearLegacyAuthCookies(res) {
   if (!isProduction || COOKIE_DOMAIN) return;
   if (typeof res.clearCookie !== 'function') return;
@@ -163,13 +202,16 @@ module.exports = {
   signPasswordResetToken,
   signSsoTicket,
   signBookingAccessToken,
+  signEmailVerifyToken,
   verifyAccessToken,
   verifyRefreshToken,
   verifyPasswordResetToken,
   verifySsoTicket,
   verifyBookingAccessToken,
+  verifyEmailVerifyToken,
   SSO_TICKET_EXPIRY_SECONDS,
   BOOKING_ACCESS_EXPIRY,
+  EMAIL_VERIFY_EXPIRY,
   setAuthCookies,
   clearAuthCookies,
 };

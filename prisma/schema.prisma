@@ -469,7 +469,10 @@ model User {
 
   // Account Status
   active        Boolean   @default(true)
-  emailVerified Boolean   @default(false)
+  emailVerified   Boolean   @default(false)
+  // When the address was proved (Google, reset link, or the verify-email
+  // link). The boolean is the gate; this is the audit/support fact.
+  emailVerifiedAt DateTime?
   lastLoginAt   DateTime?
 
   // Admin Role (only for admins — determines granular permissions)

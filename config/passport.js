@@ -39,16 +39,17 @@ async function verifyGoogleProfile(accessToken, refreshToken, profile, done) {
     let user = await prisma.user.findUnique({ where: { email } });
 
     if (user) {
-      if (!user.firebaseUid) {
-        user = await prisma.user.update({
-          where: { id: user.id },
-          data: {
-            authProvider: 'google',
-            name: user.name || profile.displayName,
-            photoURL: user.photoURL || profile.photos?.[0]?.value || '',
-          },
-        });
-      }
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          authProvider: 'google',
+          name: user.name || profile.displayName,
+          photoURL: user.photoURL || profile.photos?.[0]?.value || '',
+          // Google has verified this address.
+          emailVerified: true,
+          emailVerifiedAt: user.emailVerifiedAt || new Date(),
+        },
+      });
     } else {
       user = await prisma.user.create({
         data: {
@@ -57,6 +58,8 @@ async function verifyGoogleProfile(accessToken, refreshToken, profile, done) {
           photoURL: profile.photos?.[0]?.value || '',
           authProvider: 'google',
           roles: ['customer'],
+          emailVerified: true,
+          emailVerifiedAt: new Date(),
         },
       });
     }

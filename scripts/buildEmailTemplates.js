@@ -397,6 +397,45 @@ const paymentLink = {
   },
 };
 
+/**
+ * Verify-email — the one-action transactional layout from the GYG reference:
+ * quiet grey surround, white 600px canvas, centred 800-weight heading, one
+ * pill CTA and a selectable fallback URL. No booking footer: a password
+ * account may not have a booking yet.
+ */
+const verifyEmail = {
+  key: 'verify-email',
+  name: 'Customer · Verify email',
+  build() {
+    return B.shell('Verify your email', `
+      ${B.eyebrow('One quick step')}
+      ${B.displayHeading({
+        text: 'Confirm your email',
+        subtext: 'Hi {{customerName}}, confirm this address to see the bookings you made as a guest and manage them from your account.',
+      })}
+      ${B.pillButton('Verify email', '{{verifyUrl}}')}
+      ${B.textBlock('This link expires in 24 hours.', { muted: true, small: true, center: true, padding: '14px 40px 0 40px' })}
+      ${B.policyPanel({
+        title: 'Why we ask',
+        body: 'Your email is how we match bookings made without an account. Verifying it lets us attach those bookings to you — and keeps anyone else from claiming them.',
+        tone: 'info',
+      })}
+      ${B.textBlock(
+        'Button not working? Paste this link into your browser:<br><a href="{{verifyUrl}}" style="color:{{accentColor}};text-decoration:underline;word-break:break-all;">{{verifyUrl}}</a>',
+        { muted: true, small: true, center: true, padding: '20px 40px 0 40px' },
+      )}
+      ${B.textBlock('If you did not create an account, you can ignore this email. Nothing changes until you verify.', { muted: true, small: true, center: true, padding: '18px 40px 0 40px' })}
+    `, {
+      variant: 'gyg',
+      // The visitor may not have a booking yet, so the default "with this
+      // booking" footer would be wrong. Keep the band, change the copy.
+      footer: 'none',
+      footerTitle: 'Need a hand?',
+      footerBody: 'Questions about your account? Email us at <a href="mailto:{{supportEmail}}" style="color:{{accentColor}};text-decoration:underline;font-weight:600;">{{supportEmail}}</a>.',
+    });
+  },
+};
+
 const customerBookingChanged = {
   key: 'customer-booking-changed',
   name: 'Customer · Changes confirmed',
@@ -2144,6 +2183,7 @@ const TEMPLATE_DEFS = [
   awaitingConfirmation,
   paymentUnsuccessful,
   paymentLink,
+  verifyEmail,
   customerBookingChanged,
   pickupDetailsUpdated,
   pickupLocationRequired,

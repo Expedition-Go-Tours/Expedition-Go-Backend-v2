@@ -11,6 +11,14 @@ const passport = require('passport');
 const { OAuth2Client } = require('google-auth-library');
 const { resolveBrand } = require('../services/brandResolver');
 const { googleStrategyFor, googleClientIdFor, isGoogleBrandConfigured } = require('../../../config/googleBrands');
+const {
+  sendVerificationEmail: sendVerificationEmailForUser,
+  confirmEmailVerificationToken,
+} = require('../services/emailVerification');
+const {
+  listClaimableGuestBookings: listClaimableGuestBookingsForUser,
+  claimGuestBookings: claimGuestBookingsForUser,
+} = require('../services/guestBookingClaim');
 
 exports.login = catchAsync(async (req, res, next) => {
   const { email, password } = req.body;
@@ -74,7 +82,7 @@ exports.login = catchAsync(async (req, res, next) => {
     res.status(200).json({
       status: 'success',
       data: {
-        user: { id: user.id, name: user.name, email: user.email, photoURL: user.photoURL, roles: user.roles, hasPassword: Boolean(user.passwordHash) },
+        user: { id: user.id, name: user.name, email: user.email, photoURL: user.photoURL, roles: user.roles, hasPassword: Boolean(user.passwordHash), emailVerified: Boolean(user.emailVerified) },
         accessToken,
         refreshToken,
       },
@@ -113,6 +121,13 @@ exports.register = catchAsync(async (req, res, next) => {
 
   enqueueCreateStripeCustomer({ userId: user.id, email: user.email, name: user.name });
 
+  // A password account starts unverified. The email is the identity the
+  // guest-claim flow will trust, so send the proof link immediately — but
+  // never make signup wait on (or fail because of) the mail provider.
+  sendVerificationEmailForUser(user, resolveVerificationOrigin(req)).catch((err) => {
+    console.error('[Auth] Verification email failed:', err.message);
+  });
+
   const accessToken = signAccessToken({ userId: user.id });
   const refreshToken = signRefreshToken({ userId: user.id });
   await storeRefreshToken(user.id, refreshToken);
@@ -131,7 +146,17 @@ exports.register = catchAsync(async (req, res, next) => {
   res.status(201).json({
     status: 'success',
     data: {
-      user: { id: user.id, name: user.name, email: user.email, photoURL: user.photoURL, roles: user.roles, hasPassword: true },
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        photoURL: user.photoURL,
+        roles: user.roles,
+        hasPassword: true,
+        // A password signup starts unverified; the response says so rather
+        // than making the client infer it.
+        emailVerified: false,
+      },
       accessToken,
       refreshToken,
     },
@@ -314,6 +339,10 @@ exports.resetPassword = catchAsync(async (req, res, next) => {
     data: {
       passwordHash,
       authProvider: decoded.firebaseUid ? 'local' : undefined,
+      // Completing the reset proves control of the inbox, exactly like the
+      // verification link does.
+      emailVerified: true,
+      emailVerifiedAt: new Date(),
     },
   });
 
@@ -451,6 +480,22 @@ exports.setPassword = catchAsync(async (req, res, next) => {
   });
 });
 
+/**
+ * The storefront that asked for the verification email. Only allow-listed
+ * origins are trusted, so a forged Origin header cannot turn the email into a
+ * link to an attacker's site.
+ */
+function resolveVerificationOrigin(req) {
+  const raw = req.headers?.origin || req.headers?.referer;
+  try {
+    const origin = new URL(raw).origin;
+    if (getAllowedClientOrigins().includes(origin)) return origin;
+  } catch {
+    // fall through
+  }
+  return process.env.GHANA_STOREFRONT_URL || 'https://www.travioghana.com';
+}
+
 function getClientOrigin(req) {
   const raw = req.headers.origin || req.headers.referer || process.env.CLIENT_URL || 'http://localhost:8080';
   try {
@@ -586,6 +631,9 @@ exports.googleOneTap = catchAsync(async (req, res, next) => {
         name: user.name || name,
         photoURL: user.photoURL || photoURL,
         firebaseUid: user.firebaseUid || firebaseUid,
+        // Google has already verified this address.
+        emailVerified: true,
+        emailVerifiedAt: user.emailVerifiedAt || new Date(),
       },
     });
   } else {
@@ -597,6 +645,8 @@ exports.googleOneTap = catchAsync(async (req, res, next) => {
         authProvider: 'google',
         firebaseUid,
         roles: ['customer'],
+        emailVerified: true,
+        emailVerifiedAt: new Date(),
       },
     });
   }
@@ -636,9 +686,81 @@ exports.googleOneTap = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: {
-      user: { id: user.id, name: user.name, email: user.email, photoURL: user.photoURL, roles: user.roles, hasPassword: Boolean(user.passwordHash) },
+      user: { id: user.id, name: user.name, email: user.email, photoURL: user.photoURL, roles: user.roles, hasPassword: Boolean(user.passwordHash), emailVerified: Boolean(user.emailVerified) },
       accessToken,
       refreshToken,
     },
   });
+});
+
+/**
+ * POST /api/auth/verify-email/send
+ *
+ * Protected: resend the verification link for the signed-in account. Safe to
+ * call when already verified — it reports the state instead of mailing again.
+ */
+exports.sendVerificationEmail = catchAsync(async (req, res, next) => {
+  const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+  if (!user) return next(new AppError('User not found', 404));
+
+  const result = await sendVerificationEmailForUser(user, resolveVerificationOrigin(req));
+
+  res.status(200).json({
+    status: 'success',
+    data: result,
+    message: result.alreadyVerified
+      ? 'Your email is already verified.'
+      : 'Verification email sent. Check your inbox.',
+  });
+});
+
+/**
+ * POST /api/auth/verify-email/confirm
+ * Body: { token }
+ *
+ * Public by design: the signed token is the credential. Idempotent, and bound
+ * to the current account email.
+ */
+exports.confirmEmailVerification = catchAsync(async (req, res) => {
+  const result = await confirmEmailVerificationToken(req.body?.token);
+
+  // `protect` caches the user row; without this the next claim request could
+  // still see `emailVerified: false` until the TTL expires.
+  invalidateUserCache(result.user.id);
+
+  logAuthEvent({
+    userId: result.user.id,
+    userEmail: result.user.email,
+    ipAddress: req.ip,
+    userAgent: req.headers['user-agent'],
+    event: 'email_verified',
+    success: true,
+    details: { alreadyVerified: result.alreadyVerified },
+  });
+
+  res.status(200).json({ status: 'success', data: result });
+});
+
+/**
+ * GET /api/auth/guest-bookings
+ *
+ * Preview the bookings made with this verified email that are not on an
+ * account yet. Unverified accounts get `needsVerification` instead of a 403 so
+ * the UI can offer the verification step.
+ */
+exports.listGuestBookings = catchAsync(async (req, res) => {
+  const data = await listClaimableGuestBookingsForUser(req.user);
+  res.status(200).json({ status: 'success', data });
+});
+
+/**
+ * POST /api/auth/guest-bookings/claim
+ * Body: { bookingIds?: string[] }
+ *
+ * Attach the matching guest bookings to the account. Idempotent: the update
+ * re-checks `customerId: null` and the old guest tokens are revoked.
+ */
+exports.claimGuestBookings = catchAsync(async (req, res) => {
+  const data = await claimGuestBookingsForUser(req.user, req.body?.bookingIds);
+  res.status(200).json({ status: 'success', data });
 });

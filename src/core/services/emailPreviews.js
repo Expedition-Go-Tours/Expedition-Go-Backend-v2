@@ -305,6 +305,10 @@ function listTemplateKeys() {
  * now, pay later"; the supplier recorded it and collects the money themselves.
  */
 const SAMPLE_OVERRIDES = {
+  'verify-email': {
+    verifyUrl: 'https://www.travioghana.com/verify-email?token=sample-token',
+    preheader: 'Confirm your email address to see and manage bookings made as a guest.',
+  },
   'supplier-created-booking-confirmation': {
     bookingTypeLabel: 'Booked directly with the supplier',
     preheader: 'Booking confirmed with Sample Experiences Ltd - $150.00 recorded as collected',
