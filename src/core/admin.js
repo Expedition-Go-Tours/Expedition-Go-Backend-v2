@@ -22,7 +22,7 @@ const { getBrand } = require('../../config/brands');
 const { computeFunnel } = require('./services/funnelEngine');
 const { getActivityFeed } = require('./services/activityFeed');
 const { viewerCalendar } = require('./services/viewerCalendar');
-const { displayCancellationReason } = require('./services/cancellationReasons');
+const { displayCancellationReason, getReason, humanizeReasonCode } = require('./services/cancellationReasons');
 const { Prisma } = require('@prisma/client');
 
 function makeAdminController(brandKey) {
@@ -1603,14 +1603,31 @@ controller.getBookingById = catchAsync(async (req, res, next) => {
   }
 
   const { cancellationRequests, ...bookingRest } = booking;
+  const pending = cancellationRequests && cancellationRequests[0] ? cancellationRequests[0] : null;
+  const pendingCode = pending?.payload?.cancellationCode || null;
+  const pendingCategory = pending?.payload?.cancellationCategory || null;
 
   // Frontend (BookingDetailPanel) reads data.data as the booking itself.
   res.status(200).json({
     status: 'success',
     data: {
       ...bookingRest,
-      pendingCancellation: cancellationRequests && cancellationRequests[0] ? cancellationRequests[0] : null,
+      pendingCancellation: pending
+        ? {
+            ...pending,
+            reasonLabel: pendingCode
+              ? (getReason(pendingCode)?.label || humanizeReasonCode(pendingCode))
+              : null,
+            categoryLabel: pendingCategory ? humanizeReasonCode(pendingCategory) : null,
+          }
+        : null,
       cancellationReasonLabel: displayCancellationReason(booking),
+      cancellationCodeLabel: booking.cancellationCode
+        ? (getReason(booking.cancellationCode)?.label || humanizeReasonCode(booking.cancellationCode))
+        : null,
+      cancellationCategoryLabel: booking.cancellationCategory
+        ? humanizeReasonCode(booking.cancellationCategory)
+        : null,
     },
   });
 });

@@ -413,3 +413,44 @@ describe('cancellation day gate', () => {
     expect(cancellationClosedForActivity({})).toBe(false);
   });
 });
+
+// ── Admin queue serialization ───────────────────────────────────────────────
+describe('admin cancellation request serialization', () => {
+  const { serializeCancellationRequest } = require('../../src/core/services/cancellationRequestService');
+
+  it('returns human labels and the guest traveller instead of raw codes', () => {
+    const out = serializeCancellationRequest({
+      id: 'req_1',
+      status: 'PENDING_APPROVAL',
+      bookingId: 'b_1',
+      payload: {
+        cancellationCode: 'CUSTOMER_REQUESTED_CANCEL',
+        cancellationCategory: 'CUSTOMER_REQUESTED',
+        explanation: 'Guide not available',
+      },
+      preview: null,
+      booking: {
+        id: 'b_1',
+        bookingNumber: 'TRG-1',
+        status: 'CONFIRMED',
+        paymentStatus: 'SUCCEEDED',
+        grossAmount: '70.40',
+        currency: 'USD',
+        customer: null,
+        leadTravelerName: 'Yannick Germeau',
+        leadTravelerEmail: 'yannick@example.com',
+        guest: { id: 'g_1', name: 'Yannick Germeau', email: 'yannick@example.com' },
+        tour: { id: 't_1', title: 'Waterfalls', supplier: { id: 's_1', name: 'Expedition-Go' } },
+      },
+      supplier: null,
+      createdAt: new Date(),
+    });
+
+    expect(out.reasonLabel).toBe('Customer asked to cancel this booking');
+    expect(out.categoryLabel).toBe('Customer requested');
+    expect(out.booking.leadTravelerName).toBe('Yannick Germeau');
+    expect(out.booking.guest.email).toBe('yannick@example.com');
+    expect(out.reasonLabel).not.toContain('_');
+    expect(out.categoryLabel).not.toContain('_');
+  });
+});

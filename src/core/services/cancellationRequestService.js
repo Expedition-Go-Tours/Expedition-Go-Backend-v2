@@ -26,6 +26,8 @@ const emailUrls = require('../../../config/emailUrls');
 const {
   validateCancellationPayload,
   calcCancellationFee,
+  getReason,
+  humanizeReasonCode,
 } = require('./cancellationReasons');
 const {
   plannedRefund,
@@ -137,6 +139,8 @@ async function revertStopSelling(request) {
 function serializeCancellationRequest(r) {
   if (!r) return null;
   const b = r.booking;
+  const reasonCode = r.payload?.cancellationCode || b?.cancellationCode || null;
+  const categoryCode = r.payload?.cancellationCategory || b?.cancellationCategory || null;
   return {
     id: r.id,
     status: r.status,
@@ -162,6 +166,13 @@ function serializeCancellationRequest(r) {
           cancelledAt: b.cancelledAt,
           cancellationChoiceDeadline: b.cancellationChoiceDeadline,
           customerChoice: b.customerChoice,
+          // Guest checkouts have no customer account. The admin queue still
+          // needs to name the traveller, and the search must find them.
+          leadTravelerName: b.leadTravelerName || null,
+          leadTravelerEmail: b.leadTravelerEmail || null,
+          guest: b.guest
+            ? { id: b.guest.id, name: b.guest.name, email: b.guest.email || null }
+            : null,
           customer: b.customer
             ? { id: b.customer.id, name: b.customer.name, email: b.customer.email }
             : null,
@@ -178,6 +189,11 @@ function serializeCancellationRequest(r) {
       : null,
     supplier: r.supplier || null,
     payload: r.payload,
+    // Admin UIs render these, never the raw SCREAMING_SNAKE code.
+    reasonLabel: reasonCode
+      ? (getReason(reasonCode)?.label || humanizeReasonCode(reasonCode))
+      : null,
+    categoryLabel: categoryCode ? humanizeReasonCode(categoryCode) : null,
     preview: r.preview,
     stopSellingApplied: r.stopSellingApplied,
     batchId: r.batchId,
@@ -298,6 +314,7 @@ async function loadRequestForSerialize(id, { includeSupplier = true } = {}) {
       booking: {
         include: {
           customer: { select: { id: true, name: true, email: true } },
+          guest: { select: { id: true, name: true, email: true } },
           tour: { select: { id: true, title: true, supplierId: true, supplier: { select: { id: true, name: true } } } },
         },
       },
@@ -795,6 +812,12 @@ async function listAdminCancellationRequests({ status = 'PENDING_APPROVAL', page
       OR: [
         { bookingNumber: { contains: q, mode: 'insensitive' } },
         { customer: { name: { contains: q, mode: 'insensitive' } } },
+        // Guest checkouts have no customer row; the admin queue must still
+        // find them by the traveller who booked.
+        { leadTravelerName: { contains: q, mode: 'insensitive' } },
+        { leadTravelerEmail: { contains: q, mode: 'insensitive' } },
+        { guest: { name: { contains: q, mode: 'insensitive' } } },
+        { guest: { email: { contains: q, mode: 'insensitive' } } },
         { tour: { title: { contains: q, mode: 'insensitive' } } },
       ],
     });
@@ -816,7 +839,9 @@ async function listAdminCancellationRequests({ status = 'PENDING_APPROVAL', page
             cancellationCode: true, cancellationCategory: true, cancellationOrigin: true,
             countsTowardRate: true, cancellationFee: true, cancellationReason: true,
             cancelledAt: true, cancellationChoiceDeadline: true, customerChoice: true,
+            leadTravelerName: true, leadTravelerEmail: true,
             customer: { select: { id: true, name: true, email: true } },
+            guest: { select: { id: true, name: true, email: true } },
             tour: { select: { id: true, title: true, supplierId: true, supplier: { select: { id: true, name: true } } } },
           },
         },
@@ -909,7 +934,9 @@ async function listSupplierCancellationRequests({ supplierId, status = '', page 
             cancellationCode: true, cancellationCategory: true, cancellationOrigin: true,
             countsTowardRate: true, cancellationFee: true, cancellationReason: true,
             cancelledAt: true, cancellationChoiceDeadline: true, customerChoice: true,
+            leadTravelerName: true, leadTravelerEmail: true,
             customer: { select: { id: true, name: true, email: true } },
+            guest: { select: { id: true, name: true, email: true } },
             tour: { select: { id: true, title: true, supplierId: true, supplier: { select: { id: true, name: true } } } },
           },
         },
