@@ -115,9 +115,23 @@ jobs:
 
       - name: Install k6
         run: |
-          curl -sL -o k6.tar.gz https://github.com/grafana/k6/releases/download/v2.1.0/k6-v2.1.0-linux-amd64.tar.gz
-          tar xzf k6.tar.gz
-          sudo cp k6-v2.1.0-linux-amd64/k6 /usr/local/bin/
+          set -euo pipefail
+          K6_VERSION="2.1.0"
+          K6_ARCHIVE="k6-v${K6_VERSION}-linux-amd64.tar.gz"
+          K6_URL="https://github.com/grafana/k6/releases/download/v${K6_VERSION}/${K6_ARCHIVE}"
+
+          # GitHub Releases intermittently answers release assets with 502/504/429
+          # when several matrix jobs fetch the same file at once. Plain `curl -sL`
+          # happily saves that error page, then `tar` exits 2 ("not in gzip
+          # format") on the *next* step — which is what made run 130 look like a
+          # k6 script failure. Fail on HTTP errors and retry the download
+          # instead, then validate the archive before extracting it.
+          curl -fsSL --retry 6 --retry-delay 5 --retry-all-errors \
+            --connect-timeout 15 --max-time 300 \
+            -o "${K6_ARCHIVE}" "${K6_URL}"
+          tar -tzf "${K6_ARCHIVE}" > /dev/null
+          tar -xzf "${K6_ARCHIVE}"
+          sudo install -m 0755 "k6-v${K6_VERSION}-linux-amd64/k6" /usr/local/bin/k6
           k6 version
 
       - name: Run k6 — ${{ matrix.scenario }}
