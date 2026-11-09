@@ -3007,9 +3007,14 @@ const decideCustomerCancellation = catchAsync(async (req, res, next) => {
     note: note || null,
   });
 
+  // The supplier never receives the real customer inbox from this endpoint.
+  // The drawer reloads the masked detail after the decision, so blanking here
+  // is enough and avoids minting a relay for a booking that is now cancelled.
+  const masked = supplierContact.withSupplierContact(updated, null);
+
   res.status(200).json({
     status: 'success',
-    data: { booking: updated },
+    data: { booking: sanitizeBookingPaymentInternals(masked) },
   });
 });
 
