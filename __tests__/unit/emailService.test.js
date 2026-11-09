@@ -45,6 +45,7 @@ beforeEach(() => {
 
 const {
   sendEmail,
+  sendHtml,
   renderTemplate,
   sendPayoutRequestWindowOpenEmail,
   sendBookingConfirmedEmail,
@@ -83,6 +84,19 @@ describe('sendEmail', () => {
     expect(payload.html).toContain('Travio Africa');
     expect(result.success).toBe(true);
     expect(result.messageId).toBe('msg-123');
+  });
+
+  it('overrides the display name without changing the verified sender address', async () => {
+    await sendHtml({
+      to: 'guest@test.com',
+      subject: 'Message about your booking',
+      html: '<p>Hello</p>',
+      brandKey: 'ghana',
+      fromName: 'Expedition-Go Tours via Travio Ghana',
+    });
+
+    const payload = __send.mock.calls[0][0];
+    expect(payload.from).toBe('Expedition-Go Tours via Travio Ghana <notifications@travioghana.com>');
   });
 
   it('throws when Resend fails', async () => {
@@ -600,6 +614,34 @@ describe('sendSupplierBookingNotification', () => {
     const payload = __send.mock.calls[0][0];
     expect(payload.html).toContain(RELAY);
     expect(payload.html).not.toContain('john@test.com');
+  });
+
+  it('threads the guest identity so an unclaimed guest booking masks to the relay', async () => {
+    await sendSupplierNewBookingEmail({
+      ...mockBooking,
+      customerId: null,
+      customer: { name: null, email: '' },
+      guestId: 'guest-1',
+      origin: 'MARKETPLACE',
+      leadTravelerName: 'Yannick',
+      leadTravelerEmail: 'yannick@test.com',
+      guest: { id: 'guest-1', name: 'Yannick', email: 'yannick@test.com' },
+    });
+
+    expect(supplierContact.contactAddressForBooking).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'b-1',
+        guestId: 'guest-1',
+        origin: 'MARKETPLACE',
+        guestEmail: 'yannick@test.com',
+      }),
+    );
+    const payload = __send.mock.calls[0][0];
+    expect(payload.html).toContain(RELAY);
+    expect(payload.html).not.toContain('yannick@test.com');
+    // A reply from the supplier reaches the guest through the relay, not the
+    // platform support inbox.
+    expect(payload.reply_to).toBe(RELAY);
   });
 
   it('handles missing customer gracefully', async () => {

@@ -2259,6 +2259,9 @@ const getSupplierBookings = catchAsync(async (req, res, next) => {
         customer: {
           select: { id: true, name: true, email: true, phone: true, photoURL: true },
         },
+        // Guest checkout: the relay resolver reads the real inbox from here
+        // when the lead snapshot is missing. Never rendered to the supplier.
+        guest: { select: { id: true, name: true, email: true } },
         appliedOffer: { select: { id: true, name: true, offerType: true, discountType: true, discountPercentage: true, fixedDiscountValue: true, promoCode: true } },
         review: true,
       },
@@ -2376,7 +2379,13 @@ const exportSupplierBookings = catchAsync(async (req, res, next) => {
       orderBy,
       take: EXPORT_ROW_LIMIT,
       select: {
+        // The relay resolver keys on these. Without `id`/`customerId` it
+        // skipped every row, so the contact columns were permanently blank.
+        id: true,
         bookingNumber: true,
+        customerId: true,
+        guestId: true,
+        origin: true,
         source: true,
         status: true,
         paymentStatus: true,
@@ -2395,6 +2404,7 @@ const exportSupplierBookings = catchAsync(async (req, res, next) => {
         specialRequests: true,
         supplierNotes: true,
         customer: { select: { name: true, email: true, phone: true } },
+        guest: { select: { email: true } },
         tour: { select: { title: true } },
       },
     }),
@@ -2568,6 +2578,7 @@ const getSupplierBookingDetail = catchAsync(async (req, res, next) => {
       customer: {
         select: { id: true, name: true, email: true, phone: true, photoURL: true },
       },
+      guest: { select: { id: true, name: true, email: true } },
       appliedOffer: {
         select: {
           id: true,

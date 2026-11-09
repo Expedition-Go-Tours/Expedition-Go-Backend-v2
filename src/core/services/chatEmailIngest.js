@@ -16,6 +16,7 @@ const prisma = require('./prismaClient');
 const chatService = require('./chatService');
 const chatInbound = require('./chatInbound');
 const chatAttachments = require('./chatAttachments');
+const guestRelayIngest = require('./guestRelayIngest');
 const { sendNotification } = require('./notificationService');
 const { notifyAdmin } = require('./adminNotificationService');
 
@@ -158,8 +159,26 @@ async function ingestReceivedEmail(emailId) {
   const messageId = email?.message_id || null;
   const toList = Array.isArray(email?.to) ? email.to : [];
   const tokens = chatInbound.tokensFromRecipients(toList);
+
+  // A guest relay is its own namespace: no Conversation exists (the guest has
+  // no User), so it must never fall through to the conversation path.
+  const guestToken = tokens.find((t) => t.kind === 'g');
+  if (guestToken) {
+    return guestRelayIngest.ingestReceivedEmail({
+      emailId,
+      email,
+      token: guestToken,
+      fetchAttachment: async (id, att) => {
+        const url = await attachmentDownloadUrl(id, att.id);
+        return fetchBytes(url);
+      },
+    });
+  }
+
   let conversation = null;
   for (const t of tokens) {
+    // Tokens minted before the `kind` field existed are conversation tokens.
+    if (t.kind && t.kind !== 'c') continue;
     conversation = await prisma.conversation.findFirst({ where: { replyToken: t.token } });
     if (conversation) break;
   }
@@ -385,6 +404,12 @@ async function pollReceivedEmails() {
     if (isIgnoredInbound(mid) || isIgnoredInbound(item.id)) continue;
     const existing = await prisma.message.findUnique({ where: { inboundMessageId: mid } }).catch(() => null);
     if (existing) continue;
+    // A guest-relay message has no Conversation/Message row; its own archive is
+    // the dedupe ledger. Failed/interrupted rows are retried.
+    const guestExisting = await prisma.guestRelayMessage
+      ?.findUnique({ where: { messageId: mid }, select: { status: true } })
+      .catch(() => null);
+    if (guestExisting && ['FORWARDED', 'IGNORED'].includes(guestExisting.status)) continue;
     try {
       await ingestReceivedEmail(item.id);
     } catch (err) {

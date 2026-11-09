@@ -1130,6 +1130,12 @@ model Booking {
   guestId String?
   guest   BookingGuest? @relation(fields: [guestId], references: [id])
 
+  // Working relay for an unclaimed marketplace guest booking. A guest has no
+  // User row, so the conversation relay (`c-…`) cannot mint an address; this
+  // row carries the booking-scoped `g-…` alias instead. Claiming the booking
+  // sets `customerId`, at which point the normal conversation relay takes over.
+  guestRelay GuestRelay?
+
   // Offline money reported as collected, one row per event. This is the
   // authority for what the supplier actually holds — never `paymentStatus`.
   collections BookingCollection[]
@@ -1812,6 +1818,70 @@ model BookingGuest {
 
   @@index([email])
   @@index([phone])
+}
+
+// A booking-scoped relay for an unclaimed marketplace guest booking.
+//
+// The conversation relay cannot serve this case: it is keyed on a
+// `Conversation` between two `User` rows, and a guest has no `User`. This row
+// holds the `g-<hmac>@<receiving-domain>` alias instead. The guest's real
+// address is NOT copied here — it is read from the booking when a message is
+// forwarded, so a corrected address immediately takes effect.
+model GuestRelay {
+  id        String  @id @default(cuid())
+  bookingId String  @unique
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  guestId    String
+  supplierId String
+
+  // Canonical local part and full address. Both are stored so an inbound
+  // message resolves with one indexed lookup, and a domain change cannot
+  // silently orphan previously issued addresses.
+  token   String @unique // g-<16 hex>
+  address String @unique
+
+  createdAt  DateTime  @default(now())
+  disabledAt DateTime?
+
+  messages GuestRelayMessage[]
+
+  @@index([guestId])
+  @@index([supplierId])
+}
+
+// One row per relayed message, in either direction. This is the audit trail:
+// suppliers and guests can both deny an exchange, and a dispute needs the
+// actual text that was relayed. `messageId` is the provider Message-ID and is
+// the dedupe key — the poller may see the same message many times.
+enum GuestRelayDirection {
+  INBOUND
+  OUTBOUND
+}
+
+model GuestRelayMessage {
+  id      String     @id @default(cuid())
+  relayId String
+  relay   GuestRelay @relation(fields: [relayId], references: [id], onDelete: Cascade)
+
+  direction GuestRelayDirection
+  messageId String?             @unique
+  providerId String?
+
+  fromEmail String
+  toEmail   String
+  subject   String?
+  textBody  String?
+  htmlBody  String?
+  attachments Json?
+
+  // RECEIVED | FORWARDED | FAILED | IGNORED
+  status String @default("RECEIVED")
+  error  String?
+
+  createdAt DateTime @default(now())
+
+  @@index([relayId, createdAt])
 }
 
 // Money reported as COLLECTED BY THE SUPPLIER, outside the platform's

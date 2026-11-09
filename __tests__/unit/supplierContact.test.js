@@ -8,6 +8,7 @@
  */
 jest.mock('../../src/core/services/prismaClient', () => ({
   conversation: { findMany: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
+  guestRelay: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn() },
 }));
 jest.mock('../../src/core/services/chatService', () => ({
   findOrCreateConversation: jest.fn(),
@@ -15,6 +16,10 @@ jest.mock('../../src/core/services/chatService', () => ({
 jest.mock('../../src/core/services/chatInbound', () => ({
   ensureConversationToken: jest.fn(),
   replyAddressFor: jest.fn(),
+}));
+jest.mock('../../src/core/services/guestRelay', () => ({
+  isEligible: jest.fn(() => false),
+  ensureForBooking: jest.fn(),
 }));
 jest.mock('../../src/core/services/logger', () => ({
   warn: jest.fn(),
@@ -25,9 +30,11 @@ jest.mock('../../src/core/services/logger', () => ({
 const prisma = require('../../src/core/services/prismaClient');
 const chatService = require('../../src/core/services/chatService');
 const chatInbound = require('../../src/core/services/chatInbound');
+const guestRelay = require('../../src/core/services/guestRelay');
 const supplierContact = require('../../src/core/services/supplierContact');
 
 const RELAY = 'c-0123456789abcdef@messages.travioghana.com';
+const GUEST_RELAY = 'g-0123456789abcdef@messages.travioghana.com';
 
 const booking = (over = {}) => ({
   id: 'b-1',
@@ -44,6 +51,8 @@ const booking = (over = {}) => ({
 beforeEach(() => {
   jest.clearAllMocks();
   supplierContact.clearContactCache();
+  guestRelay.isEligible.mockReturnValue(false);
+  guestRelay.ensureForBooking.mockResolvedValue(null);
   chatService.findOrCreateConversation.mockResolvedValue({ id: 'conv-1', brand: 'ghana' });
   chatInbound.ensureConversationToken.mockResolvedValue('c0123456789abcdef');
   chatInbound.replyAddressFor.mockReturnValue(RELAY);
@@ -86,6 +95,50 @@ describe('withSupplierContact', () => {
         .not.toContain('kwame@example.com');
     }
   });
+
+  it('uses the relay for a guest even when the lead traveller email was empty', () => {
+    const masked = supplierContact.withSupplierContact(
+      booking({ customerId: null, customer: null, guestId: 'guest-1', leadTravelerEmail: '' }),
+      GUEST_RELAY,
+    );
+
+    expect(masked.leadTravelerEmail).toBe(GUEST_RELAY);
+    expect(masked.customer).toBeNull();
+  });
+
+  it('masks the guest relation too — the list now selects it for the relay resolver', () => {
+    const masked = supplierContact.withSupplierContact(
+      booking({
+        customerId: null,
+        customer: null,
+        guestId: 'guest-1',
+        origin: 'MARKETPLACE',
+        leadTravelerEmail: 'yannick@example.com',
+        guest: { id: 'guest-1', name: 'Yannick', email: 'yannick@example.com' },
+      }),
+      GUEST_RELAY,
+    );
+
+    expect(masked.guest.email).toBe(GUEST_RELAY);
+    expect(JSON.stringify(masked)).not.toContain('yannick@example.com');
+  });
+
+  it('blanks the guest relation when a marketplace relay cannot be minted', () => {
+    const masked = supplierContact.withSupplierContact(
+      booking({
+        customerId: null,
+        customer: null,
+        guestId: 'guest-1',
+        origin: 'MARKETPLACE',
+        leadTravelerEmail: 'yannick@example.com',
+        guest: { id: 'guest-1', name: 'Yannick', email: 'yannick@example.com' },
+      }),
+      null,
+    );
+
+    expect(masked.guest.email).toBe('');
+    expect(JSON.stringify(masked)).not.toContain('yannick@example.com');
+  });
 });
 
 describe('contactAddressForBooking', () => {
@@ -116,6 +169,55 @@ describe('contactAddressForBooking', () => {
     chatService.findOrCreateConversation.mockRejectedValue(new Error('db down'));
 
     const address = await supplierContact.contactAddressForBooking(booking());
+
+    expect(address).toBeNull();
+  });
+
+  it('mints a booking-scoped guest relay when an unclaimed marketplace guest has no account', async () => {
+    guestRelay.isEligible.mockReturnValue(true);
+    guestRelay.ensureForBooking.mockResolvedValue({ address: GUEST_RELAY });
+
+    const address = await supplierContact.contactAddressForBooking(booking({
+      customerId: null,
+      guestId: 'guest-1',
+      origin: 'MARKETPLACE',
+      customer: null,
+    }));
+
+    expect(address).toBe(GUEST_RELAY);
+    // A guest has no Conversation, so the conversation path must not run.
+    expect(chatService.findOrCreateConversation).not.toHaveBeenCalled();
+    expect(guestRelay.ensureForBooking).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'b-1', guestId: 'guest-1' }),
+      'supplier-1',
+    );
+  });
+
+  it('leaves a supplier-created walk-in alone (the supplier entered that address)', async () => {
+    guestRelay.isEligible.mockReturnValue(false);
+
+    const address = await supplierContact.contactAddressForBooking(booking({
+      customerId: null,
+      guestId: 'guest-1',
+      origin: 'SUPPLIER_CREATED',
+      customer: null,
+    }));
+
+    expect(address).toBeNull();
+    expect(guestRelay.ensureForBooking).not.toHaveBeenCalled();
+    expect(chatService.findOrCreateConversation).not.toHaveBeenCalled();
+  });
+
+  it('returns null when the guest relay cannot be minted', async () => {
+    guestRelay.isEligible.mockReturnValue(true);
+    guestRelay.ensureForBooking.mockRejectedValue(new Error('db down'));
+
+    const address = await supplierContact.contactAddressForBooking(booking({
+      customerId: null,
+      guestId: 'guest-1',
+      origin: 'MARKETPLACE',
+      customer: null,
+    }));
 
     expect(address).toBeNull();
   });
@@ -157,5 +259,28 @@ describe('contactAddressesForBookings (batch)', () => {
     // Another supplier's conversation with the same customer is not ours.
     expect(chatService.findOrCreateConversation).toHaveBeenCalledTimes(1);
     expect(chatInbound.replyAddressFor).toHaveBeenCalledWith('conv-1', 'ghana');
+  });
+
+  it('answers guest rows from one booking-keyed lookup, minting only the missing ones', async () => {
+    guestRelay.isEligible.mockReturnValue(true);
+    prisma.guestRelay.findMany.mockResolvedValue([
+      { bookingId: 'guest-b1', address: GUEST_RELAY, disabledAt: null },
+    ]);
+    guestRelay.ensureForBooking.mockResolvedValue({
+      address: 'g-fedcba9876543210@messages.travioghana.com',
+    });
+
+    const out = await supplierContact.contactAddressesForBookings(
+      [
+        booking({ id: 'guest-b1', customerId: null, customer: null, guestId: 'guest-1', origin: 'MARKETPLACE' }),
+        booking({ id: 'guest-b2', customerId: null, customer: null, guestId: 'guest-2', origin: 'MARKETPLACE' }),
+      ],
+      'supplier-1',
+    );
+
+    expect(prisma.guestRelay.findMany).toHaveBeenCalledTimes(1);
+    expect(guestRelay.ensureForBooking).toHaveBeenCalledTimes(1);
+    expect(out.get('guest-b1')).toBe(GUEST_RELAY);
+    expect(out.get('guest-b2')).toBe('g-fedcba9876543210@messages.travioghana.com');
   });
 });

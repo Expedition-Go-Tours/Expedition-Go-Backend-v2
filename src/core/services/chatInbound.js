@@ -75,7 +75,8 @@ function parseEmail(value) {
 
 /**
  * Extract inbound tokens from a list of `to` addresses.
- * Returns [{ token, local, domain }] for addresses matching c-<hex>@domain.
+ * Returns [{ kind, token, hex, domain }] for addresses matching
+ * `c-<hex>@domain` (conversation relay) or `g-<hex>@domain` (guest relay).
  */
 function tokensFromRecipients(toList, domains = receivingDomains()) {
   const allowed = new Set(
@@ -90,8 +91,8 @@ function tokensFromRecipients(toList, domains = receivingDomains()) {
     const local = email.slice(0, at);
     const host = email.slice(at + 1);
     if (!allowed.has(host)) continue;
-    const m = local.match(/^c-([0-9a-f]{16})$/i);
-    if (m) out.push({ token: local, hex: m[1].toLowerCase(), domain: host });
+    const m = local.match(/^([cg])-([0-9a-f]{16})$/i);
+    if (m) out.push({ kind: m[1].toLowerCase(), token: local, hex: m[2].toLowerCase(), domain: host });
   }
   return out;
 }

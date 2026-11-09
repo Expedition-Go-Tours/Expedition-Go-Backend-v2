@@ -21,6 +21,11 @@ jest.mock('../../src/core/services/prismaClient', () => ({
     aggregate: jest.fn().mockResolvedValue({ _sum: { grossAmount: 0, supplierPayout: 0 }, _count: 0 }),
     groupBy: jest.fn().mockResolvedValue([]),
   },
+  guestRelay: {
+    findMany: jest.fn().mockResolvedValue([]),
+    findUnique: jest.fn().mockResolvedValue(null),
+    create: jest.fn(async ({ data }) => ({ id: 'relay-1', ...data })),
+  },
   supplierProfile: { findUnique: jest.fn().mockResolvedValue({ status: 'ACTIVE' }) },
 }));
 
@@ -256,6 +261,39 @@ describe('the detail endpoint behind the panel', () => {
       }),
     );
   });
+
+  it('gives an unclaimed guest booking a working relay instead of a blank contact', async () => {
+    prisma.booking.findFirst.mockResolvedValue({
+      id: 'b-guest',
+      bookingNumber: 'TRG-GUEST',
+      customerId: null,
+      guestId: 'guest-1',
+      origin: 'MARKETPLACE',
+      source: 'GHANA',
+      status: 'CONFIRMED',
+      grossAmount: 70.4,
+      currency: 'USD',
+      leadTravelerName: 'Yannick',
+      leadTravelerEmail: 'yannick@example.com',
+      customer: null,
+      guest: { id: 'guest-1', name: 'Yannick', email: 'yannick@example.com' },
+      tour: { id: 't-1', title: 'Waterfalls' },
+    });
+
+    const req = { supplierId: 'supplier-1', params: { id: 'b-guest' }, user: { id: 'user-1' }, teamPermissions: ['*'] };
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    const next = jest.fn();
+
+    await controller.getSupplierBookingDetail(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    const payload = res.json.mock.calls[0][0].data.booking;
+    expect(payload.leadTravelerEmail).toMatch(/^g-[0-9a-f]{16}@/);
+    expect(JSON.stringify(payload)).not.toContain('yannick@example.com');
+    expect(prisma.guestRelay.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ bookingId: 'b-guest', guestId: 'guest-1' }),
+    }));
+  });
 });
 
 describe('the CSV export', () => {
@@ -323,6 +361,43 @@ describe('the CSV export', () => {
     const { body } = await invokeExport();
 
     expect(body).toContain('stopped at 5000 of 8000 matching bookings');
+  });
+
+  it('resolves the guest relay so the contact columns are not permanently blank', async () => {
+    prisma.booking.findMany.mockResolvedValue([
+      {
+        id: 'b-guest',
+        bookingNumber: 'TRG-GUEST',
+        customerId: null,
+        guestId: 'guest-1',
+        origin: 'MARKETPLACE',
+        source: 'GHANA',
+        status: 'CONFIRMED',
+        paymentStatus: 'SUCCEEDED',
+        paymentTiming: 'now',
+        createdAt: new Date('2026-11-08T09:00:00.000Z'),
+        travelDate: new Date('2026-11-09T00:00:00.000Z'),
+        selectedTime: '',
+        travelers: { adults: 1 },
+        leadTravelerName: 'Yannick',
+        leadTravelerEmail: 'yannick@example.com',
+        leadTravelerPhone: '',
+        subtotal: 80,
+        discounts: 9.6,
+        grossAmount: 70.4,
+        currency: 'USD',
+        specialRequests: '',
+        supplierNotes: '',
+        customer: null,
+        tour: { title: 'Waterfalls' },
+      },
+    ]);
+    prisma.booking.count.mockResolvedValue(1);
+
+    const { body } = await invokeExport();
+
+    expect(body).toMatch(/g-[0-9a-f]{16}@/);
+    expect(body).not.toContain('yannick@example.com');
   });
 
   it('names the file and never caches it', async () => {

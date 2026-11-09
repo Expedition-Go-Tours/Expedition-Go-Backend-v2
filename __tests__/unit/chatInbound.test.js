@@ -32,6 +32,23 @@ describe('chatInbound tokens', () => {
   it('ignores addresses on other domains', () => {
     expect(chatInbound.tokensFromRecipients(['c-abcdef0123456789@other.com'])).toHaveLength(0);
   });
+
+  it('recognises guest relay tokens alongside conversation tokens', () => {
+    const tokens = chatInbound.tokensFromRecipients([
+      'g-0123456789abcdef@messages.example.com',
+      'c-fedcba9876543210@messages.example.com',
+    ]);
+
+    expect(tokens).toEqual([
+      expect.objectContaining({ kind: 'g', token: 'g-0123456789abcdef', hex: '0123456789abcdef' }),
+      expect.objectContaining({ kind: 'c', token: 'c-fedcba9876543210', hex: 'fedcba9876543210' }),
+    ]);
+  });
+
+  it('rejects a malformed guest token', () => {
+    expect(chatInbound.tokensFromRecipients(['g-not-a-token@messages.example.com'])).toHaveLength(0);
+    expect(chatInbound.tokensFromRecipients(['g-0123@messages.example.com'])).toHaveLength(0);
+  });
 });
 
 describe('chatInbound Svix verification', () => {

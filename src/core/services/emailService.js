@@ -185,14 +185,14 @@ function normalizeTags(tags) {
     .map((t) => ({ name: String(t.name), value: String(t.value) }));
 }
 
-async function sendHtml({ to, subject, html, text = '', attachments = [], replyTo, inReplyTo, brandKey = null, tags, tagsByRecipient, unsubscribeUrl }) {
+async function sendHtml({ to, subject, html, text = '', attachments = [], replyTo, inReplyTo, brandKey = null, fromName = null, tags, tagsByRecipient, unsubscribeUrl }) {
   // Multi-recipient fan-out: one provider call per address so each send carries
   // its own id/tags (per-recipient bounce tracking) and recipients never see
   // each other's addresses. A failure on one address never blocks the others.
   if (Array.isArray(to)) {
     const results = await Promise.allSettled(
       to.map((addr) => sendHtml({
-        to: addr, subject, html, text, attachments, replyTo, inReplyTo, brandKey,
+        to: addr, subject, html, text, attachments, replyTo, inReplyTo, brandKey, fromName,
         tags: (tagsByRecipient && tagsByRecipient[addr]) || tags,
         unsubscribeUrl,
       })),
@@ -214,6 +214,12 @@ async function sendHtml({ to, subject, html, text = '', attachments = [], replyT
 
   try {
     const fromInfo = parseFrom(brandKey);
+    // Optional display-name override (guest relay forwarders). The address
+    // stays on the brand's verified sender; only the human label changes.
+    const safeFromName = fromName
+      ? String(fromName).replace(/[\r\n<>"]/g, ' ').trim().slice(0, 120)
+      : '';
+    const fromAddress = safeFromName ? `${safeFromName} <${fromInfo.email}>` : fromInfo.from;
     // Brand-scoped Reply-To, mirroring parseFrom's EMAIL_FROM pattern:
     // EMAIL_REPLY_TO_<BRAND> wins per brand, the legacy EMAIL_REPLY_TO stays
     // the default (TravioAfrica) override, and every other brand falls back
@@ -235,7 +241,7 @@ async function sendHtml({ to, subject, html, text = '', attachments = [], replyT
     const useREST = attachments.length === 0 && !process.env.JEST_WORKER_ID && process.env.NODE_ENV !== 'test';
     if (useREST) {
       const payload = {
-        from: fromInfo.from,
+        from: fromAddress,
         to,
         subject,
         html,
@@ -259,7 +265,7 @@ async function sendHtml({ to, subject, html, text = '', attachments = [], replyT
     }
 
     const { data: result, error } = await client.emails.send({
-      from: fromInfo.from,
+      from: fromAddress,
       to,
       subject,
       html,
@@ -294,7 +300,11 @@ async function withSupplierContactData(data) {
     const address = await supplierContact.contactAddressForBooking({
       id: data.bookingId,
       customerId: data.customerId,
+      guestId: data.guestId,
+      origin: data.origin,
+      guestEmail: data.guestEmail,
       bookingNumber: data.bookingNumber,
+      brand: data.brandKey,
       tour: { supplierId: data.supplierId, title: data.tourTitle },
     });
     // No relay mintable: blank the fields rather than fall back to the real
@@ -313,7 +323,15 @@ async function sendRendered({ to, subject, key, data = {}, attachments = [], opt
   const brandKey = opts.brandKey || data.brandKey || null;
   // Only when the RECIPIENT is the supplier (see supplierRecipientList). A
   // customer-facing template keeps the customer's own address.
-  if (recipient === 'supplier') data = await withSupplierContactData(data);
+  if (recipient === 'supplier') {
+    data = await withSupplierContactData(data);
+    // A supplier replying to a booking notification should reach the guest
+    // through the relay, not the platform support inbox. Both relay kinds are
+    // addresses the inbound handler already knows how to route.
+    if (!opts.replyTo && /^[cg]-[0-9a-f]{16}@/i.test(String(data.customerEmail || ''))) {
+      opts = { ...opts, replyTo: data.customerEmail };
+    }
+  }
   const html = await renderTemplate(key, data, { ...opts, brandKey });
   return sendHtml({
     to, subject, html, text: opts.text || '', attachments,
@@ -614,6 +632,12 @@ async function buildBookingBase(booking, opts = {}) {
     // address (see sendRendered): the real email must not render there.
     bookingId: booking.id,
     customerId: customer.id || booking.customerId || '',
+    // Guest-checkout identity. The supplier-facing mask needs these to mint a
+    // booking-scoped guest relay when there is no customer account.
+    guestId: booking.guestId || '',
+    origin: booking.origin || '',
+    // Real guest inbox: read by the mask server-side only, never rendered.
+    guestEmail: leadEmail || (booking.guest && booking.guest.email) || '',
     // The supplier id is what lets sendRendered resolve the guest's RELAY
     // address for supplier-facing templates. Omitting it made every supplier
     // email blank the contact line: contactAddressForBooking returns null
@@ -3263,6 +3287,7 @@ function generatePrintableTicketHtml(data) {
 module.exports = {
   // core
   sendEmail,
+  sendHtml,
   renderTemplate,
   // The supplier-recipient mask (exported for tests): customer data reaching a
   // supplier's inbox is the leak this guards.

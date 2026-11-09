@@ -37,6 +37,7 @@
 const prisma = require('./prismaClient');
 const chatInbound = require('./chatInbound');
 const chatService = require('./chatService');
+const guestRelay = require('./guestRelay');
 const logger = require('./logger');
 
 // Resolving an address costs one conversation lookup plus the occasional
@@ -66,11 +67,28 @@ function clearContactCache() {
  * missing, creating) the SUPPLIER-CUSTOMER conversation. Returns null when it
  * cannot be minted — the caller blanks the address rather than falling back to
  * the real one.
+ *
+ * An unclaimed marketplace guest booking has no `customerId`, so there is no
+ * conversation to key on. It gets a booking-scoped guest relay instead; the
+ * real address never leaves the server. Once the guest claims the booking,
+ * `customerId` is set and the normal conversation relay takes over.
  */
 async function contactAddressForBooking(booking) {
   const supplierId = booking.tour?.supplierId;
   const customerId = booking.customerId;
-  if (!supplierId || !customerId) return null;
+
+  if (!customerId) {
+    if (!guestRelay.isEligible(booking, supplierId)) return null;
+    try {
+      const relay = await guestRelay.ensureForBooking(booking, supplierId);
+      return relay ? relay.address : null;
+    } catch (err) {
+      logger.warn(`[SupplierContact] could not mint a guest relay for booking ${booking.id}: ${err.message}`);
+      return null;
+    }
+  }
+
+  if (!supplierId) return null;
 
   const key = cacheKeyFor(booking);
   const cached = cache.get(key);
@@ -113,14 +131,44 @@ async function contactAddressForBooking(booking) {
 async function contactAddressesForBookings(bookings, supplierId) {
   const out = new Map();
   const pending = [];
+  const guestRows = [];
 
   for (const booking of bookings) {
-    if (!booking.customerId) continue;
+    if (!booking.customerId) {
+      if (guestRelay.isEligible(booking, supplierId)) guestRows.push(booking);
+      continue;
+    }
     const key = cacheKeyFor(booking, supplierId);
     const cached = cache.get(key);
     if (cached !== undefined) out.set(booking.id, cached);
     else pending.push(booking);
   }
+
+  // Guest relays are keyed by booking, so one query answers the whole page.
+  // Only rows that have never been minted take the create path.
+  if (guestRows.length) {
+    let existing = [];
+    try {
+      existing = await prisma.guestRelay.findMany({
+        where: { bookingId: { in: guestRows.map((b) => b.id) } },
+      });
+    } catch (err) {
+      logger.warn(`[SupplierContact] guest relay batch lookup failed: ${err.message}`);
+    }
+    const byBooking = new Map(existing.map((row) => [row.bookingId, row]));
+    for (const booking of guestRows) {
+      try {
+        const found = byBooking.get(booking.id);
+        const relay = found && !found.disabledAt
+          ? found
+          : await guestRelay.ensureForBooking(booking, supplierId);
+        if (relay) out.set(booking.id, relay.address);
+      } catch (err) {
+        logger.warn(`[SupplierContact] could not mint a guest relay for booking ${booking.id}: ${err.message}`);
+      }
+    }
+  }
+
   if (pending.length === 0) return out;
 
   const customerIds = [...new Set(pending.map((b) => b.customerId))];
@@ -181,9 +229,14 @@ async function contactAddressesForBookings(bookings, supplierId) {
  * reach a guest who is late.
  */
 function withSupplierContact(row, address) {
+  const isGuest = !row.customerId && Boolean(row.guestId);
+  const isMarketplaceGuest = isGuest && String(row.origin || '').toUpperCase() === 'MARKETPLACE';
   const blank = {
     ...row,
     customer: row.customer ? { ...row.customer, email: '' } : row.customer,
+    // A marketplace guest's real inbox may ride along on the `guest` relation
+    // (the relay resolver needs it server-side). It must not reach the browser.
+    guest: row.guest && isMarketplaceGuest ? { ...row.guest, email: '' } : row.guest,
     leadTravelerEmail: '',
   };
   if (!address) return blank;
@@ -191,7 +244,12 @@ function withSupplierContact(row, address) {
   return {
     ...row,
     customer: row.customer ? { ...row.customer, email: address } : row.customer,
-    leadTravelerEmail: row.leadTravelerEmail ? address : row.leadTravelerEmail,
+    guest: row.guest && isMarketplaceGuest ? { ...row.guest, email: address } : row.guest,
+    // A guest has no account email to fall back on, so the relay is the only
+    // address the supplier can act on even when `leadTravelerEmail` was empty.
+    leadTravelerEmail: isGuest || row.leadTravelerEmail
+      ? address
+      : row.leadTravelerEmail,
   };
 }
 

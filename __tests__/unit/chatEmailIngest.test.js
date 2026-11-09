@@ -22,6 +22,10 @@ jest.mock('../../src/core/services/chatService', () => ({
   notifyConversationByEmail: jest.fn(),
 }));
 
+jest.mock('../../src/core/services/guestRelayIngest', () => ({
+  ingestReceivedEmail: jest.fn(async () => 'success'),
+}));
+
 jest.mock('../../src/core/services/auditLogger', () => ({
   logActivity: jest.fn().mockResolvedValue(undefined),
 }));
@@ -120,6 +124,31 @@ describe('negative cache for unmatched inbound emails', () => {
 
     await ingest.pollReceivedEmails();
     expect(global.fetch).toHaveBeenCalledTimes(3); // second poll: list only
+  });
+
+  it('routes a guest token to the guest relay and never to the conversation path', async () => {
+    const chatInbound = require('../../src/core/services/chatInbound');
+    const guestRelayIngest = require('../../src/core/services/guestRelayIngest');
+    chatInbound.tokensFromRecipients.mockReturnValue([
+      { kind: 'g', token: 'g-0123456789abcdef', hex: '0123456789abcdef' },
+    ]);
+    global.fetch.mockResolvedValue(jsonResponse({
+      id: 'id-guest',
+      message_id: 'mid-guest',
+      to: ['g-0123456789abcdef@messages.example.com'],
+      from: 'Yannick <yannick@example.com>',
+      html: '',
+      text: 'Hello',
+      attachments: [],
+    }));
+
+    const status = await ingest.ingestReceivedEmail('id-guest');
+
+    expect(status).toBe('success');
+    expect(guestRelayIngest.ingestReceivedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ emailId: 'id-guest', token: expect.objectContaining({ kind: 'g' }) }),
+    );
+    expect(prisma.conversation.findFirst).not.toHaveBeenCalled();
   });
 });
 
