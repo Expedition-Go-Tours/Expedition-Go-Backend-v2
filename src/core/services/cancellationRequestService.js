@@ -20,7 +20,7 @@ const prisma = require('./prismaClient');
 const AppError = require('./appError');
 const { enqueueNotification } = require('./queue');
 const { notifyAdmin } = require('./adminNotificationService');
-const { sendEmail } = require('./emailService');
+const { sendEmail, resolveEmailBrand } = require('./emailService');
 const { logActivity } = require('./auditLogger');
 const emailUrls = require('../../../config/emailUrls');
 const {
@@ -278,6 +278,8 @@ function alertAdminsOnDecision(request, booking, tour, approved, adminName) {
 function notifySupplierOfDecision(request, booking, tour, approved, note) {
   const supplierId = request.supplierId || tour.supplierId;
   if (!supplierId) return;
+  const customerRequested = request.payload?.cancellationCategory === 'CUSTOMER_REQUESTED';
+  const refundAmount = Number(booking.refundAmount ?? request.preview?.refund?.amount ?? 0);
   // Resolve the supplier's roles so the bookings link points at THEIR
   // dashboard (Ghana suppliers use a different origin).
   prisma.user
@@ -288,8 +290,10 @@ function notifySupplierOfDecision(request, booking, tour, approved, note) {
         type: approved ? 'CANCELLATION_REQUEST_APPROVED' : 'CANCELLATION_REQUEST_REJECTED',
         title: approved ? 'Cancellation request approved' : 'Cancellation request rejected',
         message: approved
-          ? `Your cancellation request for booking ${booking.bookingNumber} ("${tour.title}") was approved. The customer has been notified and the refund is on its way.`
-          : `Your cancellation request for booking ${booking.bookingNumber} ("${tour.title}") was rejected. The booking remains confirmed.${note ? ` Reason: ${note}` : ''}`,
+          ? customerRequested
+            ? `Your cancellation request for booking ${booking.bookingNumber} ("${tour.title}") was approved. The customer has been notified.${refundAmount > 0 ? ' The refund is on its way.' : ' No refund applies.'}`
+            : `Your cancellation request for booking ${booking.bookingNumber} ("${tour.title}") was approved. The customer has been notified and the refund is on its way.`
+          : `Your cancellation request for booking ${booking.bookingNumber} ("${tour.title}") was rejected. The booking remains active.${note ? ` Reason: ${note}` : ''}`,
         data: {
           bookingId: booking.id,
           bookingNumber: booking.bookingNumber,
@@ -306,6 +310,44 @@ function notifySupplierOfDecision(request, booking, tour, approved, note) {
       }).catch((err) => console.error('[CancellationRequest] supplier decision notification failed:', err.message));
     })
     .catch((err) => console.error('[CancellationRequest] supplier lookup failed:', err.message));
+}
+
+/**
+ * A customer-requested cancellation that the supplier/admin does not approve
+ * must tell the customer the booking is still on. Supplier-initiated requests
+ * stay silent: the customer never knew the request existed.
+ */
+function notifyCustomerOfDeclinedRequest(booking, note, { withdrawn = false } = {}) {
+  const lead = withdrawn
+    ? 'The supplier withdrew the cancellation request'
+    : 'The supplier could not approve your cancellation request';
+  const message = `${lead} for booking ${booking.bookingNumber}. The booking remains active.${note ? ` Note: ${note}` : ''}`;
+  const email = booking.customer?.email || booking.leadTravelerEmail || null;
+
+  if (booking.customerId) {
+    enqueueNotification({
+      userId: booking.customerId,
+      type: 'CUSTOMER_CANCELLATION_DECLINED',
+      title: withdrawn ? 'Cancellation request withdrawn' : 'Cancellation request declined',
+      message,
+      data: { bookingId: booking.id, note: note || null },
+    }).catch((err) => console.error('[CancellationRequest] customer decision notification failed:', err.message));
+  }
+
+  if (email) {
+    sendEmail({
+      to: email,
+      subject: `Cancellation request ${withdrawn ? 'withdrawn' : 'declined'} — ${booking.bookingNumber}`,
+      template: 'generic-notification',
+      opts: { brandKey: resolveEmailBrand({ booking }) },
+      data: {
+        title: withdrawn ? 'Cancellation request withdrawn' : 'Cancellation request declined',
+        message,
+        buttonUrl: `${emailUrls.bookingClientOrigin(booking)}/dashboard/bookings?booking=${encodeURIComponent(booking.id)}`,
+        buttonText: 'View booking',
+      },
+    }).catch((err) => console.error('[CancellationRequest] customer decision email failed:', err.message));
+  }
 }
 
 async function loadRequestForSerialize(id, { includeSupplier = true } = {}) {
@@ -655,6 +697,9 @@ async function rejectCancellationRequest({ requestId, adminUser, req, note }) {
 
   alertAdminsOnDecision({ ...full, supplierId: request.supplierId }, booking, tour, false, adminUser.name);
   notifySupplierOfDecision({ ...full, supplierId: request.supplierId }, booking, tour, false, cleanNote);
+  if (full.payload?.cancellationCategory === 'CUSTOMER_REQUESTED') {
+    notifyCustomerOfDeclinedRequest(booking, cleanNote);
+  }
 
   logActivity({
     userId: adminUser.id,
@@ -688,6 +733,10 @@ async function withdrawCancellationRequest({ requestId, supplierId, actorId, req
   const reverted = await revertStopSelling(full);
   if (full.stopSellingApplied) {
     await prisma.cancellationRequest.update({ where: { id: requestId }, data: { stopSellingApplied: false } }).catch(() => {});
+  }
+
+  if (full.payload?.cancellationCategory === 'CUSTOMER_REQUESTED') {
+    notifyCustomerOfDeclinedRequest(full.booking, null, { withdrawn: true });
   }
 
   logActivity({

@@ -48,7 +48,10 @@ jest.mock('../../src/core/services/queue', () => ({
 }));
 
 const mockSendEmail = jest.fn().mockResolvedValue({});
-jest.mock('../../src/core/services/emailService', () => ({ sendEmail: mockSendEmail }));
+jest.mock('../../src/core/services/emailService', () => ({
+  sendEmail: mockSendEmail,
+  resolveEmailBrand: jest.fn(() => 'ghana'),
+}));
 jest.mock('../../src/core/services/auditLogger', () => ({ logActivity: jest.fn().mockResolvedValue() }));
 
 const mockCancelBySupplier = jest.fn();
@@ -373,6 +376,49 @@ describe('rejectCancellationRequest', () => {
     expect(supplierCall[0].data.approved).toBe(false);
     expect(supplierCall[0].sendEmail).toBe(true);
     expect(result.request.status).toBe('REJECTED');
+  });
+
+  it('tells the customer a customer-requested cancellation was declined', async () => {
+    mockPrisma.cancellationRequest.updateMany.mockResolvedValueOnce({ count: 1 });
+    mockPrisma.cancellationRequest.update.mockResolvedValue({ id: 'r1', status: 'REJECTED' });
+    mockPrisma.cancellationRequest.findUnique.mockResolvedValue(serializedRow({
+      status: 'REJECTED',
+      payload: {
+        cancellationCode: 'CUSTOMER_REQUESTED_CANCEL',
+        cancellationCategory: 'CUSTOMER_REQUESTED',
+        customerRefundAgreed: false,
+        agreedToTerms: true,
+      },
+    }));
+
+    await service.rejectCancellationRequest({
+      requestId: 'r1', adminUser: { id: 'a1', name: 'Ada' }, req: REQ, note: 'The tour is still running',
+    });
+
+    expect(mockSendEmail).toHaveBeenCalledWith(expect.objectContaining({
+      to: 'ama@example.com',
+      template: 'generic-notification',
+      subject: expect.stringMatching(/declined/i),
+    }));
+    expect(mockEnqueueNotification).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 'c1',
+      type: 'CUSTOMER_CANCELLATION_DECLINED',
+    }));
+  });
+
+  it('stays silent to the customer when a supplier operational request is rejected', async () => {
+    mockPrisma.cancellationRequest.updateMany.mockResolvedValueOnce({ count: 1 });
+    mockPrisma.cancellationRequest.update.mockResolvedValue({ id: 'r1', status: 'REJECTED' });
+    mockPrisma.cancellationRequest.findUnique.mockResolvedValue(serializedRow({ status: 'REJECTED' }));
+
+    await service.rejectCancellationRequest({
+      requestId: 'r1', adminUser: { id: 'a1', name: 'Ada' }, req: REQ, note: 'Experience is still runnable',
+    });
+
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(mockEnqueueNotification).not.toHaveBeenCalledWith(expect.objectContaining({
+      type: 'CUSTOMER_CANCELLATION_DECLINED',
+    }));
   });
 });
 

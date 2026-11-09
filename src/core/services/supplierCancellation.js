@@ -218,6 +218,7 @@ async function cancelBySupplier({ booking, payload, supplierId, req, skipValidat
     throw new AppError(validation.errors.join('; '), 400);
   }
   const input = validation.normalized;
+  const isCustomerRequested = input.cancellationCategory === CATEGORIES.CUSTOMER_REQUESTED;
 
   const tour = booking.tour;
   const refund = plannedRefund(booking, tour, input);
@@ -236,9 +237,12 @@ async function cancelBySupplier({ booking, payload, supplierId, req, skipValidat
       : REFUND_STATES.PENDING;
 
   const now = new Date();
-  const cancellationReasonLabel =
-    input.explanation ||
-    (input.cancellationCategory === CATEGORIES.OPERATIONAL ? 'Operational cancellation' : 'Cancelled by supplier');
+  const cancellationReasonLabel = isCustomerRequested
+    // The supplier's explanation is an internal note; the customer knows why
+    // they asked to cancel, so the public reason stays neutral.
+    ? 'Customer requested cancellation'
+    : (input.explanation
+      || (input.cancellationCategory === CATEGORIES.OPERATIONAL ? 'Operational cancellation' : 'Cancelled by supplier'));
 
   const result = await prisma.$transaction(async (tx) => {
     const updateData = {
@@ -246,7 +250,10 @@ async function cancelBySupplier({ booking, payload, supplierId, req, skipValidat
       cancellationReason: cancellationReasonLabel,
       cancellationCode: input.cancellationCode,
       cancellationCategory: input.cancellationCategory,
-      cancellationOrigin: ORIGINS.SUPPLIER,
+      // A customer-requested cancellation is customer-origin even though the
+      // supplier executes it. That keeps the rate, wording and outcome emails
+      // on the customer path instead of blaming the supplier.
+      cancellationOrigin: isCustomerRequested ? ORIGINS.CUSTOMER : ORIGINS.SUPPLIER,
       countsTowardRate: input.countsTowardRate,
       cancellationFee: fee > 0 ? fee : null,
       refundStatus: refundState,
@@ -311,23 +318,54 @@ async function cancelBySupplier({ booking, payload, supplierId, req, skipValidat
   }
 
   // ── Notifications ──────────────────────────────────────────────────────
-  const customerMessage = choiceDeadline
-    ? `Your booking "${tour.title}" has been cancelled by the supplier. Choose a new date or a full refund — you have ${CHOICE_WINDOW_HOURS} hours to decide.`
-    : `Your booking "${tour.title}" has been cancelled by the supplier`;
+  const customerMessage = isCustomerRequested
+    ? `Your cancellation request for "${tour.title}" was approved.${refund.amount > 0 ? ' Your refund is being processed.' : ' No refund applies.'}`
+    : choiceDeadline
+      ? `Your booking "${tour.title}" has been cancelled by the supplier. Choose a new date or a full refund — you have ${CHOICE_WINDOW_HOURS} hours to decide.`
+      : `Your booking "${tour.title}" has been cancelled by the supplier`;
 
   enqueueNotification({
     userId: booking.customerId,
-    type: choiceDeadline ? 'CANCELLATION_CHOICE_REQUIRED' : 'BOOKING_CANCELLED',
-    title: 'Booking Cancelled',
+    type: isCustomerRequested
+      ? 'BOOKING_CANCELLED'
+      : (choiceDeadline ? 'CANCELLATION_CHOICE_REQUIRED' : 'BOOKING_CANCELLED'),
+    title: isCustomerRequested ? 'Cancellation request approved' : 'Booking Cancelled',
     message: customerMessage,
     data: { bookingId: booking.id, choiceDeadline: choiceDeadline ? choiceDeadline.toISOString() : null },
   }).catch((err) => console.error('[Cancellation] customer notification failed:', err.message));
 
-  enqueueEmail({
-    type: 'supplier-cancelled-booking',
-    bookingId: booking.id,
-    data: { reason: cancellationReasonLabel },
-  }).catch((err) => console.error('[Cancellation] customer email failed:', err.message));
+  if (isCustomerRequested) {
+    // Customer-initiated: use the customer cancellation outcome (refund/no
+    // refund) and the supplier's customer-cancellation record, never the
+    // "supplier cancelled" pair.
+    enqueueEmail({
+      type: 'booking-cancellation',
+      bookingId: booking.id,
+      data: {
+        cancelledBy: 'CUSTOMER',
+        cancelledAt: now,
+        refundAmount: refund.amount,
+        reason: cancellationReasonLabel,
+      },
+    }).catch((err) => console.error('[Cancellation] customer email failed:', err.message));
+
+    enqueueEmail({
+      type: 'supplier-cancellation',
+      bookingId: booking.id,
+      data: {
+        cancelledBy: 'CUSTOMER',
+        cancelledAt: now,
+        refundAmount: refund.amount,
+        reason: cancellationReasonLabel,
+      },
+    }).catch((err) => console.error('[Cancellation] supplier email failed:', err.message));
+  } else {
+    enqueueEmail({
+      type: 'supplier-cancelled-booking',
+      bookingId: booking.id,
+      data: { reason: cancellationReasonLabel },
+    }).catch((err) => console.error('[Cancellation] customer email failed:', err.message));
+  }
 
   if (fee > 0) {
     enqueueEmail({
