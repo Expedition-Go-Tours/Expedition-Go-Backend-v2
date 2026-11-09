@@ -24,7 +24,7 @@
 const prisma = require('./prismaClient');
 const AppError = require('./appError');
 const { refundBookingPayment } = require('./payments');
-const { evaluateCancellationPolicy } = require('./bookingHelpers');
+const { evaluateCancellationPolicy, activityStart } = require('./bookingHelpers');
 const { evaluateBookingAvailability } = require('./availabilityCore');
 const { detachBookingFromActiveRequests } = require('./financeHelpers');
 const { detachBookingFromInvoices } = require('./invoiceService');
@@ -184,20 +184,29 @@ async function executeRefund(bookingOrId) {
  * @param {boolean} [args.skipValidation] internal batch caller already validated
  */
 /**
- * Has the activity day arrived? From 00:00 on the travel date, a supplier can
- * no longer cancel: the experience is due to run, and a supplier-caused
- * cancellation refunds the customer in full. The admin approval path keeps
- * its own power — this gate sits on the supplier's button, not on the
- * approved execution of a request made earlier.
+ * Has the activity already started? A supplier may cancel on the activity
+ * date, but not once the experience is due to run: after that the correct
+ * action is completed / no-show, not cancellation.
+ *
+ * With a time slot the cutoff is the slot's start. Without one there is no
+ * clock to point at, so the day itself is the cutoff (end of the travel day).
+ * The admin approval path keeps its own power — this gate sits on the
+ * supplier's button, not on the approved execution of a request made earlier.
  */
 function cancellationClosedForActivity(booking, now = new Date()) {
-  const startOfDay = (value) => {
-    const date = new Date(value);
-    date.setHours(0, 0, 0, 0);
-    return date;
-  };
   if (!booking?.travelDate) return false;
-  return startOfDay(booking.travelDate) <= startOfDay(now);
+  const start = activityStart(booking);
+  if (!start) return false;
+  const hasTime = typeof booking.selectedTime === 'string' && /^\d{1,2}:\d{2}/.test(booking.selectedTime);
+  const cutoff = hasTime
+    ? start
+    : new Date(Date.UTC(
+        start.getUTCFullYear(),
+        start.getUTCMonth(),
+        start.getUTCDate(),
+        23, 59, 59, 999,
+      ));
+  return now >= cutoff;
 }
 
 async function cancelBySupplier({ booking, payload, supplierId, req, skipValidation = false }) {

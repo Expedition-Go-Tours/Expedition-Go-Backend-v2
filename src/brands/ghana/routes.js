@@ -40,6 +40,8 @@ const {
   getBookingsSchema,
   bookingIdParamSchema,
   cancelBookingSchema,
+  customerCancellationRequestSchema,
+  customerCancellationDecisionSchema,
   getSupplierBookingsSchema,
   supplierBookingParamsSchema,
   rescheduleBookingSchema,
@@ -1090,6 +1092,8 @@ router.get('/bookings/:id', ...guestCapable, validate(bookingIdParamSchema), tra
  *         description: Booking not found
  */
 router.patch('/bookings/:id/cancel', protect, restrictTo('customer'), validate(cancelBookingSchema), travioGhanaController.cancelBooking);
+router.post('/bookings/:id/cancellation-request', protect, restrictTo('customer'), validate(customerCancellationRequestSchema), travioGhanaController.requestCustomerCancellation);
+router.delete('/bookings/:id/cancellation-request', protect, restrictTo('customer'), validate(bookingIdParamSchema), travioGhanaController.withdrawCustomerCancellation);
 
 router.get('/bookings/:id/payment-state', protect, restrictTo('customer'), payLaterPaymentController.getPaymentState);
 router.post('/bookings/:id/pay-now', protect, restrictTo('customer'), payLaterPaymentController.startPayNow);
@@ -1216,6 +1220,7 @@ router.get('/supplier/bookings', protect, resolveSupplier, requireTeamPermission
 // "export" would be read as a booking id and 404.
 router.get('/supplier/bookings/export', protect, resolveSupplier, requireTeamPermission('bookings.export'), validate(getSupplierBookingsSchema), travioGhanaController.exportSupplierBookings);
 router.post('/supplier/bookings/:id/reschedule', protect, resolveSupplier, requireTeamPermission('bookings.manage'), validate(rescheduleBookingSchema), travioGhanaController.rescheduleSupplierBooking);
+router.post('/supplier/bookings/:id/customer-cancellation', protect, resolveSupplier, requireTeamPermission('bookings.manage'), validate(customerCancellationDecisionSchema), travioGhanaController.decideCustomerCancellation);
 router.get('/supplier/bookings/:id', protect, resolveSupplier, requireTeamPermission('bookings.view'), validate(supplierBookingParamsSchema), travioGhanaController.getSupplierBookingDetail);
 router.post('/supplier/bookings/:id/payment-link', protect, resolveSupplier, requireTeamPermission('bookings.manage'), paymentLinkLimiter, validate(supplierPaymentLinkSchema), travioGhanaController.sendSupplierPaymentLink);
 router.post('/supplier/bookings/:id/payment-link/resend', protect, resolveSupplier, requireTeamPermission('bookings.manage'), paymentLinkLimiter, validate(supplierPaymentLinkSchema), travioGhanaController.resendSupplierPaymentLink);

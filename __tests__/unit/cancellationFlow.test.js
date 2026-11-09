@@ -379,23 +379,34 @@ describe('plannedRefund (supplier cancels ⇒ always full refund)', () => {
 describe('cancellation day gate', () => {
   const { cancellationClosedForActivity } = require('../../src/core/services/supplierCancellation');
 
-  const at = (offsetDays) => {
-    const date = new Date();
-    date.setHours(12, 0, 0, 0);
-    date.setDate(date.getDate() + offsetDays);
-    return date;
-  };
+  const day = (offset) => new Date(Date.UTC(2026, 10, 9 + offset));
+  const at = (hour, minute = 0) => new Date(Date.UTC(2026, 10, 9, hour, minute));
 
-  it('closes on the activity day, whatever the time', () => {
-    expect(cancellationClosedForActivity({ travelDate: at(0) })).toBe(true);
+  it('stays open on the activity day before the start time', () => {
+    expect(cancellationClosedForActivity(
+      { travelDate: day(0), selectedTime: '12:00' },
+      at(9),
+    )).toBe(false);
+  });
+
+  it('closes once the activity start time has passed', () => {
+    expect(cancellationClosedForActivity(
+      { travelDate: day(0), selectedTime: '12:00' },
+      at(13),
+    )).toBe(true);
   });
 
   it('closes for a past activity', () => {
-    expect(cancellationClosedForActivity({ travelDate: at(-1) })).toBe(true);
+    expect(cancellationClosedForActivity({ travelDate: day(-1), selectedTime: '12:00' }, at(9))).toBe(true);
   });
 
   it('stays open until the day before', () => {
-    expect(cancellationClosedForActivity({ travelDate: at(1) })).toBe(false);
+    expect(cancellationClosedForActivity({ travelDate: day(1), selectedTime: '12:00' }, at(9))).toBe(false);
+  });
+
+  it('treats a missing time slot as the end of the travel day', () => {
+    expect(cancellationClosedForActivity({ travelDate: day(0) }, at(23, 30))).toBe(false);
+    expect(cancellationClosedForActivity({ travelDate: day(0) }, day(1))).toBe(true);
   });
 
   it('does not close a booking without a travel date', () => {

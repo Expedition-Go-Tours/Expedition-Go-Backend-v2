@@ -303,6 +303,29 @@ const bookingIdParamSchema = z.object({
 const cancelBookingSchema = z.object({
   body: z.object({
     reason: z.string().max(500).optional(),
+    note: z.string().max(1000).optional(),
+  }),
+  query: z.any().optional(),
+  params: z.object({
+    id: z.string().min(1).max(100),
+  }),
+});
+
+const customerCancellationRequestSchema = z.object({
+  body: z.object({
+    reason: z.string().max(500).optional(),
+    note: z.string().max(1000).optional(),
+  }),
+  query: z.any().optional(),
+  params: z.object({
+    id: z.string().min(1).max(100),
+  }),
+});
+
+const customerCancellationDecisionSchema = z.object({
+  body: z.object({
+    decision: z.enum(['APPROVE', 'DECLINE']),
+    note: z.string().max(1000).optional(),
   }),
   query: z.any().optional(),
   params: z.object({
@@ -501,6 +524,8 @@ module.exports = {
   getBookingsSchema,
   bookingIdParamSchema,
   cancelBookingSchema,
+  customerCancellationRequestSchema,
+  customerCancellationDecisionSchema,
   createReviewSchema,
   getSupplierBookingsSchema,
   supplierBookingParamsSchema,

@@ -41,6 +41,13 @@ jest.mock('../../src/core/services/stripeHelpers', () => ({
 jest.mock('../../src/core/services/bookingHelpers', () => ({
   generateBookingNumber: jest.fn(() => 'BK-TEST-001'),
   validateTravelerInfo: jest.fn(() => ({ isValid: true, errors: [] })),
+  activityStart: jest.fn((booking) => {
+    const date = new Date(booking.travelDate);
+    let startMs = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+    const match = /^(\d{1,2}):(\d{2})/.exec(booking.selectedTime || '');
+    if (match) startMs += ((parseInt(match[1], 10) || 0) * 60 + (parseInt(match[2], 10) || 0)) * 60 * 1000;
+    return new Date(startMs);
+  }),
   evaluateCancellationPolicy: jest.fn((booking) => ({
     allowed: true,
     refundAmount: parseFloat(booking.grossAmount || 0),
@@ -669,11 +676,14 @@ describe('Booking Controller', () => {
       expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({ name: 'booking.status_confirmed' }));
     });
 
-    it('rejects a supplier cancellation on the day of the activity', async () => {
+    it('rejects a supplier cancellation after the activity start time', async () => {
       const supplierBooking = {
         ...mockBooking,
         status: 'CONFIRMED',
         travelDate: new Date(),
+        // Midnight has passed by the time the suite runs, so the activity is
+        // already under way under the new start-time gate.
+        selectedTime: '00:00',
         tour: { supplierId: 'supplier-1', title: 'Tour' },
         customer: { id: 'c-1' },
       };

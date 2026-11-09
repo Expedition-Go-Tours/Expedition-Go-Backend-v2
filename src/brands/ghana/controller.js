@@ -2940,6 +2940,80 @@ const updateBookingStatus = catchAsync(async (req, res, next) => {
 });
 
 
+const requestCustomerCancellation = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { reason, note } = req.body;
+  const customerId = req.user.id;
+
+  const booking = await prisma.booking.findFirst({
+    where: { id, customerId, status: { in: ['PENDING', 'CONFIRMED'] } },
+    include: {
+      tour: { select: { id: true, title: true, supplierId: true, supplier: { select: { id: true, name: true, email: true, roles: true } } } },
+      customer: { select: { id: true, name: true, email: true } },
+    },
+  });
+  if (!booking) return next(new AppError('Booking not found or cannot be cancelled', 404));
+
+  const { requestCustomerCancellation: request } = require('../../core/services/customerCancellationRequest');
+  const updated = await request({ booking, customerId, reason, note });
+
+  res.status(200).json({
+    status: 'success',
+    data: { booking: sanitizeBookingPaymentInternals(updated) },
+  });
+});
+
+const withdrawCustomerCancellation = catchAsync(async (req, res, next) => {
+  const booking = await prisma.booking.findFirst({
+    where: { id: req.params.id, customerId: req.user.id },
+  });
+  if (!booking) return next(new AppError('Booking not found', 404));
+
+  const { withdrawCustomerCancellation: withdraw } = require('../../core/services/customerCancellationRequest');
+  const updated = await withdraw({ booking, customerId: req.user.id });
+
+  res.status(200).json({
+    status: 'success',
+    data: { booking: sanitizeBookingPaymentInternals(updated) },
+  });
+});
+
+/**
+ * POST /supplier/bookings/:id/customer-cancellation
+ * Body: { decision: 'APPROVE' | 'DECLINE', note?: string }
+ *
+ * Same-day customer cancellation: the supplier decides. Approval cancels with
+ * no refund and no fee; decline leaves the booking active.
+ */
+const decideCustomerCancellation = catchAsync(async (req, res, next) => {
+  const supplierId = req.supplierId;
+  const { id } = req.params;
+  const { decision, note } = req.body;
+
+  const booking = await prisma.booking.findFirst({
+    where: { id, tour: { supplierId } },
+    include: {
+      tour: { select: { id: true, title: true, supplierId: true, supplier: { select: { id: true, name: true, email: true, roles: true } } } },
+      customer: { select: { id: true, name: true, email: true } },
+    },
+  });
+  if (!booking) return next(new AppError('Booking not found or not yours', 404));
+
+  const { decideCustomerCancellation: decide } = require('../../core/services/customerCancellationRequest');
+  const updated = await decide({
+    booking,
+    supplierId,
+    approve: decision === 'APPROVE',
+    note: note || null,
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: { booking: updated },
+  });
+});
+
+
 const makeStorefrontController = require('../../core/storefront');
 
 module.exports = {
@@ -2959,6 +3033,9 @@ module.exports = {
   getPaypalApproval,
   getPaymentCapabilities,
   cancelBooking,
+  requestCustomerCancellation,
+  withdrawCustomerCancellation,
+  decideCustomerCancellation,
   getSupplierBookings,
   exportSupplierBookings,
   getSupplierBookingDetail,

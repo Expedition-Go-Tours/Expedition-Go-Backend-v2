@@ -301,6 +301,9 @@ enum NotificationType {
   CANCELLATION_CHOICE_REQUIRED // Customer must pick reschedule-or-refund (48h window)
   CANCELLATION_REQUEST_APPROVED // Admin approved the supplier's cancellation request
   CANCELLATION_REQUEST_REJECTED // Admin rejected the supplier's cancellation request
+  CUSTOMER_CANCELLATION_REQUESTED // Same-day customer cancel needs the supplier's decision
+  CUSTOMER_CANCELLATION_APPROVED // Supplier approved the customer's same-day cancellation (no refund)
+  CUSTOMER_CANCELLATION_DECLINED // Supplier declined the customer's same-day cancellation
   SUPPLIER_REFUND_APPROVED // Admin approved a supplier's refund request (money executed)
   SUPPLIER_REFUND_REJECTED // Admin declined a supplier's refund request
   SUPPLIER_REFUND_FAILED // Provider refund failed after approval; charge reversed
@@ -1295,6 +1298,20 @@ model Booking {
   customerChoiceAt     DateTime?
   proposedTravelDate   DateTime? // chosen date when customerChoice = RESCHEDULE
 
+  // ── Same-day customer cancellation request ──
+  // On the activity date the normal cancellation window is closed. The
+  // customer can still ask to cancel, but the supplier decides: approval
+  // cancels the booking with NO refund (the experience was already due to
+  // run); rejection leaves it active. One request per booking.
+  // PENDING | APPROVED | DECLINED | WITHDRAWN
+  customerCancellationStatus      String?
+  customerCancellationReason      String?
+  customerCancellationNote        String?
+  customerCancellationRequestedAt DateTime?
+  customerCancellationDecidedAt   DateTime?
+  customerCancellationDecidedBy   String?
+  customerCancellationDecisionNote String?
+
   // Communication
   specialRequests String?
   supplierNotes   String?
@@ -1380,6 +1397,7 @@ model Booking {
   @@index([payoutStatus]) // Finance eligibility sweeps + KPI queries
   @@index([optionId]) // Per-option capacity + availability lookups
   @@index([cancellationChoiceDeadline]) // Choice-window expiry sweep
+  @@index([customerCancellationStatus]) // Supplier approval queue
   @@index([refundStatus]) // Stuck-refund retry/alert sweep
   @@index([origin, createdAt]) // Supplier-created reporting + origin filters
   @@index([createdAt]) // Admin activity feed
