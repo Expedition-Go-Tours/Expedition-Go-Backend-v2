@@ -269,6 +269,7 @@ function alertAdminsOnDecision(request, booking, tour, approved, adminName) {
       tourId: tour.id,
       decision: approved ? 'APPROVED' : 'REJECTED',
       decidedBy: request.decidedBy || null,
+      decidedByName: adminName || null,
     },
     storefront: request.storefront || null,
   }).catch(() => {});

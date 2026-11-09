@@ -41,11 +41,17 @@ const FIELD_LABELS = {
   fromStatus: 'From',
   toStatus: 'To',
   reviewerName: 'Reviewer',
+  decidedByName: 'Decided By',
   message: 'Message',
 };
 
 function formatFields(data) {
-  const entries = Object.entries(data || {}).filter(([, v]) => v !== undefined && v !== null && v !== '');
+  // A decision carries both the actor's id and name. Showing both produces a
+  // "Decided By: <cuid>" field next to the human name, so drop the id when the
+  // name is available.
+  const source = { ...(data || {}) };
+  if (source.decidedByName && source.decidedBy) delete source.decidedBy;
+  const entries = Object.entries(source).filter(([, v]) => v !== undefined && v !== null && v !== '');
   if (!entries.length) return [];
   // Sort by preferred label order, then alphabetical.
   const order = Object.keys(FIELD_LABELS);
@@ -289,4 +295,4 @@ async function getStats(where = {}) {
   return { total, unacknowledged, byType, recent };
 }
 
-module.exports = { notifyAdmin, emitToRoom, getNotifications, acknowledgeNotification, acknowledgeAll, getStats };
+module.exports = { notifyAdmin, emitToRoom, getNotifications, acknowledgeNotification, acknowledgeAll, getStats, formatFields };
