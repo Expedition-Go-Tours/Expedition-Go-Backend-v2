@@ -1092,8 +1092,8 @@ router.get('/bookings/:id', ...guestCapable, validate(bookingIdParamSchema), tra
  *         description: Booking not found
  */
 router.patch('/bookings/:id/cancel', protect, restrictTo('customer'), validate(cancelBookingSchema), travioGhanaController.cancelBooking);
-router.post('/bookings/:id/cancellation-request', protect, restrictTo('customer'), validate(customerCancellationRequestSchema), travioGhanaController.requestCustomerCancellation);
-router.delete('/bookings/:id/cancellation-request', protect, restrictTo('customer'), validate(bookingIdParamSchema), travioGhanaController.withdrawCustomerCancellation);
+router.post('/bookings/:id/cancellation-request', ...guestCapable, validate(customerCancellationRequestSchema), travioGhanaController.requestCustomerCancellation);
+router.delete('/bookings/:id/cancellation-request', ...guestCapable, validate(bookingIdParamSchema), travioGhanaController.withdrawCustomerCancellation);
 
 router.get('/bookings/:id/payment-state', protect, restrictTo('customer'), payLaterPaymentController.getPaymentState);
 router.post('/bookings/:id/pay-now', protect, restrictTo('customer'), payLaterPaymentController.startPayNow);

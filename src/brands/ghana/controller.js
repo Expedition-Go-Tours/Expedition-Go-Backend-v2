@@ -2943,19 +2943,25 @@ const updateBookingStatus = catchAsync(async (req, res, next) => {
 const requestCustomerCancellation = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const { reason, note } = req.body;
-  const customerId = req.user.id;
 
   const booking = await prisma.booking.findFirst({
-    where: { id, customerId, status: { in: ['PENDING', 'CONFIRMED'] } },
+    where: { id, status: { in: ['PENDING', 'CONFIRMED'] } },
     include: {
       tour: { select: { id: true, title: true, supplierId: true, supplier: { select: { id: true, name: true, email: true, roles: true } } } },
       customer: { select: { id: true, name: true, email: true } },
     },
   });
-  if (!booking) return next(new AppError('Booking not found or cannot be cancelled', 404));
+  if (!requestOwnsBooking(req, booking)) {
+    return next(accessDenied(req, 'Booking not found or cannot be cancelled'));
+  }
 
   const { requestCustomerCancellation: request } = require('../../core/services/customerCancellationRequest');
-  const updated = await request({ booking, customerId, reason, note });
+  const updated = await request({
+    booking,
+    customerId: booking.customerId || null,
+    reason,
+    note,
+  });
 
   res.status(200).json({
     status: 'success',
@@ -2965,12 +2971,18 @@ const requestCustomerCancellation = catchAsync(async (req, res, next) => {
 
 const withdrawCustomerCancellation = catchAsync(async (req, res, next) => {
   const booking = await prisma.booking.findFirst({
-    where: { id: req.params.id, customerId: req.user.id },
+    where: { id: req.params.id },
+    include: {
+      tour: { select: { id: true, title: true, supplierId: true } },
+      customer: { select: { id: true, name: true, email: true } },
+    },
   });
-  if (!booking) return next(new AppError('Booking not found', 404));
+  if (!requestOwnsBooking(req, booking)) {
+    return next(accessDenied(req, 'Booking not found'));
+  }
 
   const { withdrawCustomerCancellation: withdraw } = require('../../core/services/customerCancellationRequest');
-  const updated = await withdraw({ booking, customerId: req.user.id });
+  const updated = await withdraw({ booking, customerId: booking.customerId || null });
 
   res.status(200).json({
     status: 'success',

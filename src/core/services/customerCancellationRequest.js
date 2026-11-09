@@ -95,7 +95,7 @@ async function requestCustomerCancellation({ booking, customerId, reason, note }
   if (!ACTIVE_STATUSES.includes(booking.status)) {
     throw new AppError(`Booking is ${booking.status} and can no longer be cancelled`, 409);
   }
-  if (booking.customerId !== customerId) {
+  if (customerId && booking.customerId !== customerId) {
     throw new AppError('Booking not found', 404);
   }
   if (!isActivityDate(booking)) {
@@ -154,7 +154,8 @@ async function requestCustomerCancellation({ booking, customerId, reason, note }
   }
 
   logActivity({
-    userId: customerId,
+    userId: customerId || undefined,
+    userEmail: booking.customer?.email || booking.leadTravelerEmail || undefined,
     action: 'booking.customer_cancellation_requested',
     resource: 'Booking',
     resourceId: booking.id,
@@ -166,7 +167,7 @@ async function requestCustomerCancellation({ booking, customerId, reason, note }
 
 /** The customer can withdraw before the supplier decides. */
 async function withdrawCustomerCancellation({ booking, customerId }) {
-  if (booking.customerId !== customerId) throw new AppError('Booking not found', 404);
+  if (customerId && booking.customerId !== customerId) throw new AppError('Booking not found', 404);
   if (booking.customerCancellationStatus !== STATUS.PENDING) {
     throw new AppError('There is no pending cancellation request to withdraw', 409);
   }

@@ -143,6 +143,21 @@ describe('requestCustomerCancellation', () => {
       customerId: 'other',
     })).rejects.toThrow(/not found/i);
   });
+
+  it('accepts a guest booking with no customer account', async () => {
+    const updated = await service.requestCustomerCancellation({
+      booking: booking({
+        customerId: null,
+        customer: null,
+        leadTravelerEmail: 'guest@example.com',
+      }),
+      customerId: null,
+      reason: 'SCHEDULE_CHANGED',
+    });
+
+    expect(prisma.booking.update).toHaveBeenCalled();
+    expect(updated.customerCancellationStatus).toBe('PENDING');
+  });
 });
 
 describe('decideCustomerCancellation', () => {
