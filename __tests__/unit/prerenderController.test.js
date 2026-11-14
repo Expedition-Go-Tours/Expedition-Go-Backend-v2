@@ -598,6 +598,73 @@ describe('tour pages', () => {
     expect(res.body).toContain('Book this tour on Travio Ghana');
     expect(res.body).not.toContain('Book this tour on Expedition-Go Tours');
   });
+
+  /**
+   * The catalogue carries inclusions, the cancellation policy, the priced
+   * options, the pickup areas and a photo gallery, and the crawler page used
+   * none of it: 270 words of description, zero <img> elements, and no answer
+   * to "what's included" or "can I cancel". Google Images had nothing to
+   * index, and an AI assistant quoting the page had nothing to quote.
+   */
+  it('publishes the buying facts a crawler needs', async () => {
+    nextResponse = {
+      statusCode: 200,
+      payload: {
+        status: 'success',
+        data: {
+          tour: {
+            tour: {
+              ...tour,
+              coverPhoto: 'https://res.cloudinary.com/demo/hero.jpg',
+              photos: [
+                'https://res.cloudinary.com/demo/hero.jpg',
+                'https://res.cloudinary.com/demo/gallery-1.jpg',
+              ],
+              included: ['Private guide', 'Hotel pickup and drop-off'],
+              whatToBring: ['Comfortable shoes'],
+              cancellationPolicy: { label: 'Free cancellation up to 24 hours before' },
+              options: [{ title: 'Standard', fromPrice: 45, currency: 'USD', maxGroupSize: 8 }],
+              pickup: { pickupAreas: [{ name: 'Nima, Accra' }] },
+            },
+          },
+        },
+      },
+    };
+    const res = await render('/tour/kakum-canopy-walk', { host: GHANA_HOST });
+
+    // Hero image with a useful alt, plus the gallery, lazy-loaded.
+    expect(res.body).toContain('<img src="https://res.cloudinary.com/demo/hero.jpg" alt="Kakum Canopy Walk in Cape Coast"');
+    expect(res.body).toContain('src="https://res.cloudinary.com/demo/gallery-1.jpg"');
+    expect(res.body).toContain('loading="lazy"');
+
+    expect(res.body).toContain("What's included");
+    expect(res.body).toContain('Private guide');
+    expect(res.body).toContain('What to bring');
+    expect(res.body).toContain('Comfortable shoes');
+    expect(res.body).toContain('Cancellation policy');
+    expect(res.body).toContain('Free cancellation up to 24 hours before');
+    expect(res.body).toContain('Options and prices');
+    expect(res.body).toContain('from USD 45 per person');
+    expect(res.body).toContain('(up to 8 travellers)');
+    expect(res.body).toContain('Pickup');
+    expect(res.body).toContain('Nima, Accra');
+  });
+
+  it('never repeats the cover photo as its own gallery image', async () => {
+    nextResponse = {
+      statusCode: 200,
+      payload: {
+        status: 'success',
+        data: {
+          tour: { tour: { ...tour, coverPhoto: 'https://res.cloudinary.com/demo/hero.jpg', photos: ['https://res.cloudinary.com/demo/hero.jpg'] } },
+        },
+      },
+    };
+    const res = await render('/tour/kakum-canopy-walk', { host: GHANA_HOST });
+
+    expect(res.body).toContain('<img src="https://res.cloudinary.com/demo/hero.jpg"');
+    expect(res.body).not.toContain('loading="lazy"');
+  });
 });
 
 describe('blog article pages', () => {
@@ -714,6 +781,34 @@ describe('blog article pages', () => {
     expect(res.body).not.toContain('>The Best Cocoa Farms Near Accra</a>');
   });
 
+  it('links the tours a guide is about, so the post can convert', async () => {
+    nextResponse = detailWith({
+      article: {
+        ...article,
+        relatedTours: [
+          {
+            id: 'tour-9',
+            slug: 'cape-coast-castle-day-tour',
+            title: 'Cape Coast Castle Day Tour',
+            city: 'Cape Coast',
+            country: 'Ghana',
+            startingPrice: 90,
+            currency: 'USD',
+          },
+        ],
+      },
+    });
+    const res = await render('/blog/best-cocoa-farms-near-accra', { host: GHANA_HOST });
+
+    // The SPA renders these as "Related experiences" cards; the crawler copy
+    // used to drop them, so not one of the six guides linked to a tour.
+    expect(res.body).toContain('Book the experiences in this guide');
+    expect(res.body).toContain('https://www.travioghana.com/tour/tour-9/cape-coast-castle-day-tour');
+    expect(res.body).toContain('>Cape Coast Castle Day Tour</a>');
+    expect(res.body).toContain('from USD 90');
+    expect(res.body).toContain('Cape Coast, Ghana');
+  });
+
   it('answers 404 when the article does not exist', async () => {
     nextResponse = detailWith(null, 404);
     const res = await render('/blog/no-such-post', { host: GHANA_HOST });
@@ -755,6 +850,74 @@ describe('destination listings', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain('<meta name="robots" content="noindex, follow"');
     expect(res.body).toContain('<link rel="canonical" href="https://www.travioghana.com/tours?place=NowherevilleZZ">');
+  });
+
+  /**
+   * `?place=` accepts any string, and a string the resolver cannot match comes
+   * back as a regional fallback. `?place=Atlantis` rendered "Tours in Atlantis
+   * | 21 experiences" — an indexable page for a place that does not exist,
+   * listing Greater Accra's catalogue. That is a doorway page, and it drags
+   * the fifteen real destination pages down with it.
+   */
+  it('noindexes a query that only produced a regional fallback', async () => {
+    nextResponse = {
+      statusCode: 200,
+      payload: {
+        status: 'success',
+        data: {
+          placeScope: {
+            requested: 'Atlantis',
+            displayName: 'Atlantis, Accra',
+            mode: 'region-fallback',
+            fallbackRegion: 'Greater Accra Region',
+            region: 'Greater Accra Region',
+          },
+          tours: [{ tour: { id: 'accra-1', title: 'Accra City Tour', slug: 'accra-city-tour', city: 'Accra' } }],
+        },
+      },
+    };
+    const res = await render('/tours?place=Atlantis', { host: GHANA_HOST });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('<meta name="robots" content="noindex, follow"');
+    // The copy names the region it actually borrowed from instead of claiming
+    // these tours run from Atlantis.
+    expect(res.body).toContain('Experiences near Atlantis in the Greater Accra Region');
+  });
+
+  it('keeps a resolved destination indexable', async () => {
+    nextResponse = {
+      statusCode: 200,
+      payload: {
+        status: 'success',
+        data: {
+          placeScope: { requested: 'Accra', displayName: 'Accra', mode: 'place', region: 'Greater Accra Region' },
+          tours: [{ tour: { id: 'accra-1', title: 'Accra City Tour', slug: 'accra-city-tour', city: 'Accra' } }],
+        },
+      },
+    };
+    const res = await render('/tours?place=Accra', { host: GHANA_HOST });
+
+    expect(res.body).toContain('<meta name="robots" content="index, follow"');
+  });
+
+  /**
+   * A city page pulls in tours from the surrounding ~50 km, which is the right
+   * behaviour — but the copy said "every experience below is available in
+   * Aburi" while 16 of its 17 rows ran from Accra, Boti and Dedenya.
+   */
+  it('describes a destination as an area, not a claim about every tour', async () => {
+    nextResponse = listingWith([
+      { tour: { id: 'aburi-1', title: 'Aburi Gardens Tour', slug: 'aburi-gardens-tour', city: 'Aburi' } },
+      { tour: { id: 'accra-1', title: 'Accra City Tour', slug: 'accra-city-tour', city: 'Accra' } },
+    ]);
+    const res = await render('/tours?place=Aburi', { host: GHANA_HOST });
+
+    expect(res.body).toContain('Experiences in and around Aburi');
+    expect(res.body).not.toContain('Every experience below is available in Aburi');
+    // Each row still names the town it actually runs from.
+    expect(res.body).toContain('&mdash; Aburi');
+    expect(res.body).toContain('&mdash; Accra');
   });
 });
 

@@ -406,14 +406,24 @@ function ratingLabel(tour) {
  * Listing them here closes that gap from the same fetched rows, which is why
  * the visible text and the JSON-LD cannot disagree.
  */
-function buildListingsBody(site, tours, place) {
+function buildListingsBody(site, tours, place, opts = {}) {
+  const placeLabel = opts.label || place;
+  const fallbackRegion = opts.fallbackRegion || '';
   const sections = [];
 
-  sections.push(`<section aria-label="${place ? `Tours in ${escapeHtml(place)}` : 'All Ghana tours'}">
-        <h2>${place ? `Tours and experiences in ${escapeHtml(place)}` : 'All Ghana tours and experiences'}</h2>
+  sections.push(`<section aria-label="${place ? `Tours in ${escapeHtml(placeLabel)}` : 'All Ghana tours'}">
+        <h2>${place ? `Tours and experiences in ${escapeHtml(placeLabel)}` : 'All Ghana tours and experiences'}</h2>
         <p>${
           place
-            ? `Every experience below is available in ${escapeHtml(place)}. Book with free cancellation and instant confirmation.`
+            // The catalogue groups a town with its surrounding area (a 50 km
+            // radius for a city), so a destination page legitimately lists
+            // tours that start in the next town along. The old copy claimed
+            // "every experience below is available in Aburi" while 16 of its
+            // 17 rows ran from Accra, Boti and Dedenya — a claim a guest can
+            // disprove in one tap. Say what is true and show the town.
+            ? fallbackRegion
+              ? `Experiences near ${escapeHtml(place)} in the ${escapeHtml(fallbackRegion)}, listed because they are within reach of it. Each listing shows the town it runs from. Book with free cancellation and instant confirmation.`
+              : `Experiences in and around ${escapeHtml(placeLabel)}. Each listing shows the town it runs from, so you know how far you would travel. Book with free cancellation and instant confirmation.`
             : `Browse every experience currently bookable on ${escapeHtml(site.name)}. Each listing shows its price, rating and destination.`
         }</p>
       </section>`);
@@ -692,12 +702,58 @@ async function handleTourPage(site, slugOrId) {
 
   const highlights = Array.isArray(tour.highlights) ? tour.highlights.filter(Boolean).slice(0, 8) : [];
 
+  // The tour API already carries the material a buyer needs before booking —
+  // inclusions, what to bring, the cancellation policy, the pickup areas, the
+  // priced options and the photo gallery. None of it reached the crawler:
+  // every tour page rendered as ~270 words of description and no <img> at all,
+  // so image search had nothing to index and the page answered none of the
+  // questions ("what's included?", "can I cancel?") that AI assistants quote.
+  const included = Array.isArray(tour.included) ? tour.included.filter(Boolean).slice(0, 12) : [];
+  const notIncluded = Array.isArray(tour.notIncluded) ? tour.notIncluded.filter(Boolean).slice(0, 8) : [];
+  const whatToBring = Array.isArray(tour.whatToBring) ? tour.whatToBring.filter(Boolean).slice(0, 8) : [];
+  const cancellationLabel = tour.cancellationPolicy && tour.cancellationPolicy.label
+    ? String(tour.cancellationPolicy.label)
+    : '';
+  const pickupAreas = (tour.pickup && Array.isArray(tour.pickup.pickupAreas) ? tour.pickup.pickupAreas : [])
+    .map((area) => (area && (area.name || area.address)) || '')
+    .filter(Boolean)
+    .slice(0, 5);
+  const options = Array.isArray(tour.options) ? tour.options.filter((o) => o && o.title).slice(0, 6) : [];
+
+  // Hero first, then the gallery. `image` is already the cover photo (or the
+  // brand default), so the hero and the Product schema cannot disagree.
+  const gallery = [];
+  for (const src of Array.isArray(tour.photos) ? tour.photos : []) {
+    if (src && src !== image && !gallery.includes(src)) gallery.push(src);
+  }
+  const galleryHtml = gallery.length
+    ? `<section aria-label="Photos"><h2>Photos</h2><ul>${gallery.slice(0, 4).map((src, i) => `<li><img src="${escapeHtml(src)}" alt="${escapeHtml(`${tour.title} in ${city}${region ? `, ${region}` : ''} — photo ${i + 2}`)}" loading="lazy"></li>`).join('')}</ul></section>`
+    : '';
+
   const bodyHtml = `
+      <figure>
+        <img src="${escapeHtml(image)}" alt="${escapeHtml(`${tour.title} in ${city}${region ? `, ${region}` : ''}`)}" fetchpriority="high">
+      </figure>
       <p><strong>Duration:</strong> ${escapeHtml(durationLabel)}</p>
       ${tour.category ? `<p><strong>Category:</strong> ${escapeHtml(tour.category)}</p>` : ''}
       ${tour.startingPrice ? `<p><strong>From:</strong> $${escapeHtml(String(tour.startingPrice))} ${escapeHtml(tour.currency || 'USD')} per person</p>` : ''}
       ${tour.description ? `<section aria-label="Description"><h2>About this tour</h2><p>${escapeHtml(tour.description)}</p></section>` : ''}
       ${highlights.length ? `<section aria-label="Highlights"><h2>Highlights</h2><ul>${highlights.map((h) => `<li>${escapeHtml(h)}</li>`).join('')}</ul></section>` : ''}
+      ${included.length ? `<section aria-label="What is included"><h2>What's included</h2><ul>${included.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section>` : ''}
+      ${notIncluded.length ? `<section aria-label="What is not included"><h2>What's not included</h2><ul>${notIncluded.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section>` : ''}
+      ${whatToBring.length ? `<section aria-label="What to bring"><h2>What to bring</h2><ul>${whatToBring.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section>` : ''}
+      ${options.length ? `<section aria-label="Options and prices"><h2>Options and prices</h2><ul>${options.map((option) => {
+        const currency = option.currency || tour.currency || 'USD';
+        const from = option.fromPrice ?? tour.startingPrice;
+        const price = from === undefined || from === null || from === ''
+          ? 'price on request'
+          : `from ${escapeHtml(String(currency))} ${escapeHtml(String(from))} per person`;
+        const group = option.maxGroupSize ? ` (up to ${escapeHtml(String(option.maxGroupSize))} travellers)` : '';
+        return `<li>${escapeHtml(String(option.title))} — ${price}${group}</li>`;
+      }).join('')}</ul></section>` : ''}
+      ${cancellationLabel ? `<section aria-label="Cancellation policy"><h2>Cancellation policy</h2><p>${escapeHtml(cancellationLabel)}. Read the <a href="${site.url}/refund-policy">full refund policy</a>.</p></section>` : ''}
+      ${pickupAreas.length ? `<section aria-label="Pickup"><h2>Pickup</h2><ul>${pickupAreas.map((area) => `<li>${escapeHtml(area)}</li>`).join('')}</ul></section>` : ''}
+      ${galleryHtml}
       <p><a href="${tourUrl(site, tour)}">Book this tour on ${escapeHtml(site.name)}</a></p>
       ${relatedHtml}`;
 
@@ -736,6 +792,20 @@ async function handleListingsPage(site, place) {
   const tours = listings.map((l) => l.tour || l).filter(Boolean);
   const count = tours.length;
 
+  // The catalogue API answers `placeScope`: whether the string resolved to a
+  // real place, and which region it fell back to when it did not. `?place=`
+  // accepts any string, so without this an invented town minted a crawlable
+  // page — `?place=Atlantis` rendered "Tours in Atlantis | 21 experiences"
+  // and listed the whole Greater Accra catalogue under a place that does not
+  // exist. That is a doorway page, and Google treats the whole pattern as
+  // low value along with the fifteen real destination pages.
+  const scope = data && data.data && data.data.placeScope;
+  const resolvedPlace = scope ? scope.mode === 'place' : count > 0;
+  const fallbackRegion = (scope && scope.mode !== 'place' && scope.region) || '';
+  // Keep the requested spelling in the URL; the API's display name is only
+  // used when it adds information (e.g. "Kumasi, Ashanti Region").
+  const placeLabel = (scope && scope.displayName) || place;
+
   const useGhanaListingTitle = site.apiBrand === 'travioghana' && !place;
   const title = place
     ? `Tours in ${place} | ${count} experiences`
@@ -743,7 +813,9 @@ async function handleListingsPage(site, place) {
     ? 'The BEST Ghana Tours and Things to Do in 2026'
     : 'Ghana Tours & Experiences';
   const description = place
-    ? `Discover ${count} tours and experiences in ${place}, Ghana. Book cultural tours, food tours, wildlife safaris, and adventure activities. Free cancellation, best prices guaranteed.`
+    ? fallbackRegion
+      ? `Discover ${count} tours and experiences near ${place}, in the ${fallbackRegion}, Ghana. Book cultural tours, food tours, wildlife safaris, and adventure activities.`
+      : `Discover ${count} tours and experiences in ${place}, Ghana. Book cultural tours, food tours, wildlife safaris, and adventure activities. Free cancellation, best prices guaranteed.`
     : useGhanaListingTitle
     ? 'Book popular Ghana tours and experiences. Discover recommended things to do, with free cancellation and reserve now, pay later options.'
     : `Explore ${count} authentic Ghana tours and experiences. Book cultural tours, wildlife safaris, food tours, and adventure activities. Free cancellation.`;
@@ -753,10 +825,11 @@ async function handleListingsPage(site, place) {
     : 'Ghana tours, things to do in Ghana, Ghana experiences, Accra tours, Cape Coast tours, Ghana safari';
 
   // ?place= accepts any string, so a typo or an invented town would otherwise
-  // mint a crawlable near-duplicate of /tours. Empty results are a dead end:
-  // keep them served (shareable URLs must keep working) but take them out of
-  // the index.
-  const robots = place && count === 0 ? 'noindex, follow' : undefined;
+  // mint a crawlable near-duplicate of /tours. Two things keep them out of the
+  // index: no tours at all, or a query the resolver could not match to a place
+  // and answered with a regional fallback. Keep both served (shareable URLs
+  // must keep working) but take them out of the index.
+  const robots = place && (count === 0 || !resolvedPlace) ? 'noindex, follow' : undefined;
 
   return buildHtml(site, {
     title,
@@ -767,7 +840,7 @@ async function handleListingsPage(site, place) {
     image: (tours[0] && tours[0].coverPhoto) || site.defaultImage.url,
     url: place ? `${site.url}/tours?place=${encodeURIComponent(place)}` : `${site.url}/tours`,
     canonical: place ? `${site.url}/tours?place=${encodeURIComponent(place)}` : `${site.url}/tours`,
-    bodyHtml: buildListingsBody(site, tours, place),
+    bodyHtml: buildListingsBody(site, tours, place, { label: placeLabel, fallbackRegion }),
     jsonLd: [
       buildBreadcrumbSchema([
         { name: 'Home', url: `${site.url}/` },
@@ -915,10 +988,29 @@ async function handleBlogArticlePage(site, slug) {
   }
   if (article.readTime) metaBits.push(`${article.readTime} min read`);
 
+  // The article API returns `relatedTours`, and the SPA renders them as
+  // "Related experiences" cards. The crawler copy dropped them, so all six
+  // published guides had zero links to any bookable tour: the only pages
+  // ranking for informational queries pointed at other articles and a generic
+  // /tours hub. That is the conversion path this site depends on.
+  const relatedTours = Array.isArray(article.relatedTours) ? article.relatedTours.filter((t) => t && t.title).slice(0, 3) : [];
+  const relatedToursHtml = relatedTours.length
+    ? `<section aria-label="Related experiences">
+        <h2>Book the experiences in this guide</h2>
+        <ul>
+          ${relatedTours.map((t) => {
+            const meta = [t.city, t.country].filter(Boolean).map(escapeHtml).join(', ');
+            return `<li><a href="${tourUrl(site, t)}">${escapeHtml(String(t.title))}</a>${priceLabel(t)}${meta ? ` &middot; ${meta}` : ''}</li>`;
+          }).join('\n          ')}
+        </ul>
+      </section>`
+    : '';
+
   const bodyHtml = `
       ${article.excerpt ? `<p><strong>${escapeHtml(article.excerpt)}</strong></p>` : ''}
       <p>${escapeHtml(metaBits.join(' · '))}</p>
       ${bodyParts.join('\n      ')}
+      ${relatedToursHtml}
       ${relatedHtml}`;
 
   return buildHtml(site, {
