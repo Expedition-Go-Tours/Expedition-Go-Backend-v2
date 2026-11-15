@@ -1396,8 +1396,15 @@ exports.prerender = async (req, res) => {
       // and /tour/<slug> or /tour/<id> (legacy/short forms). The lookup key is
       // always the final segment; the canonical emitted is the tour's own
       // id+slug, so both forms agree on one URL.
-      const slug = decodeURIComponent(path.replace('/tour/', '').split('/').filter(Boolean).pop() || '');
+      const segments = path.replace('/tour/', '').split('/').filter(Boolean).map(decodeURIComponent);
+      const slug = segments[segments.length - 1] || '';
+      const tourId = segments.length > 1 ? segments[0] : '';
       html = slug ? await handleTourPage(site, slug) : null;
+      // Approving a title edit regenerates the slug, so a link that still
+      // carries the old slug would 404 for crawlers even though the SPA route
+      // (/tour/:tourId/:tourSlug) resolves it by id. Retry with the id segment
+      // and let the canonical point at the new id+slug URL.
+      if (!html && tourId && tourId !== slug) html = await handleTourPage(site, tourId);
     } else if (path === '/tours') {
       html = await handleListingsPage(site, place);
     } else if (path.startsWith('/supplier/')) {

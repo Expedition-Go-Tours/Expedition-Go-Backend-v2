@@ -38,7 +38,8 @@ function installHttpMock() {
   nextResponse = { statusCode: 200, payload: { status: 'success', data: {} } };
   const impl = (url, opts, cb) => {
     requested.push(url);
-    const { statusCode, payload, raw } = nextResponse;
+    const chosen = typeof nextResponse === 'function' ? nextResponse(url, opts) : nextResponse;
+    const { statusCode, payload, raw } = chosen;
     const res = new EventEmitter();
     res.statusCode = statusCode;
     res.headers = {};
@@ -572,6 +573,27 @@ describe('tour pages', () => {
     expect(requested[0]).toContain('/api/travioghana/tours/tour-1');
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain('<link rel="canonical" href="https://www.travioghana.com/tour/tour-1/kakum-canopy-walk">');
+  });
+
+  it('retries with the tour id when a renamed tour leaves a stale slug in the URL', async () => {
+    // Admin approval regenerates the slug on a title edit. A link that still
+    // carries the old slug must not 404: the id segment is stable.
+    nextResponse = (url) => (url.includes('/tours/stale-old-slug')
+      ? { statusCode: 404, payload: { status: 'fail' } }
+      : { statusCode: 200, payload: { status: 'success', data: { tour: { tour } } } });
+    const res = await render('/tour/tour-1/stale-old-slug', { host: GHANA_HOST });
+
+    expect(requested[0]).toContain('/api/travioghana/tours/stale-old-slug');
+    expect(requested[1]).toContain('/api/travioghana/tours/tour-1');
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('<link rel="canonical" href="https://www.travioghana.com/tour/tour-1/kakum-canopy-walk">');
+    expect(res.body).not.toContain('Page not found');
+  });
+
+  it('still answers 404 when both the slug and the id segment are unknown', async () => {
+    nextResponse = { statusCode: 404, payload: { status: 'fail' } };
+    const res = await render('/tour/does-not-exist/also-not-a-slug', { host: GHANA_HOST });
+    expect(res.statusCode).toBe(404);
   });
 
   it('falls back to the slug-only URL when the payload has no id', async () => {
