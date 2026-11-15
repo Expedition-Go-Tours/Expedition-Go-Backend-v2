@@ -1104,7 +1104,11 @@ controller.getSitemap = catchAsync(async (req, res) => {
       where: { isActive: true, tour: { status: 'ACTIVE', supplier: { supplierProfile: { status: 'ACTIVE' } } } },
       orderBy: { displayOrder: 'asc' },
       select: {
-        tour: { select: { id: true, slug: true } },
+        // The listing row only changes when the curated placement does; a
+        // supplier editing the tour leaves it untouched. Sitemap lastmod must
+        // follow the tour too, otherwise Google is told a rewritten
+        // description is still the old one and never recrawls it.
+        tour: { select: { id: true, slug: true, updatedAt: true } },
         updatedAt: true,
       },
     });
@@ -1112,11 +1116,17 @@ controller.getSitemap = catchAsync(async (req, res) => {
     return {
       status: 'success',
       data: {
-        urls: records.map((r) => ({
-          id: r.tour.id,
-          slug: r.tour.slug,
-          updatedAt: r.updatedAt.toISOString(),
-        })),
+        urls: records.map((r) => {
+          const stamps = [r.updatedAt, r.tour.updatedAt]
+            .filter(Boolean)
+            .map((d) => new Date(d).getTime());
+          const latest = stamps.length ? new Date(Math.max(...stamps)) : null;
+          return {
+            id: r.tour.id,
+            slug: r.tour.slug,
+            updatedAt: latest ? latest.toISOString() : null,
+          };
+        }),
       },
     };
   }, 3600);

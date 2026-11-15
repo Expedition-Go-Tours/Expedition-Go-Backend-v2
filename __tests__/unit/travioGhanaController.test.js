@@ -134,6 +134,21 @@ describe('travioGhanaController (Phase 1b characterization)', () => {
     expect(prisma.travioGhanaTour.findMany).toHaveBeenCalled();
   });
 
+  it('getSitemap dates a tour by whichever of listing/tour changed last', async () => {
+    const listingChanged = new Date('2026-09-01T00:00:00.000Z');
+    const tourEdited = new Date('2026-11-15T01:00:00.000Z');
+    prisma.travioGhanaTour.findMany.mockResolvedValue([
+      { tour: { id: 'tour-1', slug: 'edited-tour', updatedAt: tourEdited }, updatedAt: listingChanged },
+      { tour: { id: 'tour-2', slug: 'placed-tour', updatedAt: listingChanged }, updatedAt: tourEdited },
+    ]);
+    await controller.getSitemap(req, res);
+
+    const payload = res.json.mock.calls.at(-1)[0];
+    const bySlug = Object.fromEntries(payload.data.urls.map((u) => [u.slug, u.updatedAt]));
+    expect(bySlug['edited-tour']).toBe(tourEdited.toISOString());
+    expect(bySlug['placed-tour']).toBe(tourEdited.toISOString());
+  });
+
   /**
    * `Tour.combinedRating` / `Tour.combinedReviewCount` exist, the nightly sync
    * populates them, and `core/storefront.js` already emits them — but neither
