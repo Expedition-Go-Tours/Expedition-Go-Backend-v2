@@ -42,6 +42,7 @@ const {
   unfreezeBookingAfterDispute,
   cancelBookingFunds,
 } = require('../services/financeHelpers');
+const { detachBookingFromInvoices } = require('../services/invoiceService');
 const {
   supplierChargeForRefund,
   CUSTOMER_CLAIM_CHARGE_REASON,
@@ -864,13 +865,17 @@ exports.adminRelease = catchAsync(async (req, res, next) => {
       };
 
       if (full) {
-        if (!economics.payoutSettled) {
-          // Unpaid supplier: drop the payout and detach it from any active
-          // request, so the whole refund is funded by money we still hold.
+        if (!economics.payoutPaid) {
+          // Not paid yet. Drop the payout and, when the booking sits on an
+          // unpaid invoice or payout request, detach it from that document.
+          // Removing the payment is the recovery; charging the supplier for
+          // money they have not received would be a debt they never owed.
           await cancelBookingFunds(tx, booking.id);
+          await detachBookingFromInvoices(tx, booking.id);
         }
-        // A settled payout keeps its history; the SupplierCharge above is the
-        // recovery. Either way the booking is terminal.
+        // A paid-out booking keeps its payout document and history; the
+        // SupplierCharge above is the recovery. Either way the booking is
+        // terminal.
         await tx.booking.update({
           where: { id: booking.id },
           data: { ...refundState, status: 'REFUNDED', paymentStatus: 'REFUNDED' },

@@ -145,6 +145,24 @@ describe('resolveDispute — supplier debit', () => {
     );
   });
 
+  it('charges nothing and detaches a full refund on an unpaid payout document', async () => {
+    for (const payoutStatus of ['INVOICED', 'REQUESTED']) {
+      jest.clearAllMocks();
+      prisma.dispute.findFirst.mockResolvedValue(dispute({ payoutStatus }));
+      tx.supplierCharge.create.mockResolvedValue({ id: 'ch1' });
+      refundBookingPayment.mockResolvedValue({ id: 're_1', status: 'succeeded', amount: 10000 });
+      findExistingRefund.mockResolvedValue(null);
+
+      const next = jest.fn();
+      await controller.resolveDispute(req({ refundAmount: 100 }), res(), next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(tx.supplierCharge.create).not.toHaveBeenCalled();
+      expect(cancelBookingFunds).toHaveBeenCalledWith(tx, 'b1');
+      expect(detachBookingFromInvoices).toHaveBeenCalledWith(tx, 'b1');
+    }
+  });
+
   it('charges nothing and cancels an unpaid payout on a full refund', async () => {
     prisma.dispute.findFirst.mockResolvedValue(dispute({ payoutStatus: 'DISPUTED' }));
 

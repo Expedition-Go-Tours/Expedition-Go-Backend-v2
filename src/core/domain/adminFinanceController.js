@@ -342,7 +342,27 @@ exports.completePayoutRequest = catchAsync(async (req, res, next) => {
   const request = await prisma.payoutRequest.findFirst({
     where: { id: req.params.id, status: { in: ['PROCESSING', 'APPROVED'] } },
     include: {
-      items: { include: { booking: { select: { id: true, bookingNumber: true, payoutStatus: true, disputes: { where: { status: { in: ['OPEN', 'UNDER_REVIEW'] } }, select: { disputeNumber: true } } } } } },
+      items: {
+        include: {
+          booking: {
+            select: {
+              id: true,
+              bookingNumber: true,
+              payoutStatus: true,
+              disputes: { where: { status: { in: ['OPEN', 'UNDER_REVIEW'] } }, select: { disputeNumber: true } },
+              // A completed-trip claim is not a `Dispute`, so it needs its own
+              // check. A booking captured into this request before the claim
+              // was filed stays REQUESTED (the claim freeze only touches
+              // PENDING/ELIGIBLE), and paying it would hand the supplier money
+              // a released claim then has to claw back.
+              refundClaims: {
+                where: { status: { in: ['SUBMITTED', 'SUPPLIER_APPROVED', 'PROCESSING'] } },
+                select: { claimNumber: true },
+              },
+            },
+          },
+        },
+      },
       supplier: { select: { name: true, email: true } },
       payoutMethod: { select: { type: true } },
     },
@@ -357,6 +377,14 @@ exports.completePayoutRequest = catchAsync(async (req, res, next) => {
   if (disputed.length > 0) {
     return next(new AppError(
       `Cannot complete — ${disputed.length} booking(s) have open disputes (${disputed.map((d) => d.booking.disputes[0].disputeNumber).join(', ')}). Resolve them first.`,
+      409
+    ));
+  }
+
+  const claimed = request.items.filter((it) => (it.booking.refundClaims || []).length > 0);
+  if (claimed.length > 0) {
+    return next(new AppError(
+      `Cannot complete — ${claimed.length} booking(s) have an open refund claim (${claimed.map((c) => c.booking.refundClaims[0].claimNumber || c.booking.bookingNumber).join(', ')}). Resolve them first.`,
       409
     ));
   }
@@ -919,18 +947,15 @@ exports.resolveDispute = catchAsync(async (req, res, next) => {
       }
 
       if (isFullRefund) {
-        if (!economics.payoutSettled) {
-          // Unpaid supplier: the refund itself takes the booking out of payout
-          // eligibility, so cancelling the funds is the whole recovery. The
-          // SupplierCharge above is 0 in this branch by design.
+        if (!economics.payoutPaid) {
+          // Not paid yet. Cancel the funds and detach from any unpaid invoice
+          // or payout request: removing the payment is the recovery. Charging
+          // the supplier for money they have not received would create a debt
+          // they never owed. The SupplierCharge above is 0 in this branch.
           await cancelBookingFunds(tx, booking.id);
-          // Finance v3: a refunded booking must leave any unpaid invoice too.
-          // Only when the payout has NOT already moved: detaching a booking
-          // that is already on a payable document while also debiting the
-          // supplier would recover the same money twice.
           await detachBookingFromInvoices(tx, booking.id);
         }
-        // A settled payout keeps its payout document and history; the
+        // A paid-out booking keeps its payout document and history; the
         // SupplierCharge is the recovery (the supplier is paid, then debited).
         // Either way the booking is terminal.
         await tx.booking.update({

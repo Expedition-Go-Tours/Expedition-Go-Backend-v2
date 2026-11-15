@@ -60,6 +60,10 @@ jest.mock('../../src/core/services/financeHelpers', () => ({
   cancelBookingFunds: jest.fn(() => Promise.resolve()),
 }));
 
+jest.mock('../../src/core/services/invoiceService', () => ({
+  detachBookingFromInvoices: jest.fn(() => Promise.resolve()),
+}));
+
 jest.mock('../../src/core/services/auditLogger', () => ({
   logActivity: jest.fn(() => Promise.resolve()),
 }));
@@ -89,6 +93,7 @@ const {
   unfreezeBookingAfterDispute,
   cancelBookingFunds,
 } = require('../../src/core/services/financeHelpers');
+const { detachBookingFromInvoices } = require('../../src/core/services/invoiceService');
 const controller = require('../../src/core/domain/refundClaimController');
 
 const tx = prisma.__tx;
@@ -275,6 +280,27 @@ describe('adminRelease — who pays', () => {
     );
     // The payout is history now; cancelling it would erase what was paid.
     expect(cancelBookingFunds).not.toHaveBeenCalled();
+    expect(detachBookingFromInvoices).not.toHaveBeenCalled();
+  });
+
+  it('charges nothing and detaches a full refund on an unpaid payout document', async () => {
+    for (const payoutStatus of ['INVOICED', 'REQUESTED']) {
+      jest.clearAllMocks();
+      prisma.refundClaim.findFirst.mockResolvedValue(
+        adminClaim(adminBooking({ payoutStatus })),
+      );
+      tx.booking.findUnique.mockResolvedValue(adminBooking({ payoutStatus }));
+
+      const next = jest.fn();
+      await controller.adminRelease(adminReq({ releasedAmount: 100 }), res(), next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(tx.supplierCharge.create).not.toHaveBeenCalled();
+      expect(cancelBookingFunds).toHaveBeenCalledWith(tx, 'b1');
+      // Committed, not paid: removing the booking from the invoice/payout
+      // request is the recovery, so nobody is billed for money never received.
+      expect(detachBookingFromInvoices).toHaveBeenCalledWith(tx, 'b1');
+    }
   });
 
   it('charges nothing and cancels an unpaid payout on a full refund', async () => {
@@ -289,6 +315,7 @@ describe('adminRelease — who pays', () => {
     expect(next).not.toHaveBeenCalled();
     expect(tx.supplierCharge.create).not.toHaveBeenCalled();
     expect(cancelBookingFunds).toHaveBeenCalledWith(tx, 'b1');
+    expect(detachBookingFromInvoices).toHaveBeenCalledWith(tx, 'b1');
   });
 
   it('keeps a partial refund payable and debits the proportional share', async () => {

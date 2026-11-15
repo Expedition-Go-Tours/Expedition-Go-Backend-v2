@@ -41,6 +41,8 @@
 const prisma = require('./prismaClient');
 const AppError = require('./appError');
 const { logActivity } = require('./auditLogger');
+const { cancelBookingFunds } = require('./financeHelpers');
+const { detachBookingFromInvoices } = require('./invoiceService');
 
 function round2(n) {
   return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
@@ -50,8 +52,9 @@ function round2(n) {
 const ELIGIBLE_STATUSES = Object.freeze(['COMPLETED', 'NO_SHOW']);
 
 /**
- * Payout states that mean the supplier was already credited for this booking.
- * The rule itself lives in `supplierRefundCharge`, shared with the
+ * Payout states where the booking is committed to a payout document or already
+ * paid, so a simple eligibility change can no longer recover a full refund.
+ * The money rule itself lives in `supplierRefundCharge`, shared with the
  * customer-claim path so a refund can never be costed two different ways.
  */
 const { SETTLED_PAYOUT_STATES, supplierChargeForRefund } = require('./supplierRefundCharge');
@@ -243,6 +246,7 @@ function computePreview(booking, payload) {
     proposed,
     isFull: economics.isFull,
     payoutSettled: economics.payoutSettled,
+    payoutPaid: economics.payoutPaid,
     supplierPayout,
     charge: economics.charge,
     refundType: type,
@@ -769,6 +773,17 @@ async function approveRefundRequest({ requestId, adminUser, note = null, req }) 
     const newRefunded = round2(toNumber(booking.refundAmount) + preview.proposed);
     const full = newRefunded >= round2(toNumber(booking.grossAmount)) - 0.005;
     const providerStatus = String(refund?.status || '').toUpperCase();
+
+    // A full refund on a booking that has NOT actually been paid must also
+    // leave its payout document. Flipping status/paymentStatus to REFUNDED
+    // keeps it out of future invoices, but an invoice or payout request that
+    // already exists would still pay it. No SupplierCharge is raised in this
+    // case: removing the payment is the recovery. When the payout is already
+    // PAID the charge above is the recovery and the history stays intact.
+    if (full && !preview.payoutPaid) {
+      await cancelBookingFunds(tx, booking.id);
+      await detachBookingFromInvoices(tx, booking.id);
+    }
 
     await tx.booking.update({
       where: { id: booking.id },

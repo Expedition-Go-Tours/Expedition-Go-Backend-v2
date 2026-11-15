@@ -76,6 +76,62 @@ describe('adminFinanceController.completePayoutRequest — reference validation'
   it('rejects references longer than 100 characters', () => expectBadRequest('x'.repeat(101)));
 });
 
+describe('adminFinanceController.completePayoutRequest — open refund claim guard', () => {
+  let req, res, next;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    req = {
+      query: {},
+      params: { id: 'pr-1' },
+      body: { reference: 'BANK-REF-12345' },
+      user: { id: 'admin-1' },
+    };
+    res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    next = jest.fn();
+  });
+
+  const requestWith = (booking) => ({
+    id: 'pr-1',
+    supplierId: 's-1',
+    payoutMethod: { type: 'BANK_TRANSFER' },
+    items: [{ bookingId: 'b1', booking: { disputes: [], ...booking } }],
+  });
+
+  it('refuses to pay out a booking with an open completed-trip claim', async () => {
+    prisma.payoutRequest.findFirst.mockResolvedValue(
+      requestWith({ refundClaims: [{ claimNumber: 'RC-20261115-ABCD' }] }),
+    );
+
+    await controller.completePayoutRequest(req, res, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+    const err = next.mock.calls[0][0];
+    expect(err).toBeInstanceOf(AppError);
+    expect(err.statusCode).toBe(409);
+    expect(err.message).toContain('RC-20261115-ABCD');
+    // No payout may be written while the claim is unsettled.
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('still reports open disputes first when both exist', async () => {
+    prisma.payoutRequest.findFirst.mockResolvedValue(
+      requestWith({
+        disputes: [{ disputeNumber: 'DR-20261115-ABCD' }],
+        refundClaims: [{ claimNumber: 'RC-20261115-ABCD' }],
+      }),
+    );
+
+    await controller.completePayoutRequest(req, res, next);
+
+    const err = next.mock.calls[0][0];
+    expect(err.statusCode).toBe(409);
+    expect(err.message).toContain('open disputes');
+    expect(err.message).toContain('DR-20261115-ABCD');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
 describe('adminFinanceController.getPayoutSchedules — triage order', () => {
   const profile = (cycle, name) => ({
     id: `sp-${name}`,

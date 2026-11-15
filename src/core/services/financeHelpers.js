@@ -48,6 +48,14 @@ async function detachBookingFromActiveRequests(tx, bookingId) {
         data: { status: 'CANCELLED', notes: 'Cancelled automatically — all bookings were removed' },
       });
       await client.payoutRequestItem.deleteMany({ where: { payoutRequestId: request.id } });
+      // A cancelled request will never pay, so any platform charges it had
+      // already netted off must go back to the open pool — otherwise they are
+      // lost with the payout and the supplier gets them for free. Credits go
+      // back too: the platform still owes a reversed commission.
+      await client.supplierCharge.updateMany({
+        where: { payoutRequestId: request.id, status: 'SETTLED' },
+        data: { status: 'OPEN', payoutRequestId: null, settledAt: null },
+      });
     } else {
       await client.payoutRequestItem.delete({ where: { id: item.id } });
       await client.payoutRequest.update({

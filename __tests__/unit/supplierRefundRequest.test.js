@@ -3,7 +3,8 @@
  *
  * Four things must never be wrong here: the refundable ceiling, the amount
  * charged to the supplier, the fact that a full refund only charges when the
- * payout already left, and the rule that a booking collected outside the
+ * payout has actually been PAID (an unpaid invoice or payout request is
+ * detached instead), and the rule that a booking collected outside the
  * platform is never refunded through it.
  */
 
@@ -45,6 +46,11 @@ jest.mock('../../src/core/services/ga4Measurement', () => ({
 
 jest.mock('../../src/core/services/financeHelpers', () => ({
   eligibleBookingsWhere: jest.fn(() => ({ payoutStatus: 'ELIGIBLE' })),
+  cancelBookingFunds: jest.fn(() => Promise.resolve()),
+}));
+
+jest.mock('../../src/core/services/invoiceService', () => ({
+  detachBookingFromInvoices: jest.fn(() => Promise.resolve()),
 }));
 
 jest.mock('../../src/core/services/queue', () => ({
@@ -58,6 +64,8 @@ jest.mock('../../src/core/services/adminNotificationService', () => ({
 
 const prisma = require('../../src/core/services/prismaClient');
 const { refundBookingPayment } = require('../../src/core/services/payments');
+const { cancelBookingFunds } = require('../../src/core/services/financeHelpers');
+const { detachBookingFromInvoices } = require('../../src/core/services/invoiceService');
 const { enqueueNotification } = require('../../src/core/services/queue');
 const { notifyAdmin } = require('../../src/core/services/adminNotificationService');
 const service = require('../../src/core/services/supplierRefundRequest');
@@ -107,10 +115,16 @@ describe('computePreview — the money', () => {
     expect(p.charge).toBe(120.98);
   });
 
-  it('treats INVOICED and REQUESTED as already settled too', () => {
+  it('charges nothing on a full refund whose booking sits on an unpaid payout document', () => {
+    // INVOICED (unpaid invoice) and REQUESTED (unpaid payout request) are
+    // committed, not paid. Execution detaches the booking from that document
+    // instead; charging here would bill the supplier for money never received.
     for (const s of ['INVOICED', 'REQUESTED']) {
       const p = service.computePreview(booking({ payoutStatus: s }), payload({ value: 100 }));
-      expect(p.charge).toBe(120.98);
+      expect(p.isFull).toBe(true);
+      expect(p.payoutPaid).toBe(false);
+      expect(p.payoutSettled).toBe(true);
+      expect(p.charge).toBe(0);
     }
   });
 
@@ -420,9 +434,45 @@ describe('approveRefundRequest', () => {
     );
   });
 
-  it('raises no charge when the supplier was never paid', async () => {
+  it('raises no charge when the supplier was never paid, and drops the funds', async () => {
     await service.approveRefundRequest({ requestId: 'r1', adminUser: { id: 'a1' } });
     expect(prisma.supplierCharge.create).not.toHaveBeenCalled();
+    // A full refund takes the booking out of payout eligibility. Cancelling
+    // the funds makes that explicit and detaching removes it from any payout
+    // document it may already sit on.
+    expect(cancelBookingFunds).toHaveBeenCalledWith(prisma, 'b1');
+    expect(detachBookingFromInvoices).toHaveBeenCalledWith(prisma, 'b1');
+  });
+
+  it('detaches instead of charging a full refund on an unpaid payout document', async () => {
+    for (const payoutStatus of ['INVOICED', 'REQUESTED']) {
+      jest.clearAllMocks();
+      prisma.$transaction.mockImplementation(async (fn) => fn(prisma));
+      prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'r1' }]);
+      prisma.supplierRefundRequest.findUnique.mockResolvedValue(pending());
+      prisma.booking.findUnique.mockResolvedValue(booking({ payoutStatus }));
+      prisma.booking.update.mockResolvedValue({});
+      prisma.supplierRefundRequest.update.mockImplementation(async ({ data }) => ({
+        ...pending(),
+        ...data,
+        booking: { id: 'b1', bookingNumber: 'TRG-1', tour: { title: 'Tour' } },
+      }));
+      refundBookingPayment.mockResolvedValue({ id: 're_1', status: 'succeeded' });
+
+      await service.approveRefundRequest({ requestId: 'r1', adminUser: { id: 'a1' } });
+
+      expect(prisma.supplierCharge.create).not.toHaveBeenCalled();
+      expect(cancelBookingFunds).toHaveBeenCalledWith(prisma, 'b1');
+      expect(detachBookingFromInvoices).toHaveBeenCalledWith(prisma, 'b1');
+    }
+  });
+
+  it('keeps the payout document on a full refund that was already paid', async () => {
+    prisma.booking.findUnique.mockResolvedValue(booking({ payoutStatus: 'PAID' }));
+    await service.approveRefundRequest({ requestId: 'r1', adminUser: { id: 'a1' } });
+
+    expect(cancelBookingFunds).not.toHaveBeenCalled();
+    expect(detachBookingFromInvoices).not.toHaveBeenCalled();
   });
 
   it('raises the supplier charge when the payout already left', async () => {
