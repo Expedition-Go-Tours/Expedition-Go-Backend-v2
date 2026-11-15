@@ -899,12 +899,11 @@ exports.resolveDispute = catchAsync(async (req, res, next) => {
       }
     }
 
-    // Who pays for the refund? If the supplier's share already left the
-    // platform (or sits on a payout document), the refund cannot recover it
-    // through payout eligibility any more — the supplier is debited instead.
-    // This was the remaining hole: a payout already INVOICED/REQUESTED/PAID was
-    // marked CANCELLED with no debit, so the customer's refund came entirely
-    // out of the platform's pocket.
+    // Who pays for the refund? If the supplier was PAID, no refund can remove
+    // the money from payout eligibility any more, so the supplier is debited.
+    // A booking on an unpaid invoice or payout request is instead detached
+    // from that document below, which recovers the payment without creating a
+    // debt for money the supplier never received.
     const economics = supplierChargeForRefund({
       grossAmount,
       supplierPayout: booking.supplierPayout,

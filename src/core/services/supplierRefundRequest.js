@@ -12,20 +12,23 @@
  * requests and invoices by `payoutRuns` / `invoiceService`, so this service
  * never edits a balance itself — it only raises the debit.
  *
- * The amount depends on one economic fact: was the supplier already paid for
- * this booking?
+ * The amount depends on one economic fact: had the supplier actually been paid
+ * for this booking?
  *
  *   partial refund   charge = supplierPayout × refund / gross   (always)
- *   full refund      charge = supplierPayout when the payout was already
- *                    INVOICED / REQUESTED / PAID, otherwise 0
+ *   full refund      charge = supplierPayout when the payout is already PAID,
+ *                    otherwise 0
+ *
+ * (An unpaid invoice or payout request is detached instead, removing the
+ * payment before it can leave. See `supplierRefundCharge` for the full rule.)
  *
  * That asymmetry is not arbitrary. A full refund takes the booking out of
  * payout eligibility (`paymentStatus` becomes REFUNDED), so an unpaid supplier
  * already loses their whole share — charging them again would be a double
  * penalty. A partial refund leaves the booking payable, so the supplier still
  * receives their share and the proportional charge is what claws back the
- * refunded slice. When the payout has already left, no eligibility change can
- * recover it, and the charge is the only mechanism that can.
+ * refunded slice. When the payout has already been PAID, no eligibility change
+ * can recover it, and the charge is the only mechanism that can.
  *
  * ── Why the Stripe webhook is told to skip ────────────────────────────────
  *
