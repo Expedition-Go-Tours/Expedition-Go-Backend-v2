@@ -72,6 +72,8 @@ const {
   ensureStripeCustomer,
   createCustomerSession,
   handlePaymentSucceeded,
+  createRefund,
+  refundIdempotencyKey,
 } = require('../../src/core/services/stripeHelpers');
 const redis = require('../../src/core/services/redisClient');
 const getConfig = require('../../src/core/services/getConfig');
@@ -1315,5 +1317,49 @@ describe('createCustomerSession', () => {
   it('returns null when Stripe rejects the session', async () => {
     mockStripeInstance.customerSessions.create.mockRejectedValue(new Error('stripe down'));
     await expect(createCustomerSession('cus_abc123')).resolves.toBeNull();
+  });
+});
+
+describe('refund idempotency', () => {
+  beforeEach(() => {
+    mockStripeInstance.refunds.create.mockReset();
+    mockStripeInstance.refunds.create.mockResolvedValue({ id: 're_1', status: 'succeeded' });
+  });
+
+  it('derives the same key for the same refund so a retry replays it', () => {
+    const a = refundIdempotencyKey('pi_1', 2000, { reason: 'customer_refund_claim', claimId: 'rc_1' });
+    const b = refundIdempotencyKey('pi_1', 2000, { reason: 'customer_refund_claim', claimId: 'rc_1' });
+    expect(a).toBe(b);
+    expect(a).toMatch(/^refund_[0-9a-f]{40}$/);
+  });
+
+  it('separates different amounts, claims and payment intents', () => {
+    const base = { reason: 'customer_refund_claim', claimId: 'rc_1' };
+    const keys = new Set([
+      refundIdempotencyKey('pi_1', 2000, base),
+      refundIdempotencyKey('pi_1', 2001, base),
+      refundIdempotencyKey('pi_1', 2000, { ...base, claimId: 'rc_2' }),
+      refundIdempotencyKey('pi_2', 2000, base),
+      refundIdempotencyKey('pi_1', 2000, { reason: 'supplier_refund_request', claimId: 'rc_1' }),
+    ]);
+    expect(keys.size).toBe(5);
+  });
+
+  it('never sends a random key: repeated calls use the same key', async () => {
+    await createRefund('pi_1', 2000, { metadata: { reason: 'dispute_release', bookingId: 'b1' } });
+    await createRefund('pi_1', 2000, { metadata: { reason: 'dispute_release', bookingId: 'b1' } });
+
+    const first = mockStripeInstance.refunds.create.mock.calls[0][1];
+    const second = mockStripeInstance.refunds.create.mock.calls[1][1];
+    expect(first.idempotencyKey).toBe(second.idempotencyKey);
+    expect(first.idempotencyKey).toMatch(/^refund_/);
+  });
+
+  it('honours an explicit key', async () => {
+    await createRefund('pi_1', null, { idempotencyKey: 'refund_claim_rc_1' });
+    expect(mockStripeInstance.refunds.create).toHaveBeenCalledWith(
+      { payment_intent: 'pi_1' },
+      { idempotencyKey: 'refund_claim_rc_1' },
+    );
   });
 });

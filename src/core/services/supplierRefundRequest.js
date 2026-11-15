@@ -49,8 +49,12 @@ function round2(n) {
 /** Post-activity states where the cancellation flow no longer applies. */
 const ELIGIBLE_STATUSES = Object.freeze(['COMPLETED', 'NO_SHOW']);
 
-/** Payout states that mean the supplier was already credited for this booking. */
-const SETTLED_PAYOUT_STATES = Object.freeze(['INVOICED', 'REQUESTED', 'PAID']);
+/**
+ * Payout states that mean the supplier was already credited for this booking.
+ * The rule itself lives in `supplierRefundCharge`, shared with the
+ * customer-claim path so a refund can never be costed two different ways.
+ */
+const { SETTLED_PAYOUT_STATES, supplierChargeForRefund } = require('./supplierRefundCharge');
 
 /**
  * Every booking field the refund decision reads — `eligibilityError` and
@@ -223,13 +227,13 @@ function computePreview(booking, payload) {
   proposed = Math.min(proposed, refundable);
   if (proposed <= 0) throw new AppError('The refund amount is too small', 400);
 
-  const isFull = proposed >= refundable - 0.005 && refundedSoFar === 0;
-  const alreadySettled = SETTLED_PAYOUT_STATES.includes(String(booking.payoutStatus || ''));
-
-  // See the file header: full refunds only charge when the payout already left.
-  const charge = isFull
-    ? (alreadySettled ? supplierPayout : 0)
-    : round2((supplierPayout * proposed) / (gross || proposed));
+  const economics = supplierChargeForRefund({
+    grossAmount: gross,
+    supplierPayout,
+    refundAmount: proposed,
+    refundedSoFar,
+    payoutStatus: booking.payoutStatus,
+  });
 
   return {
     currency,
@@ -237,10 +241,10 @@ function computePreview(booking, payload) {
     refundedSoFar,
     refundable,
     proposed,
-    isFull,
-    payoutSettled: alreadySettled,
+    isFull: economics.isFull,
+    payoutSettled: economics.payoutSettled,
     supplierPayout,
-    charge: Math.max(0, round2(charge)),
+    charge: economics.charge,
     refundType: type,
     value: rawValue,
   };

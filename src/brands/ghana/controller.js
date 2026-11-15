@@ -1330,6 +1330,9 @@ const confirmBooking = catchAsync(async (req, res, next) => {
       customerEmail: req.user?.email || leadEmail,
       expiresAt: holdResult.expiresAt,
       clientUrl: resolveAllowedClientUrl(req),
+      // One hold = one session. A retried request replays this session instead
+      // of minting a second one.
+      idempotencyKey: `checkout-session:${holdResult.draftId}`,
       // Stripe replaces {CHECKOUT_SESSION_ID} with the real session id after creation.
       successPath: '/booking/confirmation?session_id={CHECKOUT_SESSION_ID}',
       source: 'ghana',

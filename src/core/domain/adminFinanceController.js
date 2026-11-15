@@ -818,6 +818,9 @@ exports.resolveDispute = catchAsync(async (req, res, next) => {
           metadata: {
             reason: 'dispute_release',
             bookingId: dispute.booking.id,
+            // Stable per-request scope, so a retry replays this refund instead
+            // of issuing a second one for the same request.
+            requestId: dispute.id,
             adminId: req.user?.id || null,
           },
         });

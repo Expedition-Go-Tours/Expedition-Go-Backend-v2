@@ -797,7 +797,14 @@ async function applyBookingModification({ bookingId, customerId, body, user }) {
     const refundCents = Math.round(Math.abs(snapshotData.delta) * 100);
     try {
       await refundBookingPayment(booking, refundCents, {
-        metadata: { reason: 'booking_modify', bookingId: booking.id },
+        metadata: {
+          reason: 'booking_modify',
+          bookingId: booking.id,
+          // Scopes the deterministic idempotency key: two different price drops
+          // of the same size are two refunds, not a replay of one.
+          previousTotal: snapshotData.previous.grossAmount,
+          newTotal: snapshotData.next.newTotal,
+        },
       });
     } catch (err) {
       console.error(`[BookingModify] Partial refund failed for booking ${booking.id}:`, err.message);

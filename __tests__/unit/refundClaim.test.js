@@ -43,6 +43,14 @@ describe('assertClaimable (completed-trip refund claim)', () => {
       .toThrow(AppError);
   });
 
+  it('rejects a booking already refunded in full through another path', () => {
+    // A supplier refund or a dispute can return the whole gross amount without
+    // flipping status/paymentStatus, so the cumulative figure is the guard.
+    expect(() => assertClaimable(booking({ refundAmount: 100 }), {}))
+      .toThrow(/refunded in full/i);
+    expect(() => assertClaimable(booking({ refundAmount: 99.99 }), {})).toBeTruthy();
+  });
+
   it('rejects when an earlier claim was already released (prevents double refunds)', () => {
     expect(() => assertClaimable(booking({ refundClaims: [{ status: 'RELEASED' }] }), {}))
       .toThrow(AppError);

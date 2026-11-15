@@ -8,11 +8,20 @@
  * Production hardening:
  *  - Submission serializes on the booking row (SELECT … FOR UPDATE) so two
  *    simultaneous submits can never create duplicate claims.
+ *  - Submission freezes the supplier's payout portion (DISPUTED), so the
+ *    supplier cannot be paid while a refund is pending. A decline restores it.
  *  - Admin release runs inside a transaction that locks the claim row and uses
  *    a PROCESSING checkpoint; a crash rolls back cleanly to SUPPLIER_APPROVED
  *    and duplicate/concurrent releases are impossible.
  *  - Every status change is guarded (updateMany/row-lock against the expected
  *    status) so approve/decline/release never double-apply.
+ *  - Release re-checks open disputes and refunded-to-date immediately before
+ *    moving money, and debits the supplier for a payout that already left, so
+ *    a customer + supplier cannot both be paid for the same trip.
+ *  - The provider refund carries a deterministic idempotency key derived from
+ *    the claim id: a retry replays it instead of issuing a second refund.
+ *  - A supplier cannot review a claim on their own booking (or as a member of
+ *    the customer's own supplier team).
  *  - Eligibility blocks any booking that has already received money back via
  *    any path (supplier dispute RESOLVED_CUSTOMER, earlier RELEASED claim, or
  *    refundedAt/REFUNDED), preventing double refunds.
@@ -24,7 +33,19 @@ const AppError = require('../services/appError');
 const { enqueueNotification } = require('../services/queue');
 const { notifyAdmin } = require('../services/adminNotificationService');
 const { refundBookingPayment } = require('../services/payments');
+const { getStripe } = require('../services/stripeHelpers');
 const { sendEmail, resolveEmailBrand } = require('../services/emailService');
+const { logActivity } = require('../services/auditLogger');
+const {
+  freezeBookingForDispute,
+  unfreezeBookingAfterDispute,
+  cancelBookingFunds,
+} = require('../services/financeHelpers');
+const {
+  supplierChargeForRefund,
+  CUSTOMER_CLAIM_CHARGE_REASON,
+  round2,
+} = require('../services/supplierRefundCharge');
 const emailUrls = require('../../../config/emailUrls');
 
 const CLAIM_WINDOW_DAYS = 30;
@@ -98,6 +119,69 @@ function customerBookingUrl(booking) {
   return `${origin}/dashboard/bookings?booking=${encodeURIComponent(booking.id)}`;
 }
 
+/**
+ * Independent-review guard. A supplier must never decide a refund claim on a
+ * booking where the customer is the supplier themselves, or an active member
+ * of that supplier's team. Without this, the same person could approve their
+ * own claim and leave the admin release as the only gate.
+ *
+ * Team members are identified by email (`TeamMember` has no userId: a login
+ * and a team seat are separate records), so the customer's account email is
+ * what gets matched.
+ */
+async function assertIndependentReview(claim, supplierId, client = prisma) {
+  const customerId = claim?.booking?.customerId;
+  if (!customerId) return;
+  if (customerId === supplierId) {
+    throw new AppError('You cannot review a refund claim on your own booking', 403);
+  }
+  const customer = await client.user
+    .findUnique({ where: { id: customerId }, select: { email: true } })
+    .catch(() => null);
+  if (!customer?.email) return;
+  const member = await client.teamMember.findFirst({
+    where: { supplierId, email: { equals: customer.email, mode: 'insensitive' } },
+    select: { id: true },
+  });
+  if (member) {
+    throw new AppError('You cannot review a refund claim raised by a member of your own team', 403);
+  }
+}
+
+/** One audit action per claim transition, so a dispute can be reconstructed. */
+function claimAudit(action, claim, req, metadata = {}) {
+  logActivity({
+    userId: req.user?.id || null,
+    userEmail: req.user?.email || null,
+    action,
+    resource: 'RefundClaim',
+    resourceId: claim.id,
+    metadata: { claimNumber: claim.claimNumber, bookingId: claim.bookingId, ...metadata },
+  }).catch((err) => console.error('[RefundClaim] audit failed:', err && err.message));
+}
+
+/**
+ * Has this claim already been refunded at the provider?
+ *
+ * Stripe retains idempotency keys for about 24 hours. A claim left PROCESSING
+ * for longer (a crash, a maintenance window) would otherwise issue a second
+ * refund on retry, because the key no longer resolves to the first one. Every
+ * refund carries `metadata.claimId`, so the provider itself is the durable
+ * record and the retry can reuse it.
+ */
+async function findExistingClaimRefund(paymentIntentId, claimId) {
+  if (!paymentIntentId) return null;
+  try {
+    const list = await getStripe().refunds.list({ payment_intent: paymentIntentId, limit: 20 });
+    return (list?.data || []).find(
+      (r) => r?.metadata?.claimId === claimId && r.status !== 'failed' && r.status !== 'canceled',
+    ) || null;
+  } catch (err) {
+    console.warn('[RefundClaim] Could not list existing refunds:', err.message);
+    return null;
+  }
+}
+
 /** Throw when this booking already has money in flight or money already back. */
 function rejectLifecycleConflicts(booking) {
   const disputes = Array.isArray(booking?.disputes) ? booking.disputes : [];
@@ -128,6 +212,14 @@ function assertClaimable(booking, _req) {
   }
   if (booking.refundedAt || booking.paymentStatus === 'REFUNDED' || booking.status === 'REFUNDED') {
     throw new AppError('This booking has already been refunded', 400);
+  }
+  // Cumulative guard: another path (supplier refund, dispute, modification)
+  // may have returned part of the money without setting refundedAt on a
+  // booking that is still COMPLETED/SUCCEEDED.
+  const gross = Number(booking.grossAmount) || 0;
+  const refundedSoFar = Number(booking.refundAmount) || 0;
+  if (gross > 0 && refundedSoFar >= gross - 0.005) {
+    throw new AppError('This booking has already been refunded in full', 400);
   }
   rejectLifecycleConflicts(booking);
   const travelMs = booking.travelDate ? new Date(booking.travelDate).getTime() : NaN;
@@ -184,7 +276,7 @@ exports.submitRefundClaim = catchAsync(async (req, res, next) => {
     const supplierId = booking.tour?.supplierId;
     if (!supplierId) throw new AppError('Unable to route this refund request', 500);
 
-    return createClaimWithRetry(tx, {
+    const created = await createClaimWithRetry(tx, {
       bookingId: booking.id,
       customerId,
       supplierId,
@@ -193,6 +285,17 @@ exports.submitRefundClaim = catchAsync(async (req, res, next) => {
       type: claimType,
       requestedAmount: amountToRequest,
     });
+
+    // Freeze the supplier's share for as long as the claim is open. Without
+    // this the supplier could be paid before an admin releases the refund,
+    // leaving the platform to fund the customer refund on its own.
+    await freezeBookingForDispute(tx, booking.id);
+    return created;
+  });
+
+  claimAudit('booking.refund_claim_submitted', claim, req, {
+    type: claimType,
+    requestedAmount: claim.requestedAmount ?? null,
   });
 
   const [supplierUser, customerUser] = await Promise.all([
@@ -299,8 +402,8 @@ async function loadOwnedClaim(id, supplierId) {
   return claim;
 }
 
-async function atomicSupplierTransition(id, supplierId, expected, nextStatus, setter) {
-  const updated = await prisma.refundClaim.updateMany({
+async function atomicSupplierTransition(id, supplierId, expected, nextStatus, setter, client = prisma) {
+  const updated = await client.refundClaim.updateMany({
     where: { id, supplierId, status: expected },
     data: { status: nextStatus, ...setter },
   });
@@ -317,6 +420,8 @@ exports.supplierApprove = catchAsync(async (req, res, next) => {
   const claim = await loadOwnedClaim(req.params.id, supplierId);
   if (!claim) return next(new AppError('Claim not found or you cannot review it', 404));
 
+  await assertIndependentReview(claim, supplierId);
+
   const changed = await atomicSupplierTransition(claim.id, supplierId, 'SUBMITTED', 'SUPPLIER_APPROVED', {
     reviewedById: req.user.id,
     reviewedAt: new Date(),
@@ -324,6 +429,8 @@ exports.supplierApprove = catchAsync(async (req, res, next) => {
   if (changed === 0) {
     return next(new AppError(`This claim is no longer awaiting your review (${await claimCurrentStatus(claim.id)})`, 409));
   }
+
+  claimAudit('booking.refund_claim_approved', claim, req, { supplierId });
 
   notifyAdmin({
     type: 'REFUND_CLAIM',
@@ -357,14 +464,21 @@ exports.supplierDecline = catchAsync(async (req, res, next) => {
   const note = String(req.body?.note || '').trim().slice(0, 1000);
   if (!note) return next(new AppError('Please add a note explaining the decision', 400));
 
-  const changed = await atomicSupplierTransition(claim.id, supplierId, 'SUBMITTED', 'SUPPLIER_DECLINED', {
-    reviewNote: note,
-    reviewedById: req.user.id,
-    reviewedAt: new Date(),
+  const changed = await prisma.$transaction(async (tx) => {
+    const count = await atomicSupplierTransition(claim.id, supplierId, 'SUBMITTED', 'SUPPLIER_DECLINED', {
+      reviewNote: note,
+      reviewedById: req.user.id,
+      reviewedAt: new Date(),
+    }, tx);
+    // No money moved and none will: put the supplier's share back in play.
+    if (count > 0) await unfreezeBookingAfterDispute(tx, claim.bookingId);
+    return count;
   });
   if (changed === 0) {
     return next(new AppError(`This claim is no longer awaiting your review (${await claimCurrentStatus(claim.id)})`, 409));
   }
+
+  claimAudit('booking.refund_claim_declined', claim, req, { supplierId, note });
 
   const tourTitle = claim.booking?.tour?.title || '';
   const customerEmail = await userEmail(claim.booking?.customerId);
@@ -420,12 +534,18 @@ async function loadClaimForAdmin(id) {
           customerId: true,
           clientOrigin: true,
           source: true,
+          status: true,
           grossAmount: true,
           currency: true,
+          refundAmount: true,
+          supplierPayout: true,
+          payoutStatus: true,
           refundedAt: true,
           paymentStatus: true,
+          paymentProvider: true,
           stripePaymentIntentId: true,
-          tour: { select: { title: true, supplier: { select: { name: true } } } },
+          paypalCaptureId: true,
+          tour: { select: { title: true, supplierId: true, supplier: { select: { name: true } } } },
         },
       },
     },
@@ -449,8 +569,9 @@ exports.adminRelease = catchAsync(async (req, res, next) => {
     return next(new AppError('Release amount must be a positive number', 400));
   }
 
-    try {
-    await prisma.$transaction(async (tx) => {
+  let releaseResult = null;
+  try {
+    releaseResult = await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "RefundClaim" WHERE id = ${claim.id} FOR UPDATE`;
       const cur = await tx.refundClaim.findUnique({ where: { id: claim.id }, select: { status: true } });
       if (cur?.status !== 'SUPPLIER_APPROVED' && cur?.status !== 'PROCESSING') {
@@ -464,21 +585,46 @@ exports.adminRelease = catchAsync(async (req, res, next) => {
         select: {
           id: true,
           bookingNumber: true,
+          status: true,
           grossAmount: true,
+          refundAmount: true,
+          supplierPayout: true,
+          payoutStatus: true,
           currency: true,
           refundedAt: true,
           paymentStatus: true,
           paymentProvider: true,
           stripePaymentIntentId: true,
           paypalCaptureId: true,
+          tour: { select: { supplierId: true } },
         },
       });
       if (!booking || booking.refundedAt || booking.paymentStatus === 'REFUNDED') {
         throw new AppError('This booking has already been refunded', 409);
       }
-      const paidTotal = Number(booking.grossAmount) || 0;
-      if (releasedAmount > paidTotal) {
-        throw new AppError(`Release amount cannot exceed ${paidTotal.toFixed(2)} ${booking.currency || 'USD'}`, 400);
+
+      // A dispute can be opened AFTER the claim was submitted. Releasing here
+      // would then refund the same trip twice — once from this claim, once from
+      // the dispute decision — so refuse until the dispute is resolved.
+      const openDispute = await tx.dispute.findFirst({
+        where: { bookingId: booking.id, status: { in: OPEN_DISPUTE_STATUSES } },
+        select: { id: true, disputeNumber: true },
+      });
+      if (openDispute) {
+        throw new AppError(
+          `Refund request ${openDispute.disputeNumber || openDispute.id} is still open for this booking — resolve it before releasing this claim`,
+          409,
+        );
+      }
+
+      const gross = Number(booking.grossAmount) || 0;
+      const alreadyRefunded = round2(Number(booking.refundAmount) || 0);
+      const remaining = Math.max(0, round2(gross - alreadyRefunded));
+      if (releasedAmount > remaining + 0.005) {
+        throw new AppError(
+          `Release amount cannot exceed the refundable balance of ${remaining.toFixed(2)} ${booking.currency || 'USD'}`,
+          400,
+        );
       }
       const paidWithPaypal = booking.paymentProvider === 'PAYPAL';
       const hasRefundablePayment = paidWithPaypal ? booking.paypalCaptureId : booking.stripePaymentIntentId;
@@ -496,34 +642,116 @@ exports.adminRelease = catchAsync(async (req, res, next) => {
       }
 
       const cents = Math.round(releasedAmount * 100);
-      try {
-        await refundBookingPayment(booking, cents, {
-          metadata: {
-            reason: 'customer_refund_claim',
-            claimId: claim.id,
+      let refund = await findExistingClaimRefund(booking.stripePaymentIntentId, claim.id);
+      if (refund && Number(refund.amount) !== cents) {
+        throw new AppError(
+          'A different refund amount was already issued for this claim — reconcile it manually before releasing',
+          409,
+        );
+      }
+      if (!refund) {
+        try {
+          refund = await refundBookingPayment(booking, cents, {
+            metadata: {
+              reason: 'customer_refund_claim',
+              claimId: claim.id,
+              bookingId: booking.id,
+              // Lets the sales-channel refund alert name the admin who released it.
+              adminId: req.user?.id || null,
+            },
+            // Deterministic key derived from the claim: a retry replays the SAME
+            // refund instead of issuing a second one. Partial refunds are not
+            // capped by Stripe the way a second full refund would be, so this is
+            // the only thing standing between a crash-and-retry and paying twice.
+            idempotencyKey: `refund_claim_${claim.id}`,
+          });
+        } catch (refundErr) {
+          console.error('[RefundClaim] Stripe refund failed:', refundErr.message);
+          throw new AppError(`Could not process the refund: ${refundErr.message}`, 502);
+        }
+      }
+
+      // Who pays for the refund? If the supplier's share already left the
+      // platform, the refund cannot remove it from payout eligibility any more,
+      // so the supplier is debited. Otherwise the refund itself takes the
+      // booking out of the payout.
+      const economics = supplierChargeForRefund({
+        grossAmount: gross,
+        supplierPayout: booking.supplierPayout,
+        refundAmount: releasedAmount,
+        refundedSoFar: alreadyRefunded,
+        payoutStatus: booking.payoutStatus,
+      });
+
+      let charge = null;
+      if (economics.charge > 0) {
+        charge = await tx.supplierCharge.create({
+          data: {
+            // The tour's current supplier, falling back to the one recorded on
+            // the claim if the tour was reassigned after submission.
+            supplierId: booking.tour?.supplierId || claim.supplierId,
             bookingId: booking.id,
-            // Lets the sales-channel refund alert name the admin who released it.
-            adminId: req.user?.id || null,
+            amount: economics.charge,
+            currency: booking.currency || 'USD',
+            reason: CUSTOMER_CLAIM_CHARGE_REASON,
+            status: 'OPEN',
+            notes: `Customer refund claim ${claim.claimNumber}: ${releasedAmount.toFixed(2)} ${booking.currency || 'USD'} refunded to the traveller after the payout`,
           },
         });
-      } catch (refundErr) {
-        console.error('[RefundClaim] Stripe refund failed:', refundErr.message);
-        throw new AppError(`Could not process the refund: ${refundErr.message}`, 502);
+      }
+
+      const newRefunded = round2(alreadyRefunded + releasedAmount);
+      const full = newRefunded >= gross - 0.005;
+      const providerStatus = String(refund?.status || '').toUpperCase();
+      const refundState = {
+        refundAmount: newRefunded,
+        refundedAt: new Date(),
+        refundStatus: providerStatus === 'PENDING' ? 'PENDING' : 'SUCCEEDED',
+      };
+
+      if (full) {
+        if (!economics.payoutSettled) {
+          // Unpaid supplier: drop the payout and detach it from any active
+          // request, so the whole refund is funded by money we still hold.
+          await cancelBookingFunds(tx, booking.id);
+        }
+        // A settled payout keeps its history; the SupplierCharge above is the
+        // recovery. Either way the booking is terminal.
+        await tx.booking.update({
+          where: { id: booking.id },
+          data: { ...refundState, status: 'REFUNDED', paymentStatus: 'REFUNDED' },
+        });
+      } else {
+        // A partial refund leaves the rest of the trip payable, so put the
+        // supplier's share back in play (it was frozen when the claim opened).
+        await tx.booking.update({ where: { id: booking.id }, data: refundState });
+        await unfreezeBookingAfterDispute(tx, booking.id);
       }
 
       await tx.refundClaim.update({
         where: { id: claim.id },
         data: { status: 'RELEASED', releasedAmount },
       });
-      await tx.booking.update({
-        where: { id: booking.id },
-        data: { refundedAt: new Date(), refundAmount: releasedAmount },
-      });
+
+      return {
+        refundId: refund?.id || refund?.refundId || null,
+        chargeId: charge?.id || null,
+        chargeAmount: economics.charge,
+        full,
+      };
     });
   } catch (err) {
     if (err instanceof AppError) throw err;
     throw new AppError(`Could not release the refund: ${err.message}`, 502);
   }
+
+  claimAudit('booking.refund_claim_released', claim, req, {
+    releasedAmount,
+    refundId: releaseResult?.refundId || null,
+    supplierChargeId: releaseResult?.chargeId || null,
+    supplierChargeAmount: releaseResult?.chargeAmount || 0,
+    full: !!releaseResult?.full,
+  });
 
   const customerEmail = await userEmail(claim.booking?.customerId);
   if (customerEmail) {
@@ -538,6 +766,26 @@ exports.adminRelease = catchAsync(async (req, res, next) => {
     }).catch((err) => console.error('[RefundClaim] notify/email failed:', err && err.message));
   }
 
+  // The Stripe webhook is told to skip claim refunds (their state is owned
+  // here), so GA4 would otherwise never hear about the money that went back.
+  try {
+    const { sendRefund } = require('../services/ga4Measurement');
+    const attributable = await prisma.booking.findUnique({
+      where: { id: claim.bookingId },
+      select: {
+        id: true,
+        bookingNumber: true,
+        currency: true,
+        grossAmount: true,
+        gaClientId: true,
+        analyticsConsent: true,
+      },
+    });
+    if (attributable) await sendRefund(attributable, { value: releasedAmount });
+  } catch (err) {
+    console.warn('[RefundClaim] GA4 refund report failed:', err.message);
+  }
+
   res.status(200).json({ status: 'success', data: { claim: { ...claim, status: 'RELEASED', releasedAmount } } });
 });
 
@@ -547,13 +795,21 @@ exports.adminDecline = catchAsync(async (req, res, next) => {
   const note = String(req.body?.note || '').trim().slice(0, 1000);
   if (!note) return next(new AppError('Please add a note explaining the decision', 400));
 
-  const updated = await prisma.refundClaim.updateMany({
-    where: { id: claim.id, status: { in: ['SUBMITTED', 'SUPPLIER_APPROVED'] } },
-    data: { status: 'ADMIN_DECLINED', reviewNote: note, releasedById: req.user.id, releasedAt: new Date() },
+  const updated = await prisma.$transaction(async (tx) => {
+    const result = await tx.refundClaim.updateMany({
+      where: { id: claim.id, status: { in: ['SUBMITTED', 'SUPPLIER_APPROVED'] } },
+      data: { status: 'ADMIN_DECLINED', reviewNote: note, releasedById: req.user.id, releasedAt: new Date() },
+    });
+    // Nothing will be refunded, so the supplier's frozen share goes back into
+    // the payout pool.
+    if (result.count > 0) await unfreezeBookingAfterDispute(tx, claim.bookingId);
+    return result;
   });
   if (updated.count === 0) {
     return next(new AppError(`This claim is not awaiting a decision (${await claimCurrentStatus(claim.id)})`, 409));
   }
+
+  claimAudit('booking.refund_claim_admin_declined', claim, req, { note });
 
   const tourTitle = claim.booking?.tour?.title || '';
   const customerEmail = await userEmail(claim.booking?.customerId);

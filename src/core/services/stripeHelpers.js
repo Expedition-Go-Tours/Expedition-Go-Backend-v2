@@ -508,6 +508,40 @@ async function ensureStripeCustomer(user) {
 }
 
 /**
+ * A deterministic idempotency key for a refund.
+ *
+ * Stripe replays the stored response for a key it has already seen, so a retry
+ * after a timeout, a crash between the Stripe call and our commit, or a webhook
+ * race returns the SAME refund instead of moving money twice. Partial refunds
+ * are the dangerous case: Stripe caps a second full refund at what is left on
+ * the charge, but it will happily issue two 20% refunds.
+ *
+ * The key is derived from the payment intent plus whoever asked for the refund
+ * (claim / request / reconciliation / modification) and the amount. Two
+ * genuinely different refunds differ in at least one of those, so the key never
+ * blocks legitimate money.
+ */
+function refundIdempotencyKey(paymentIntentId, amount, metadata = {}) {
+  const scope =
+    metadata.claimId ||
+    metadata.requestId ||
+    metadata.reconciliationId ||
+    metadata.disputeId ||
+    metadata.changeId ||
+    null;
+  const basis = [
+    'refund',
+    paymentIntentId,
+    amount === null || amount === undefined ? 'full' : amount,
+    metadata.reason || 'custom',
+    scope || metadata.bookingId || '',
+    metadata.previousTotal ?? '',
+    metadata.newTotal ?? '',
+  ].join(':');
+  return `refund_${crypto.createHash('sha256').update(basis).digest('hex').slice(0, 40)}`;
+}
+
+/**
  * Create a Stripe refund for a PaymentIntent.
  *
  * @param {string} paymentIntentId
@@ -517,6 +551,9 @@ async function ensureStripeCustomer(user) {
  *   `charge.refunded` webhook reads `metadata.reason === 'booking_modify'` to
  *   skip reconciling the booking to REFUNDED (modify-triggered partial refunds
  *   are accounted for by the modify service, not by a status flip).
+ * @param {string} [opts.idempotencyKey] - explicit key; otherwise derived
+ *   deterministically (see `refundIdempotencyKey`). Never random: a retry must
+ *   replay the original refund, not create a second one.
  */
 async function createRefund(paymentIntentId, amount = null, opts = {}) {
   try {
@@ -527,13 +564,13 @@ async function createRefund(paymentIntentId, amount = null, opts = {}) {
     if (opts && opts.metadata && typeof opts.metadata === 'object') {
       refundData.metadata = opts.metadata;
     }
-    // Idempotency key prevents duplicate refunds on network retries. A caller
-    // can force a unique key (used by modify refunds so two separate partial
-    // refunds of the same amount can never collide).
+    const hasMetadata = !!(opts && opts.metadata && Object.keys(opts.metadata).length > 0);
     const idempotencyKey =
       (opts && opts.idempotencyKey) ||
-      (opts && opts.metadata
-        ? `refund_${paymentIntentId}_${amount ?? 'full'}_${opts.metadata.reason || 'custom'}_${crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`}`
+      (hasMetadata
+        ? refundIdempotencyKey(paymentIntentId, amount, opts.metadata)
+        // The pre-existing shape for a plain refund. Kept verbatim so a retry
+        // that started on the previous release still resolves to the same key.
         : `refund_${paymentIntentId}_${amount ?? 'full'}`);
     const refund = await getStripe().refunds.create(refundData, { idempotencyKey });
     console.log(` Refund created: ${refund.id} for PaymentIntent: ${paymentIntentId}`);
@@ -652,6 +689,27 @@ async function isLatestRefundSupplierRequest(paymentIntentId) {
     const list = await getStripe().refunds.list({ payment_intent: paymentIntentId, limit: 3 });
     const newest = (list && list.data && list.data[0]) || null;
     return !!(newest && newest.metadata && newest.metadata.reason === 'supplier_refund_request');
+  } catch (err) {
+    console.warn('[Stripe] Could not inspect refund metadata for', paymentIntentId, err.message);
+    return false;
+  }
+}
+
+/**
+ * A customer's completed-trip claim owns its own booking state
+ * (`domain/refundClaimController.js`).
+ *
+ * The claim service writes the cumulative refunded amount, the terminal status
+ * for a full refund, the payout freeze/release and — when the payout already
+ * left — the supplier debit. This webhook cancels the payout for EVERY refund;
+ * left to run it would zero a payout the supplier is still owed on a partial
+ * claim, on top of the proportional debit. Same metadata signal as above.
+ */
+async function isLatestRefundCustomerClaim(paymentIntentId) {
+  try {
+    const list = await getStripe().refunds.list({ payment_intent: paymentIntentId, limit: 3 });
+    const newest = (list && list.data && list.data[0]) || null;
+    return !!(newest && newest.metadata && newest.metadata.reason === 'customer_refund_claim');
   } catch (err) {
     console.warn('[Stripe] Could not inspect refund metadata for', paymentIntentId, err.message);
     return false;
@@ -1004,6 +1062,12 @@ async function processStripeWebhook(event) {
         // supplier twice for the same money.
         if (await isLatestRefundSupplierRequest(paymentIntentId)) {
           console.log(' charge.refunded — supplier refund request; state owned by the refund service, skipping');
+          break;
+        }
+        // Same rule for a completed-trip claim: the claim service has already
+        // written the booking totals, the payout decision and the supplier debit.
+        if (await isLatestRefundCustomerClaim(paymentIntentId)) {
+          console.log(' charge.refunded — customer refund claim; state owned by the claim service, skipping');
           break;
         }
         // A full reversal makes the booking terminal; a partial dashboard
@@ -1993,6 +2057,7 @@ module.exports = {
   createCheckoutSession,
   resolveSessionBookingIds,
   createRefund,
+  refundIdempotencyKey,
   cancelPaymentIntent,
   calculateCommission,
   processStripeWebhook,
