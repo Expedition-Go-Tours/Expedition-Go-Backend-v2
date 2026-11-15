@@ -3144,6 +3144,14 @@ model RefundClaim {
   releasedAt    DateTime?
   releasedAmount Decimal? @db.Decimal(10, 2)
 
+  // Value-based two-person control. The first admin to approve a release above
+  // the configured threshold only records their approval here; a different
+  // admin completes it. Kept as plain ids (no FK) like reviewedById above so a
+  // deleted admin account cannot orphan the claim.
+  firstApprovedById     String?
+  firstApprovedAt       DateTime?
+  firstApprovedAmount   Decimal? @db.Decimal(10, 2)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

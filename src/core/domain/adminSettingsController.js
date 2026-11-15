@@ -67,6 +67,24 @@ function sanitizeSetting(key, value) {
     return String(rate);
   }
 
+  if (key === 'refunds.second_approval_threshold') {
+    // Value-based two-person control for refund releases. Accepts a single
+    // number or a per-currency map ({"USD": 500, "GHS": 6000, "default": 500}).
+    // Validated here so a typo cannot silently disable a money control.
+    const rawValue = typeof value === 'string' ? value.trim() : value;
+    const isNonNegativeNumber = (v) => String(v).trim() !== '' && Number.isFinite(Number(v)) && Number(v) >= 0;
+    if (rawValue && typeof rawValue === 'object') {
+      if (!Object.values(rawValue).every(isNonNegativeNumber)) {
+        throw new AppError('refunds.second_approval_threshold amounts must be zero or positive numbers', 400);
+      }
+      return JSON.stringify(rawValue);
+    }
+    if (!isNonNegativeNumber(rawValue)) {
+      throw new AppError('refunds.second_approval_threshold must be a number or a currency map, e.g. {"USD": 500}', 400);
+    }
+    return String(Number(rawValue));
+  }
+
   if (NUMERIC_KEYS.includes(key)) {
     const num = typeof value === 'number' ? value : parseFloat(value);
     if (!Number.isFinite(num) || (typeof value === 'string' && value.trim() === '')) {

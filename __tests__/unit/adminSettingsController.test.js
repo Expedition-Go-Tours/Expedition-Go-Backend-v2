@@ -121,6 +121,32 @@ describe('adminSettingsController', () => {
       expect(prisma.systemConfig.upsert).not.toHaveBeenCalled();
     });
 
+    it('stores a numeric refund second-approval threshold', async () => {
+      req.body = { settings: { 'refunds.second_approval_threshold': '250' } };
+      await controller.updateSettings(req, res, next);
+      expect(prisma.systemConfig.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ create: expect.objectContaining({ value: '250' }) })
+      );
+    });
+
+    it('stores a per-currency refund second-approval threshold', async () => {
+      req.body = { settings: { 'refunds.second_approval_threshold': { USD: 500, GHS: 6000 } } };
+      await controller.updateSettings(req, res, next);
+      expect(prisma.systemConfig.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({ value: JSON.stringify({ USD: 500, GHS: 6000 }) }),
+        })
+      );
+    });
+
+    it('rejects a non-numeric refund second-approval threshold', async () => {
+      // A typo here must not silently switch a money control off.
+      req.body = { settings: { 'refunds.second_approval_threshold': 'five hundred' } };
+      await controller.updateSettings(req, res, next);
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.systemConfig.upsert).not.toHaveBeenCalled();
+    });
+
     it('normalizes commission.surcharge_rate percentage to fraction', async () => {
       req.body = { settings: { 'commission.surcharge_rate': '2' } };
       await controller.updateSettings(req, res, next);

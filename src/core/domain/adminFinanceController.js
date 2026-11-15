@@ -3,8 +3,14 @@ const catchAsync = require('../services/catchAsync');
 const AppError = require('../services/appError');
 const { logActivity } = require('../services/auditLogger');
 const { enqueueNotification, enqueueEmail } = require('../services/queue');
-const { detachBookingFromActiveRequests, unfreezeBookingAfterDispute, payoutBookingsWhere, eligibleBookingsWhere } = require('../services/financeHelpers');
+const { cancelBookingFunds, unfreezeBookingAfterDispute, payoutBookingsWhere, eligibleBookingsWhere } = require('../services/financeHelpers');
 const { approveInvoice, markInvoicePaid, detachBookingFromInvoices } = require('../services/invoiceService');
+const { findExistingRefund } = require('../services/stripeHelpers');
+const {
+  supplierChargeForRefund,
+  SUPPLIER_REFUND_CHARGE_REASON,
+  round2,
+} = require('../services/supplierRefundCharge');
 const { notifyDiscord } = require('../services/discordNotifier');
 const {
   buildPayoutPlan,
@@ -784,7 +790,10 @@ exports.resolveDispute = catchAsync(async (req, res, next) => {
   const dispute = await prisma.dispute.findFirst({
     where: { id: req.params.id, status: { in: ['OPEN', 'UNDER_REVIEW'] } },
     include: {
-      booking: true,
+      // The tour's supplier is who a settled-payout debit belongs to. Including
+      // the relation (not just the booking) keeps that correct even when the
+      // booking's own supplierId was never written.
+      booking: { include: { tour: { select: { supplierId: true } } } },
       opener: { select: { name: true, email: true } },
     },
   });
@@ -795,45 +804,92 @@ exports.resolveDispute = catchAsync(async (req, res, next) => {
 
   let stripeRefundId = null;
   let refundedAmount = null;
+  let supplierChargeId = null;
+  let supplierChargeAmount = 0;
   if (outcome === 'CUSTOMER') {
-    const grossAmount = toNumber(dispute.booking.grossAmount);
-    const amount = refundAmount != null ? refundAmount : dispute.booking.refundAmount != null ? toNumber(dispute.booking.refundAmount) : grossAmount;
-    // Hard upper bound: never refund more than was actually charged.
-    if (!Number.isFinite(amount) || amount < 0 || amount > grossAmount) {
-      return next(new AppError(`refundAmount must be between 0 and ${grossAmount.toFixed(2)} (the booking gross amount)`, 400));
+    const booking = dispute.booking;
+    const grossAmount = toNumber(booking.grossAmount);
+    const alreadyRefunded = round2(toNumber(booking.refundAmount));
+    const remaining = Math.max(0, round2(grossAmount - alreadyRefunded));
+
+    // Default to whatever is actually still refundable. The old default reused
+    // a previously recorded partial amount, which refunded that slice twice.
+    const amount = refundAmount != null ? Number(refundAmount) : remaining;
+    // Hard upper bound: never refund more than is left on the charge.
+    if (!Number.isFinite(amount) || amount <= 0 || amount > remaining + 0.005) {
+      return next(new AppError(`refundAmount must be between 0 and ${remaining.toFixed(2)} (the refundable balance)`, 400));
     }
-    refundedAmount = amount;
+    refundedAmount = round2(amount);
+    const refundedTotal = round2(alreadyRefunded + amount);
+    const isFullRefund = refundedTotal >= grossAmount - 0.005;
+    let providerStatus = 'SUCCEEDED';
+
     // Decide whether this booking actually has money on file with whichever
     // processor settled it. A PayPal booking has no PaymentIntent, and the old
     // Stripe-only guard here would have marked it refunded without moving a
     // cent.
-    const paidWithPaypal = dispute.booking.paymentProvider === 'PAYPAL';
+    const paidWithPaypal = booking.paymentProvider === 'PAYPAL';
     const hasRefundablePayment = paidWithPaypal
-      ? dispute.booking.paypalCaptureId
-      : dispute.booking.stripePaymentIntentId;
-    if (hasRefundablePayment && dispute.booking.paymentStatus === 'SUCCEEDED') {
+      ? booking.paypalCaptureId
+      : booking.stripePaymentIntentId;
+    if (hasRefundablePayment && booking.paymentStatus === 'SUCCEEDED') {
+      const cents = Math.round(amount * 100);
       try {
-        const { refundBookingPayment } = require('../services/payments');
-        const refund = await refundBookingPayment(dispute.booking, Math.round(amount * 100), {
-          metadata: {
-            reason: 'dispute_release',
-            bookingId: dispute.booking.id,
-            // Stable per-request scope, so a retry replays this refund instead
-            // of issuing a second one for the same request.
-            requestId: dispute.id,
-            adminId: req.user?.id || null,
-          },
-        });
+        // Replay guard. The deterministic idempotency key only lives ~24h at
+        // the provider; the refund's own metadata does not, so a retry the next
+        // day reuses the original refund instead of sending money twice.
+        let refund = paidWithPaypal
+          ? null
+          : await findExistingRefund(
+              booking.stripePaymentIntentId,
+              (r) => r?.metadata?.requestId === dispute.id,
+            );
+        if (refund && Number(refund.amount) !== cents) {
+          return next(new AppError(
+            'A different refund amount was already issued for this request — reconcile it manually before resolving',
+            409,
+          ));
+        }
+        if (!refund) {
+          const { refundBookingPayment } = require('../services/payments');
+          refund = await refundBookingPayment(booking, cents, {
+            metadata: {
+              reason: 'dispute_release',
+              bookingId: booking.id,
+              // Stable per-request scope, so a retry replays this refund instead
+              // of issuing a second one for the same request.
+              requestId: dispute.id,
+              adminId: req.user?.id || null,
+            },
+          });
+        }
         stripeRefundId = refund?.id || null;
+        providerStatus = String(refund?.status || '').toUpperCase();
       } catch (err) {
-        console.error(`[Dispute] Refund failed for booking ${dispute.booking.id}:`, err.message);
+        console.error(`[Dispute] Refund failed for booking ${booking.id}:`, err.message);
         return next(new AppError(`Refund failed: ${err.message}. Resolve manually once refunded.`, 502));
       }
     }
 
+    // Who pays for the refund? If the supplier's share already left the
+    // platform (or sits on a payout document), the refund cannot recover it
+    // through payout eligibility any more — the supplier is debited instead.
+    // This was the remaining hole: a payout already INVOICED/REQUESTED/PAID was
+    // marked CANCELLED with no debit, so the customer's refund came entirely
+    // out of the platform's pocket.
+    const economics = supplierChargeForRefund({
+      grossAmount,
+      supplierPayout: booking.supplierPayout,
+      refundAmount: amount,
+      refundedSoFar: alreadyRefunded,
+      payoutStatus: booking.payoutStatus,
+    });
+    supplierChargeAmount = economics.charge;
+    const supplierId = booking.tour?.supplierId || dispute.supplierId;
+
     // A tour that hasn't happened yet should disappear from the customer's
     // itinerary; one that already ran keeps its historical status.
-    const tourUpcoming = new Date(dispute.booking.travelDate).getTime() > Date.now();
+    const tourUpcoming = new Date(booking.travelDate).getTime() > Date.now();
 
     await prisma.$transaction(async (tx) => {
       await tx.dispute.update({
@@ -846,20 +902,63 @@ exports.resolveDispute = catchAsync(async (req, res, next) => {
           refundAmount: amount,
         },
       });
-      await tx.booking.update({
-        where: { id: dispute.booking.id },
-        data: {
-          ...(tourUpcoming ? { status: 'CANCELLED', cancelledAt: dispute.booking.cancelledAt || new Date() } : {}),
-          cancellationReason: `Refund request ${dispute.disputeNumber}: ${resolution}`,
-          paymentStatus: 'REFUNDED',
-          refundAmount: amount,
-          refundedAt: new Date(),
-          payoutStatus: 'CANCELLED',
-        },
-      });
-      await detachBookingFromActiveRequests(tx, dispute.booking.id);
-      // Finance v3: a refunded booking must leave any unpaid invoice too.
-      await detachBookingFromInvoices(tx, dispute.booking.id);
+
+      if (economics.charge > 0) {
+        const charge = await tx.supplierCharge.create({
+          data: {
+            supplierId,
+            bookingId: booking.id,
+            amount: economics.charge,
+            currency: booking.currency || 'USD',
+            reason: SUPPLIER_REFUND_CHARGE_REASON,
+            status: 'OPEN',
+            notes: `Refund request ${dispute.disputeNumber}: ${amount.toFixed(2)} ${booking.currency || 'USD'} refunded after the payout`,
+          },
+        });
+        supplierChargeId = charge?.id || null;
+      }
+
+      if (isFullRefund) {
+        if (!economics.payoutSettled) {
+          // Unpaid supplier: the refund itself takes the booking out of payout
+          // eligibility, so cancelling the funds is the whole recovery. The
+          // SupplierCharge above is 0 in this branch by design.
+          await cancelBookingFunds(tx, booking.id);
+          // Finance v3: a refunded booking must leave any unpaid invoice too.
+          // Only when the payout has NOT already moved: detaching a booking
+          // that is already on a payable document while also debiting the
+          // supplier would recover the same money twice.
+          await detachBookingFromInvoices(tx, booking.id);
+        }
+        // A settled payout keeps its payout document and history; the
+        // SupplierCharge is the recovery (the supplier is paid, then debited).
+        // Either way the booking is terminal.
+        await tx.booking.update({
+          where: { id: booking.id },
+          data: {
+            ...(tourUpcoming ? { status: 'CANCELLED', cancelledAt: booking.cancelledAt || new Date() } : {}),
+            cancellationReason: `Refund request ${dispute.disputeNumber}: ${resolution}`,
+            paymentStatus: 'REFUNDED',
+            refundAmount: refundedTotal,
+            refundStatus: providerStatus === 'PENDING' ? 'PENDING' : 'SUCCEEDED',
+            refundedAt: new Date(),
+          },
+        });
+      } else {
+        // A partial refund is goodwill: the trip still runs, so the booking
+        // stays payable and the supplier keeps their share minus the refunded
+        // slice (which the proportional charge above recovers). Cancelling the
+        // booking here would wipe out that same share a second time.
+        await tx.booking.update({
+          where: { id: booking.id },
+          data: {
+            refundAmount: refundedTotal,
+            refundStatus: providerStatus === 'PENDING' ? 'PENDING' : 'SUCCEEDED',
+            refundedAt: new Date(),
+          },
+        });
+        await unfreezeBookingAfterDispute(tx, booking.id);
+      }
     });
   } else {
     await prisma.$transaction(async (tx) => {
@@ -882,7 +981,14 @@ exports.resolveDispute = catchAsync(async (req, res, next) => {
     action: 'dispute.resolved',
     resource: 'Dispute',
     resourceId: dispute.id,
-    metadata: { disputeNumber: dispute.disputeNumber, outcome, refundAmount: refundedAmount, stripeRefundId },
+    metadata: {
+      disputeNumber: dispute.disputeNumber,
+      outcome,
+      refundAmount: refundedAmount,
+      stripeRefundId,
+      supplierChargeId,
+      supplierChargeAmount,
+    },
   });
 
   notifyDiscord(
@@ -919,7 +1025,13 @@ exports.resolveDispute = catchAsync(async (req, res, next) => {
     }).catch(() => {});
   }
 
-  res.status(200).json({ status: 'success', data: { dispute: { id: dispute.id, status: statusMap[outcome], stripeRefundId } } });
+  res.status(200).json({
+    status: 'success',
+    data: {
+      dispute: { id: dispute.id, status: statusMap[outcome], stripeRefundId },
+      supplierCharge: supplierChargeId ? { id: supplierChargeId, amount: supplierChargeAmount } : null,
+    },
+  });
 });
 
 // ── Payout schedules (automated runs) ──────────────────────────────────────

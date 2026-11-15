@@ -582,6 +582,37 @@ async function createRefund(paymentIntentId, amount = null, opts = {}) {
 }
 
 /**
+ * Find a refund already issued against a PaymentIntent that matches `match`.
+ *
+ * Stripe keeps an idempotency key for roughly 24 hours. Any process that can
+ * sit unresolved for longer than that (a crashed release, an admin retrying the
+ * next day) would otherwise issue a second refund on retry, because the key no
+ * longer resolves to the first one. Every refund this app issues carries its
+ * owner in `metadata` (`claimId`, `requestId`, …), so the provider itself is
+ * the durable record: callers check here first and reuse what they find.
+ *
+ * @param {string} paymentIntentId
+ * @param {(refund: object) => boolean} match
+ * @param {{limit?: number}} [opts]
+ * @returns {Promise<object|null>} the matching refund, or null
+ */
+async function findExistingRefund(paymentIntentId, match, opts = {}) {
+  if (!paymentIntentId || typeof match !== 'function') return null;
+  try {
+    const list = await getStripe().refunds.list({
+      payment_intent: paymentIntentId,
+      limit: opts.limit || 20,
+    });
+    return (list?.data || []).find(
+      (r) => r && r.status !== 'failed' && r.status !== 'canceled' && match(r),
+    ) || null;
+  } catch (err) {
+    console.warn('[Stripe] Could not list existing refunds for', paymentIntentId, err.message);
+    return null;
+  }
+}
+
+/**
  * Try to cancel a PaymentIntent before deleting a tour.
  *
  * Returns:
@@ -2057,6 +2088,7 @@ module.exports = {
   createCheckoutSession,
   resolveSessionBookingIds,
   createRefund,
+  findExistingRefund,
   refundIdempotencyKey,
   cancelPaymentIntent,
   calculateCommission,

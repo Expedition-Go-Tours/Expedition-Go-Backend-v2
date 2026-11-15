@@ -33,9 +33,10 @@ const AppError = require('../services/appError');
 const { enqueueNotification } = require('../services/queue');
 const { notifyAdmin } = require('../services/adminNotificationService');
 const { refundBookingPayment } = require('../services/payments');
-const { getStripe } = require('../services/stripeHelpers');
+const { findExistingRefund } = require('../services/stripeHelpers');
 const { sendEmail, resolveEmailBrand } = require('../services/emailService');
 const { logActivity } = require('../services/auditLogger');
+const getConfig = require('../services/getConfig');
 const {
   freezeBookingForDispute,
   unfreezeBookingAfterDispute,
@@ -50,6 +51,16 @@ const emailUrls = require('../../../config/emailUrls');
 
 const CLAIM_WINDOW_DAYS = 30;
 const CLAIM_WINDOW_MS = CLAIM_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
+/**
+ * Default value above which one admin's release needs a second admin.
+ *
+ * A number is applied to every currency; a JSON object can set
+ * `{ "USD": 500, "GBP": 400, "GHS": 6000 }` and, optionally, `default`.
+ * `0` turns the control off. Overridable at runtime via SystemConfig
+ * `refunds.second_approval_threshold` — no deploy required.
+ */
+const DEFAULT_SECOND_APPROVAL_THRESHOLD = 500;
 
 /** Allow-listed customer-facing reasons (UI shows friendly labels for these). */
 const CLAIM_REASONS = [
@@ -169,17 +180,109 @@ function claimAudit(action, claim, req, metadata = {}) {
  * refund carries `metadata.claimId`, so the provider itself is the durable
  * record and the retry can reuse it.
  */
-async function findExistingClaimRefund(paymentIntentId, claimId) {
-  if (!paymentIntentId) return null;
-  try {
-    const list = await getStripe().refunds.list({ payment_intent: paymentIntentId, limit: 20 });
-    return (list?.data || []).find(
-      (r) => r?.metadata?.claimId === claimId && r.status !== 'failed' && r.status !== 'canceled',
-    ) || null;
-  } catch (err) {
-    console.warn('[RefundClaim] Could not list existing refunds:', err.message);
-    return null;
+function findExistingClaimRefund(paymentIntentId, claimId) {
+  return findExistingRefund(paymentIntentId, (r) => r?.metadata?.claimId === claimId);
+}
+
+/** Read the configured release threshold for a currency; null = unparseable. */
+function releaseThreshold(raw, currency) {
+  if (raw == null || raw === '') return 0;
+  let parsed = raw;
+  if (typeof raw === 'string') {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = Number(raw);
+    }
   }
+  if (parsed && typeof parsed === 'object') {
+    const key = String(currency || 'USD').toUpperCase();
+    const value = parsed[key] ?? parsed.default;
+    if (value == null) return 0;
+    const n = Number(value);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  }
+  const n = Number(parsed);
+  // An explicit 0 disables the control; anything unparseable falls back to the
+  // built-in default so a typo cannot silently switch a money control off.
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/**
+ * Value-based two-person control for a release.
+ *
+ * Above the configured threshold, the first admin's click only records their
+ * approval — no money moves. A different admin then releases it, at the same
+ * amount: an approval for 100 must not authorise a release of 1,000. Every
+ * transition is recorded on the claim (`firstApprovedById/At/Amount`) so the
+ * second approver can see who approved what, and in the audit log.
+ *
+ * Two deliberate escape hatches:
+ *  - `0` (or a threshold above the amount) disables the control.
+ *  - when the account has no OTHER active admin, the control is skipped
+ *    (`skipped: true`) instead of blocking every release. A single-admin
+ *    deployment would otherwise be unable to refund anyone.
+ *
+ * The first approval is claimed with a conditional `updateMany` so two admins
+ * clicking simultaneously cannot both be recorded as the first approver.
+ *
+ * @returns {Promise<{proceed:boolean, reason?:string, threshold?:number,
+ *   firstApprovedById?:string, firstApprovedAmount?:number,
+ *   secondApprover?:string, skipped?:boolean}>}
+ */
+async function applyTwoPersonRule(claim, amount, currency, user) {
+  const raw = await getConfig(
+    'refunds.second_approval_threshold',
+    String(DEFAULT_SECOND_APPROVAL_THRESHOLD),
+  );
+  const configured = releaseThreshold(raw, currency);
+  const threshold = configured == null ? DEFAULT_SECOND_APPROVAL_THRESHOLD : configured;
+  if (!threshold || amount < threshold) return { proceed: true };
+
+  const otherAdmins = await prisma.user
+    .count({ where: { id: { not: user.id }, active: true, roles: { has: 'admin' } } })
+    .catch(() => 0);
+  if (otherAdmins === 0) return { proceed: true, skipped: true, threshold };
+
+  if (claim.firstApprovedById) {
+    if (claim.firstApprovedById === user.id) {
+      return { proceed: false, reason: 'same_admin', threshold, firstApprovedById: claim.firstApprovedById };
+    }
+    const approvedAmount = Number(claim.firstApprovedAmount);
+    if (Number.isFinite(approvedAmount) && Math.abs(approvedAmount - amount) > 0.005) {
+      return {
+        proceed: false,
+        reason: 'amount_changed',
+        threshold,
+        firstApprovedById: claim.firstApprovedById,
+        firstApprovedAmount: approvedAmount,
+      };
+    }
+    return { proceed: true, threshold, firstApprovedById: claim.firstApprovedById };
+  }
+
+  const registered = await prisma.refundClaim.updateMany({
+    where: {
+      id: claim.id,
+      firstApprovedById: null,
+      status: { in: ['SUPPLIER_APPROVED', 'PROCESSING'] },
+    },
+    data: { firstApprovedById: user.id, firstApprovedAt: new Date(), firstApprovedAmount: amount },
+  });
+  if (registered.count === 1) return { proceed: false, reason: 'registered', threshold };
+
+  // Lost the race: another admin registered the first approval a moment ago,
+  // so this request is the one that completes the pair.
+  const fresh = await prisma.refundClaim
+    .findUnique({
+      where: { id: claim.id },
+      select: { firstApprovedById: true, firstApprovedAmount: true },
+    })
+    .catch(() => null);
+  if (!fresh?.firstApprovedById || fresh.firstApprovedById === user.id) {
+    return { proceed: false, reason: 'same_admin', threshold };
+  }
+  return { proceed: true, threshold, firstApprovedById: fresh.firstApprovedById };
 }
 
 /** Throw when this booking already has money in flight or money already back. */
@@ -569,6 +672,57 @@ exports.adminRelease = catchAsync(async (req, res, next) => {
     return next(new AppError('Release amount must be a positive number', 400));
   }
 
+  // Nobody may release a refund on a booking they took themselves. With one
+  // admin account this endpoint is the only way money leaves the platform, and
+  // self-dealing is exactly the case a second pair of eyes exists to catch.
+  if (claim.booking?.customerId && claim.booking.customerId === req.user?.id) {
+    return next(new AppError('You cannot release a refund on your own booking', 403));
+  }
+  // An admin who is also the supplier is audited rather than blocked: on a
+  // single-admin deployment this is the same person, and blocking would make
+  // every release impossible. The flag makes the conflict visible in the trail.
+  const adminIsSupplier =
+    claim.supplierId === req.user?.id || claim.booking?.tour?.supplierId === req.user?.id;
+
+  const twoPerson = await applyTwoPersonRule(
+    claim,
+    releasedAmount,
+    claim.booking?.currency,
+    req.user,
+  );
+  if (!twoPerson.proceed) {
+    if (twoPerson.reason === 'registered') {
+      claimAudit('booking.refund_claim_first_approved', claim, req, {
+        releasedAmount,
+        threshold: twoPerson.threshold,
+        awaitingSecondAdmin: true,
+      });
+      notifyAdmin({
+        type: 'REFUND_CLAIM',
+        title: 'Refund needs a second admin',
+        message: `Claim ${claim.claimNumber} (${claim.booking?.currency || 'USD'} ${releasedAmount.toFixed(2)}) was approved by one admin and is waiting for a second admin to release it.`,
+        data: { bookingId: claim.bookingId, claimId: claim.id },
+      }).catch((err) => console.error('[RefundClaim] notify/email failed:', err && err.message));
+      return res.status(202).json({
+        status: 'pending_approval',
+        message:
+          'This refund is above the two-admin threshold. Your approval is recorded; a different admin must release it.',
+        data: {
+          requiresSecondApproval: true,
+          threshold: twoPerson.threshold,
+          claim: { id: claim.id, status: claim.status },
+        },
+      });
+    }
+    if (twoPerson.reason === 'amount_changed') {
+      return next(new AppError(
+        `This release was already approved for ${twoPerson.firstApprovedAmount.toFixed(2)} ${claim.booking?.currency || 'USD'} — a second admin must approve this different amount`,
+        409,
+      ));
+    }
+    return next(new AppError('This refund already has your approval — a different admin must release it', 409));
+  }
+
   let releaseResult = null;
   try {
     releaseResult = await prisma.$transaction(async (tx) => {
@@ -751,6 +905,10 @@ exports.adminRelease = catchAsync(async (req, res, next) => {
     supplierChargeId: releaseResult?.chargeId || null,
     supplierChargeAmount: releaseResult?.chargeAmount || 0,
     full: !!releaseResult?.full,
+    threshold: twoPerson.threshold || null,
+    firstApprovedById: twoPerson.firstApprovedById || null,
+    secondPersonSkipped: !!twoPerson.skipped,
+    adminIsSupplier,
   });
 
   const customerEmail = await userEmail(claim.booking?.customerId);

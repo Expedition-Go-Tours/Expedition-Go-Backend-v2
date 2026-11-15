@@ -73,6 +73,7 @@ const {
   createCustomerSession,
   handlePaymentSucceeded,
   createRefund,
+  findExistingRefund,
   refundIdempotencyKey,
 } = require('../../src/core/services/stripeHelpers');
 const redis = require('../../src/core/services/redisClient');
@@ -1361,5 +1362,43 @@ describe('refund idempotency', () => {
       { payment_intent: 'pi_1' },
       { idempotencyKey: 'refund_claim_rc_1' },
     );
+  });
+});
+
+describe('findExistingRefund', () => {
+  beforeEach(() => {
+    mockStripeInstance.refunds.list.mockReset();
+    mockStripeInstance.refunds.list.mockResolvedValue({ data: [] });
+  });
+
+  it('returns the live refund matching the caller’s predicate', async () => {
+    mockStripeInstance.refunds.list.mockResolvedValue({
+      data: [
+        { id: 're_other', amount: 1000, status: 'succeeded', metadata: { claimId: 'other' } },
+        { id: 're_mine', amount: 2000, status: 'succeeded', metadata: { claimId: 'rc_1' } },
+      ],
+    });
+
+    const found = await findExistingRefund('pi_1', (r) => r.metadata?.claimId === 'rc_1');
+
+    expect(found).toMatchObject({ id: 're_mine', amount: 2000 });
+    expect(mockStripeInstance.refunds.list).toHaveBeenCalledWith({ payment_intent: 'pi_1', limit: 20 });
+  });
+
+  it('ignores failed and cancelled refunds', async () => {
+    mockStripeInstance.refunds.list.mockResolvedValue({
+      data: [
+        { id: 're_failed', status: 'failed', metadata: { requestId: 'd1' } },
+        { id: 're_cancelled', status: 'canceled', metadata: { requestId: 'd1' } },
+      ],
+    });
+
+    expect(await findExistingRefund('pi_1', (r) => r.metadata?.requestId === 'd1')).toBeNull();
+  });
+
+  it('returns null when the provider lookup fails', async () => {
+    mockStripeInstance.refunds.list.mockRejectedValue(new Error('network down'));
+
+    expect(await findExistingRefund('pi_1', () => true)).toBeNull();
   });
 });

@@ -19,9 +19,9 @@ jest.mock('../../src/core/services/prismaClient', () => {
   return {
     __tx: transactionClient,
     $transaction: jest.fn((fn) => fn(transactionClient)),
-    refundClaim: { findFirst: jest.fn(), updateMany: jest.fn(), create: jest.fn(), findMany: jest.fn() },
+    refundClaim: { findFirst: jest.fn(), updateMany: jest.fn(), create: jest.fn(), findMany: jest.fn(), findUnique: jest.fn() },
     booking: { findUnique: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
-    user: { findUnique: jest.fn() },
+    user: { findUnique: jest.fn(), count: jest.fn() },
     teamMember: { findFirst: jest.fn() },
   };
 });
@@ -30,11 +30,29 @@ jest.mock('../../src/core/services/payments', () => ({
   refundBookingPayment: jest.fn(),
 }));
 
-jest.mock('../../src/core/services/stripeHelpers', () => ({
-  getStripe: jest.fn(() => ({
+jest.mock('../../src/core/services/stripeHelpers', () => {
+  const getStripe = jest.fn(() => ({
     refunds: { list: jest.fn(async () => ({ data: [] })) },
-  })),
-}));
+  }));
+  return {
+    getStripe,
+    // Mirrors the real helper: list refunds for the intent and return the first
+    // live one that matches. Kept here so the replay tests drive `getStripe`.
+    findExistingRefund: jest.fn(async (paymentIntentId, match) => {
+      if (!paymentIntentId || typeof match !== 'function') return null;
+      const list = await getStripe().refunds.list({ payment_intent: paymentIntentId, limit: 20 });
+      return (list?.data || []).find(
+        (r) => r && r.status !== 'failed' && r.status !== 'canceled' && match(r),
+      ) || null;
+    }),
+  };
+});
+
+jest.mock('../../src/core/services/getConfig', () => {
+  const fn = jest.fn(async () => fn.__threshold ?? '500');
+  fn.clearCache = () => {};
+  return fn;
+});
 
 jest.mock('../../src/core/services/financeHelpers', () => ({
   freezeBookingForDispute: jest.fn(() => Promise.resolve()),
@@ -64,6 +82,7 @@ jest.mock('../../src/core/services/ga4Measurement', () => ({
 }));
 
 const prisma = require('../../src/core/services/prismaClient');
+const getConfig = require('../../src/core/services/getConfig');
 const { refundBookingPayment } = require('../../src/core/services/payments');
 const {
   freezeBookingForDispute,
@@ -101,7 +120,7 @@ function adminBooking(overrides = {}) {
   };
 }
 
-function adminClaim(booking = adminBooking()) {
+function adminClaim(booking = adminBooking(), overrides = {}) {
   return {
     id: 'rc1',
     claimNumber: 'RC-20260101-ABCD',
@@ -109,6 +128,7 @@ function adminClaim(booking = adminBooking()) {
     supplierId: 'sup1',
     status: 'SUPPLIER_APPROVED',
     booking,
+    ...overrides,
   };
 }
 
@@ -118,6 +138,8 @@ function adminReq(body = {}) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  getConfig.__threshold = '500';
+  prisma.user.count.mockResolvedValue(1);
   prisma.booking.findUnique.mockResolvedValue({
     id: 'b1',
     bookingNumber: 'TRG-1',
@@ -347,6 +369,121 @@ describe('adminRelease — who pays', () => {
 
     expect(next).toHaveBeenCalled();
     expect(next.mock.calls[0][0].statusCode).toBe(409);
+    expect(refundBookingPayment).not.toHaveBeenCalled();
+  });
+});
+
+describe('adminRelease — two-person control', () => {
+  it('records a first approval instead of moving money above the threshold', async () => {
+    getConfig.__threshold = '50';
+    prisma.refundClaim.findFirst.mockResolvedValue(adminClaim());
+
+    const next = jest.fn();
+    const response = res();
+    await controller.adminRelease(adminReq({ releasedAmount: 100 }), response, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(refundBookingPayment).not.toHaveBeenCalled();
+    expect(prisma.refundClaim.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 'rc1', firstApprovedById: null }),
+        data: expect.objectContaining({ firstApprovedById: 'admin1', firstApprovedAmount: 100 }),
+      }),
+    );
+    expect(response.status).toHaveBeenCalledWith(202);
+    expect(response.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'pending_approval',
+        data: expect.objectContaining({ requiresSecondApproval: true }),
+      }),
+    );
+  });
+
+  it('lets a different admin complete the release', async () => {
+    getConfig.__threshold = '50';
+    prisma.refundClaim.findFirst.mockResolvedValue(
+      adminClaim(adminBooking(), {
+        firstApprovedById: 'adminA',
+        firstApprovedAmount: 100,
+        firstApprovedAt: new Date(),
+      }),
+    );
+
+    const next = jest.fn();
+    await controller.adminRelease(adminReq({ releasedAmount: 100 }), res(), next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(refundBookingPayment).toHaveBeenCalledTimes(1);
+    expect(prisma.refundClaim.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ firstApprovedById: 'admin1' }) }),
+    );
+  });
+
+  it('refuses to let the first approver release it themselves', async () => {
+    getConfig.__threshold = '50';
+    prisma.refundClaim.findFirst.mockResolvedValue(
+      adminClaim(adminBooking(), {
+        firstApprovedById: 'admin1',
+        firstApprovedAmount: 100,
+      }),
+    );
+
+    const next = jest.fn();
+    await controller.adminRelease(adminReq({ releasedAmount: 100 }), res(), next);
+
+    expect(next.mock.calls[0][0].statusCode).toBe(409);
+    expect(refundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it('refuses a larger release than the amount that was approved', async () => {
+    getConfig.__threshold = '50';
+    prisma.refundClaim.findFirst.mockResolvedValue(
+      adminClaim(adminBooking(), {
+        firstApprovedById: 'adminA',
+        firstApprovedAmount: 50,
+      }),
+    );
+
+    const next = jest.fn();
+    await controller.adminRelease(adminReq({ releasedAmount: 100 }), res(), next);
+
+    expect(next.mock.calls[0][0].statusCode).toBe(409);
+    expect(refundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it('does not brick a single-admin deployment', async () => {
+    getConfig.__threshold = '50';
+    prisma.user.count.mockResolvedValue(0);
+    prisma.refundClaim.findFirst.mockResolvedValue(adminClaim());
+
+    const next = jest.fn();
+    await controller.adminRelease(adminReq({ releasedAmount: 100 }), res(), next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(refundBookingPayment).toHaveBeenCalledTimes(1);
+  });
+
+  it('is off when the configured threshold is zero', async () => {
+    getConfig.__threshold = '0';
+    prisma.refundClaim.findFirst.mockResolvedValue(adminClaim());
+
+    const next = jest.fn();
+    await controller.adminRelease(adminReq({ releasedAmount: 100 }), res(), next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(refundBookingPayment).toHaveBeenCalledTimes(1);
+    expect(prisma.user.count).not.toHaveBeenCalled();
+  });
+
+  it('refuses to release a refund on the admin’s own booking', async () => {
+    prisma.refundClaim.findFirst.mockResolvedValue(
+      adminClaim(adminBooking({ customerId: 'admin1' })),
+    );
+
+    const next = jest.fn();
+    await controller.adminRelease(adminReq({ releasedAmount: 100 }), res(), next);
+
+    expect(next.mock.calls[0][0].statusCode).toBe(403);
     expect(refundBookingPayment).not.toHaveBeenCalled();
   });
 });
