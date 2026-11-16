@@ -1289,3 +1289,24 @@ describe('failure modes are crawler-safe', () => {
     expect(res.body).not.toContain('0 authentic Ghana tours');
   });
 });
+
+describe('crawler navigation', () => {
+  it('links the site nav to live pages, never to a retired redirect', async () => {
+    const res = await render('/about-us', { host: GHANA_HOST });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('<a href="https://www.travioghana.com/blog">Blog</a>');
+    // /stories was retired and every story URL 308s to a blog guide. Linking to
+    // it from every crawler-facing page meant Googlebot rediscovered the
+    // redirect on each crawl, so Search Console's "Page with redirect" report
+    // never settled even though the redirects themselves were correct.
+    expect(res.body).not.toContain('href="https://www.travioghana.com/stories"');
+  });
+
+  it('keeps the retired path out of the tour listing as well', async () => {
+    const res = await render('/tours', { host: GHANA_HOST });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).not.toContain('/stories');
+  });
+});

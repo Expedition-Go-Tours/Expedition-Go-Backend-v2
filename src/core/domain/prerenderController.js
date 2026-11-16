@@ -210,11 +210,16 @@ function ogTag(property, content) {
 
 // Site-wide internal links. Rendered into every prerendered page so crawlers
 // can discover pages by following links, not just by reading the sitemap.
+//
+// No `/stories`: those placeholder pages were retired and every story URL now
+// 308s to a blog guide (middleware.ts and src/lib/storyRedirects.ts). Linking
+// to a permanent redirect from every crawler-facing page kept Googlebot
+// rediscovering it, which is why Search Console's "Page with redirect" report
+// never settled. `/blog` is the real destination, so it carries that role.
 const NAV_LINKS = [
   { href: '/', label: 'Home' },
   { href: '/tours', label: 'Tours' },
   { href: '/about-us', label: 'About Us' },
-  { href: '/stories', label: 'Stories' },
   { href: '/reviews', label: 'Reviews' },
   { href: '/blog', label: 'Blog' },
   { href: '/faq', label: 'FAQ' },
