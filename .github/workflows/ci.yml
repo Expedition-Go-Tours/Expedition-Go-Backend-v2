@@ -762,7 +762,12 @@ jobs:
 
   # ── Deploy to Hetzner (main only) ────────────────────────────────
   deploy:
-    if: github.ref_name == 'main'
+    # The Platform API runs in Docker as of 2026-11-16. PM2 remains installed
+    # only as a rollback path, so this job must not run on every main push:
+    # it would start the old process and fight the container for port 5000.
+    # Re-enable deliberately by setting the repository variable
+    # PM2_DEPLOY_ENABLED=true (for example, during a rollback drill).
+    if: github.ref_name == 'main' && vars.PM2_DEPLOY_ENABLED == 'true'
     needs:
       - lint
       - unit-tests
@@ -1050,7 +1055,9 @@ jobs:
 
   # ── Post-deploy verification (main only) ──────────────────────────
   deploy-verify:
-    if: github.ref_name == 'main'
+    # Same gate as deploy: there is no PM2 deployment to verify unless it was
+    # deliberately re-enabled.
+    if: github.ref_name == 'main' && vars.PM2_DEPLOY_ENABLED == 'true'
     needs: deploy
     runs-on: ubuntu-latest
     # A wedged service-container pull must fail, not hang for the 360-minute
