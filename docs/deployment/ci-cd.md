@@ -75,10 +75,8 @@ every rule names a known application.
 ## The release pipeline
 
 ```
-changes ──▶ build (matrix: platform, stays) ──▶ migrate ──▶ deploy-platform
-                                                    └────▶ deploy-stays
-                                                        │
-notify ◀────────────────────────────────────────────────┘
+changes ──▶ build (matrix: platform, stays) ──▶ migrate ──▶ deploy-platform ─┐
+                                                    └────▶ deploy-stays ─────┴─▶ verify-public ─▶ notify
 ```
 
 ### `build`
@@ -99,8 +97,9 @@ notify ◀───────────────────────�
 - Job-level `concurrency: production-database` serialises migration runs across
   the repository. A second release waits instead of racing
   `prisma migrate deploy`.
-- SSHes to the VPS and runs `deploy/scripts/deploy-migrations.sh <platform
-  image>`. The script also takes a file lock and refuses `db push`.
+- Resolves the pushed platform tag to its manifest digest and runs
+  `deploy/scripts/deploy-migrations.sh <repo>@sha256:<digest>`. The script also
+  takes a file lock and refuses `db push`.
 - Runs **before** either container is replaced. If it fails, no deploy job runs.
 
 ### Host checkout sync and readiness
@@ -121,6 +120,19 @@ will accept the stale process's 200 and record a deploy that never ran. A
 regression test in `deploy-validation.yml` covers the unhealthy/wrong-image
 cases.
 
+### Digest pinning
+
+The build publishes `sha-<short>` tags, but the deploy and migrate jobs log in to
+GHCR and resolve the tag to its manifest digest immediately before use:
+
+```bash
+docker buildx imagetools inspect "$tag" --format '{{json .Manifest.Digest}}'
+```
+
+The scripts receive `repo@sha256:...`, and `deploy-state.env` records that exact
+reference. Tags are mutable; the running container is identified by a digest.
+The build log and the job summary already record the same digest.
+
 ### `deploy-platform` / `deploy-stays`
 
 - Independent jobs, separate concurrency groups.
@@ -133,6 +145,20 @@ cases.
   recorded image on failure.
 - After either deploy, `verify-deployment.sh` re-checks both services from the
   host (probes, canonical and legacy routes, and Stays/Tours isolation).
+
+### `verify-public`
+
+Runs on the GitHub runner after both deploy jobs when at least one succeeded.
+It executes `deploy/scripts/verify-public-ingress.sh` against every configured
+vhost and fails the release if any of these is wrong:
+
+- `/api/v1/tours` and `/api/tours` → 200, `X-Served-By: platform-api`
+- both Stays prefixes → 401, `X-Served-By: stays-api`
+- Socket.IO upgrade → 101
+
+The `X-Served-By` header is set by each application, so the check proves which
+upstream answered. A missing Nginx `include`, a DNS mistake or a lost websocket
+header fails the release instead of waiting for a customer to find it.
 
 ### `notify`
 

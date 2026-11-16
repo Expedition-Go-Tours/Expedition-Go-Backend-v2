@@ -60,6 +60,8 @@ describe('legacy and canonical parity', () => {
 
     expect(legacy.headers['x-api-version']).toBe('legacy');
     expect(canonical.headers['x-api-version']).toBe('v1');
+    expect(legacy.headers['x-served-by']).toBe('platform-api');
+    expect(canonical.headers['x-served-by']).toBe('platform-api');
   });
 
   it('reports unknown routes identically', async () => {

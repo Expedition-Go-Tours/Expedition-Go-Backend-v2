@@ -77,10 +77,13 @@ describe('Stays application bootstrap', () => {
     // 401, not 404: the route exists and is guarded by `protect`.
     expect(legacy.status).toBe(401);
     expect(canonical.status).toBe(401);
+    expect(legacy.headers['x-served-by']).toBe('stays-api');
+    expect(canonical.headers['x-served-by']).toBe('stays-api');
 
     // A Tours route is owned by the Platform API and must not appear here.
     const tours = await request(STAYS_APP).get('/api/tours');
     expect(tours.status).toBe(404);
+    expect(tours.headers['x-served-by']).toBe('stays-api');
 
     // Neither should the Platform's own probes-less root advertise those routes.
     const versionedTours = await request(STAYS_APP).get('/api/v1/tours');

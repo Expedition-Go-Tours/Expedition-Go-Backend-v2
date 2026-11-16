@@ -318,6 +318,14 @@ function mountPrefixRoutes(app, prefix, limiters) {
 function buildPlatformApp({ prefixes = [LEGACY_API_PREFIX, VERSIONED_API_PREFIX] } = {}) {
   const app = express();
 
+  // Identify the process behind every response. Nginx routes two upstreams and
+  // both can return 401/404, so the public-ingress check needs a positive
+  // signal that the request reached the intended service.
+  app.use((req, res, next) => {
+    res.setHeader('X-Served-By', 'platform-api');
+    next();
+  });
+
   // Trust the reverse proxy for correct IP detection (rate limiting, etc.).
   app.set('trust proxy', 1);
 

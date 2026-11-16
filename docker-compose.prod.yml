@@ -1,9 +1,9 @@
 # LEGACY — not the production topology. Kept for reference and rollback only.
 #
 # This file describes a single-container, Caddy-fronted bridge-network stack.
-# It is NOT what runs on the VPS: production runs PM2 (`ecosystem.config.js`)
-# behind the host Nginx, and the Docker target described in
-# `deploy/compose.production.yml` replaces it container by container.
+# It is NOT what runs on the VPS: production runs the two containers described in
+# `deploy/compose.production.yml` behind host Nginx. PM2 is retired and kept only
+# as a manual rollback path.
 #
 # Why it is obsolete as a deployment path:
 #   - one image serves both applications, so Stays cannot be released alone;
