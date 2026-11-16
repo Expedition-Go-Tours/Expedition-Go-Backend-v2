@@ -13,6 +13,34 @@ const { notifyAdmin } = require('../services/adminNotificationService');
 const { logActivity } = require('../services/auditLogger');
 const admin = require('../../../config/firebaseAdmin');
 
+/** Normalise an ISO 4217 code; null when absent or malformed. */
+function normalizeCurrency(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const currency = String(value).trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(currency) ? currency : null;
+}
+
+/**
+ * The supplier's declared settlement currency from the application, used only
+ * before the first payout method exists. Once a method exists, that method's
+ * currency is the settlement currency.
+ */
+async function declaredSettlementCurrency(supplierId) {
+  const profile = await prisma.supplierProfile.findFirst({
+    where: { userId: supplierId },
+    select: { payoutInfo: true },
+  });
+  let info = profile?.payoutInfo;
+  if (typeof info === 'string') {
+    try {
+      info = JSON.parse(info);
+    } catch {
+      info = null;
+    }
+  }
+  return normalizeCurrency(info?.payoutCurrency);
+}
+
 // ================================
 // SUPPLIER ROUTES
 // ================================
@@ -44,7 +72,7 @@ exports.addMethod = catchAsync(async (req, res, next) => {
 
   const {
     type,
-    currency = 'USD',
+    currency,
     // Bank Transfer
     bankName,
     bankAddress,
@@ -85,15 +113,41 @@ exports.addMethod = catchAsync(async (req, res, next) => {
     return next(new AppError('PayPal requires paypalEmail', 400));
   }
 
-  // Check if this is the first method (auto-set as default)
+  const requestedCurrency = normalizeCurrency(currency);
+  if (currency !== undefined && currency !== null && currency !== '' && !requestedCurrency) {
+    return next(new AppError('currency must be an ISO 4217 code (e.g. GHS)', 400));
+  }
+
+  // Option A: one settlement currency per supplier. Existing methods define it;
+  // before the first method, the application's payoutCurrency does.
   const existingCount = await prisma.payoutMethod.count({ where: { supplierId } });
+  let settlementCurrency = null;
+  if (existingCount > 0) {
+    const existing = await prisma.payoutMethod.findFirst({
+      where: { supplierId },
+      orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+      select: { currency: true },
+    });
+    settlementCurrency = normalizeCurrency(existing?.currency);
+  } else {
+    settlementCurrency = await declaredSettlementCurrency(supplierId);
+  }
+
+  if (settlementCurrency && requestedCurrency && requestedCurrency !== settlementCurrency) {
+    return next(new AppError(
+      `Payout methods must use your settlement currency (${settlementCurrency}).`,
+      400,
+    ));
+  }
+
+  const finalCurrency = requestedCurrency || settlementCurrency || 'GHS';
   const isDefault = existingCount === 0;
 
   const method = await prisma.payoutMethod.create({
     data: {
       supplierId,
       type,
-      currency,
+      currency: finalCurrency,
       isDefault,
       bankName,
       bankAddress,
@@ -120,7 +174,7 @@ exports.addMethod = catchAsync(async (req, res, next) => {
     action: 'payout_method.added',
     resource: 'PayoutMethod',
     resourceId: method.id,
-    metadata: { type, currency },
+    metadata: { type, currency: finalCurrency },
   });
 
   // Notify admin of new payout method
@@ -176,6 +230,22 @@ exports.updateMethod = catchAsync(async (req, res, next) => {
     isDefault,
   } = req.body;
 
+  const requestedCurrency = normalizeCurrency(currency);
+  if (currency !== undefined && !requestedCurrency) {
+    return next(new AppError('currency must be an ISO 4217 code (e.g. GHS)', 400));
+  }
+  if (requestedCurrency && requestedCurrency !== existing.currency) {
+    const otherMethods = await prisma.payoutMethod.count({
+      where: { supplierId, id: { not: id } },
+    });
+    if (otherMethods > 0) {
+      return next(new AppError(
+        `All payout methods must use the settlement currency (${existing.currency || 'unchanged'}).`,
+        400,
+      ));
+    }
+  }
+
   // If setting as default, unset all others first
   if (isDefault === true) {
     await prisma.payoutMethod.updateMany({
@@ -212,7 +282,7 @@ exports.updateMethod = catchAsync(async (req, res, next) => {
   const method = await prisma.payoutMethod.update({
     where: { id },
     data: {
-      ...(currency !== undefined && { currency }),
+      ...(currency !== undefined && { currency: requestedCurrency }),
       ...(bankName !== undefined && { bankName }),
       ...(bankAddress !== undefined && { bankAddress }),
       ...(bankCountry !== undefined && { bankCountry }),

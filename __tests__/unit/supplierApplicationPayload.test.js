@@ -164,7 +164,7 @@ describe('supplierApplicationPayload', () => {
 
     expect(
       payoutMethodFromApplication({ method: 'paypal', paypalEmail: 'ama@example.com', paypalAccountName: 'Ama' })
-    ).toEqual({ type: 'PAYPAL', currency: 'USD', paypalEmail: 'ama@example.com', accountName: 'Ama' });
+    ).toEqual({ type: 'PAYPAL', currency: 'GHS', paypalEmail: 'ama@example.com', accountName: 'Ama' });
   });
 
   it('returns null when the application did not provide enough for a method', () => {

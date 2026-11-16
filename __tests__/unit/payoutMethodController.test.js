@@ -1,6 +1,7 @@
 jest.mock('../../src/core/services/prismaClient', () => ({
   payoutMethod: { findMany: jest.fn(), count: jest.fn(), create: jest.fn(), findFirst: jest.fn(), update: jest.fn(), updateMany: jest.fn(), delete: jest.fn(), findUnique: jest.fn() },
   user: { findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn() },
+  supplierProfile: { findFirst: jest.fn() },
 }));
 
 jest.mock('../../src/core/services/adminNotificationService', () => ({ notifyAdmin: jest.fn() }));
@@ -60,6 +61,7 @@ describe('payoutMethodController', () => {
     prisma.user.findUnique.mockResolvedValue(mockSupplier);
     prisma.user.findMany.mockResolvedValue([mockSupplier]);
     prisma.user.count.mockResolvedValue(1);
+    prisma.supplierProfile.findFirst.mockResolvedValue(null);
     notifyAdmin.mockResolvedValue();
     logActivity.mockResolvedValue();
     cloudinaryUrl.mockImplementation((url, size) => `https://cdn.example.com/${size}/${url}`);
@@ -134,6 +136,8 @@ describe('payoutMethodController', () => {
     });
 
     it('creates MOBILE_MONEY method', async () => {
+      // The existing settlement currency is GHS in this fixture.
+      prisma.payoutMethod.findFirst.mockResolvedValue({ ...mockMethod, currency: 'GHS' });
       req.body = {
         type: 'MOBILE_MONEY',
         currency: 'GHS',
@@ -179,6 +183,71 @@ describe('payoutMethodController', () => {
       );
     });
 
+    it('rejects a second method in a different currency', async () => {
+      req.body = { type: 'PAYPAL', paypalEmail: 'supplier@paypal.com', currency: 'EUR' };
+
+      await controller.addMethod(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusCode: 400,
+          message: expect.stringContaining('settlement currency'),
+        }),
+      );
+      expect(prisma.payoutMethod.create).not.toHaveBeenCalled();
+    });
+
+    it('uses the declared settlement currency before the first method', async () => {
+      prisma.payoutMethod.count.mockResolvedValue(0);
+      prisma.supplierProfile.findFirst.mockResolvedValue({
+        payoutInfo: { payoutCurrency: 'GHS' },
+      });
+      req.body = {
+        type: 'BANK_TRANSFER',
+        accountName: 'Supplier',
+        accountNumber: '123456',
+        currency: 'GHS',
+      };
+
+      await controller.addMethod(req, res, next);
+
+      expect(prisma.payoutMethod.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ currency: 'GHS' }) }),
+      );
+      expect(res.status).toHaveBeenCalledWith(201);
+    });
+
+    it('rejects a first method that contradicts the declared currency', async () => {
+      prisma.payoutMethod.count.mockResolvedValue(0);
+      prisma.supplierProfile.findFirst.mockResolvedValue({
+        payoutInfo: { payoutCurrency: 'GHS' },
+      });
+      req.body = {
+        type: 'BANK_TRANSFER',
+        accountName: 'Supplier',
+        accountNumber: '123456',
+        currency: 'USD',
+      };
+
+      await controller.addMethod(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(
+        expect.objectContaining({ statusCode: 400, message: expect.stringContaining('GHS') }),
+      );
+      expect(prisma.payoutMethod.create).not.toHaveBeenCalled();
+    });
+
+    it('defaults a first method with no declaration to GHS', async () => {
+      prisma.payoutMethod.count.mockResolvedValue(0);
+      req.body = { type: 'BANK_TRANSFER', accountName: 'Supplier', accountNumber: '123456' };
+
+      await controller.addMethod(req, res, next);
+
+      expect(prisma.payoutMethod.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ currency: 'GHS' }) }),
+      );
+    });
+
     it('handles notifyAdmin failure gracefully', async () => {
       req.body = { type: 'BANK_TRANSFER', accountName: 'S', accountNumber: '123' };
       notifyAdmin.mockRejectedValue(new Error('Notify error'));
@@ -201,6 +270,7 @@ describe('payoutMethodController', () => {
     });
 
     it('updates method fields', async () => {
+      prisma.payoutMethod.count.mockResolvedValue(0);
       req.params = { id: 'pm-1' };
       req.body = { bankName: 'New Bank', currency: 'EUR' };
 
@@ -277,12 +347,28 @@ describe('payoutMethodController', () => {
       // Same bank, same account, but the money now goes out in a different
       // currency — enough to send it back to pending.
       prisma.payoutMethod.findFirst.mockResolvedValue({ ...mockMethod, verified: true });
+      prisma.payoutMethod.count.mockResolvedValue(0);
       req.params = { id: 'pm-1' };
       req.body = { currency: 'EUR' };
 
       await controller.updateMethod(req, res, next);
 
       expect(prisma.payoutMethod.update.mock.calls[0][0].data.verified).toBe(false);
+    });
+
+    it('rejects changing currency when another method exists', async () => {
+      req.params = { id: 'pm-1' };
+      req.body = { currency: 'EUR' };
+
+      await controller.updateMethod(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusCode: 400,
+          message: expect.stringContaining('settlement currency'),
+        }),
+      );
+      expect(prisma.payoutMethod.update).not.toHaveBeenCalled();
     });
 
     it('resets verified when the IBAN on a saved method is replaced', async () => {
