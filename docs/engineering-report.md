@@ -1,15 +1,18 @@
 # Engineering report: two-app split
 
-**Branch:** `feat/two-app-split` (from `main` @ `51a7844`)
+**Branch:** `feat/two-app-split` (merged to `main` as `d92644f`)
 **Date:** 2026-11-16
-**Status:** implemented and tested locally. **Nothing has been installed, deployed, or
-changed on the production server.** No push, merge, or cutover has been performed.
+**Status:** merged and deployed through the existing PM2 pipeline, then verified
+healthy. The container/host cutover has **not** started: Docker is not installed,
+Nginx and PM2 configuration are unchanged, and this release applied no database
+migration.
 
 This report separates three things that are easy to conflate:
 
 1. what changed **in the repository** (implemented, testable, committed);
-2. what was **built and run on this machine** (images, containers, smoke tests);
-3. what remains **a plan requiring approval** (everything involving the VPS).
+2. what was **built and run on this machine and in CI** (images, containers, smoke tests);
+3. what has actually changed **on the production server**, and what remains a
+   plan requiring approval.
 
 ---
 
@@ -30,7 +33,7 @@ This report separates three things that are easy to conflate:
 | GHS/USD inconsistency documented | Done: `docs/architecture/financial-currency.md` |
 | 9 architecture/deployment docs | Done, plus this report |
 | Preserve legacy compose/Caddy files | Kept, marked legacy with header comments |
-| No production action | Held. See §8. |
+| No container/host change | Held. A PM2 release deployed the code; Docker, Nginx and containers are untouched. See §8. |
 
 ---
 
@@ -58,6 +61,12 @@ Tests:       5029 passed, 5029 total
 `TEST_DB_EXPECTED=1` makes the database-backed tests fail rather than skip when
 the test database is missing — a silently skipped concurrency test would be
 worse than no test.
+
+CI agreed with the local run. On PR #178 all 14 checks passed (`deploy` and
+`deploy-verify` skipped as PR-gated, Supabase preview skipped). On `main` after
+the merge, every job passed, including `deploy` and `deploy-verify`. The new
+`stays-startup` job boots the Stays entry point in production mode with no
+Platform process and no Redis, and passes.
 
 ### New and extended suites
 
@@ -247,53 +256,68 @@ With the variable unset — the state it ships in — the workflow only publishe
 images. `ci/dependency-map.json` routes shared paths to **both** images and
 unrecognised paths to both as well; only docs and tests build nothing.
 
+The first `main` run (`d92644f`) built and pushed both images and skipped both
+deploy jobs, exactly as intended. Those are the first immutable images available
+for the container cutover.
+
 The variable and secrets required are listed in `docs/deployment/ci-cd.md`.
 **Enabling it while the PM2 deploy in `ci.yml` still runs would put two deploy
 mechanisms on one host.** That ordering is a precondition, not a suggestion.
 
 ---
 
-## 8. What was **not** done — production state
+## 8. Production state
 
-Verified read-only against the VPS (`ssh root@2.28.45.181`):
+The merge to `main` (`d92644f`, PR #178) triggered the existing `ci.yml` PM2
+deploy. Verified read-only immediately afterwards:
 
-- Docker is **not installed**; the systemd unit is inactive.
-- PM2 runs `expedition-api` (~312 MB) and `pm2-logrotate` only. The CLIP service
-  and Discord bot defined in `ecosystem.config.js` are not running.
-- Nginx proxies `location /` → `127.0.0.1:5000` for both vhosts. No path
-  routing exists.
-- Port 5000 is bound by PM2 on `0.0.0.0` today. The new entry point defaults to
-  `127.0.0.1`; Nginx already targets loopback, so the change is safe — but it
-  was **not** applied.
-- Postgres `127.0.0.1:5432`, Redis `127.0.0.1:6379` — unchanged.
+| Item | Observed |
+| --- | --- |
+| Checkout | `d92644f` |
+| PM2 | `expedition-api` online, cluster mode, restarted by the deploy, ~317 MB RSS |
+| `/health` | 200, `service: platform-api`, database and Redis healthy, 12/12 workers running, no missing or stale schedules |
+| `/api/v1/tours` and `/api/tours` | 200 |
+| Stays route, both prefixes | 401 (mounted and guarded) |
+| Port 5000 | `127.0.0.1:5000`; the loopback bind took effect and PM2's God daemon owns the socket |
+| Docker | not installed |
+| Nginx, PM2 config, firewall, DNS | unchanged |
+| Database migration | none in this release |
 
-No Docker install, no Nginx edit, no PM2 stop/start/delete, no firewall change,
-no database migration, no container start, no DNS change, no push, no merge.
-The production checkout is on `51a7844` and was not modified.
+`docker-release.yml` also ran on the same push: both images built and were
+pushed, and both deploy jobs were skipped because `DOCKER_DEPLOY_ENABLED` is not
+set. No container was started.
 
-`docker-compose.prod.yml` and `Caddyfile` are marked legacy with header
-comments; neither is referenced by the new scripts or workflows, and Caddy is
-not installed on the host.
+Not done, and still approval-gated:
+
+- Docker install and the `/etc/travio/*.env` files
+- GHCR login on the host and an image pull
+- the Nginx routing fragment
+- a Stays container, and the Platform container cutover
+- any firewall or DNS change
+
+The PM2 rollback path remains available: revert the merge commit and let
+`ci.yml` deploy again. No container state is involved.
 
 ---
 
 ## 9. Remaining work, in order
 
-1. **Review this branch** before any infrastructure work begins.
-2. **Approve the cutover or stop here.** The runbook is
-   `docs/deployment/hetzner-cutover.md`; every phase is approval-gated and
-   Stays is introduced before anything else changes.
-3. **Disable the PM2 deploy in `ci.yml`** before setting
+1. **Container cutover, phases 1-3.** The code half is live. The runbook is
+   `docs/deployment/hetzner-cutover.md`; every phase is approval-gated and Stays
+   is introduced before the Platform container replaces PM2.
+2. **Disable the PM2 deploy in `ci.yml`** before setting
    `DOCKER_DEPLOY_ENABLED=true`.
-4. **Create the deploy secrets and `/etc/travio/*.env`** on the host, with a
-   read-only GHCR token.
-5. **Test a rollback deliberately** (`rollback-stays.sh`, then deploy forward)
+3. **Create the deploy secrets and `/etc/travio/*.env`** on the host, with a
+   read-only GHCR token. The JWT and database values must match across both
+   files.
+4. **Test a rollback deliberately** (`rollback-stays.sh`, then deploy forward)
    before relying on it.
-6. **Decide the currency question** in `financial-currency.md`; implement
+5. **Decide the currency question** in `financial-currency.md`; implement
    grouped reporting and a fail-closed refund threshold as a separate change.
-7. **Add a staging environment.** The single biggest gap: the readiness gate and
-   the DB-backed suite are currently the only pre-production signals.
-8. **Relational inventory** as a separate project with a backfill dry run.
+6. **Add a staging environment.** The single biggest remaining gap: the
+   readiness gate and the DB-backed suite are currently the only pre-production
+   signals beyond this PM2 release.
+7. **Relational inventory** as a separate project with a backfill dry run.
 
 ## 10. Known limitations
 
