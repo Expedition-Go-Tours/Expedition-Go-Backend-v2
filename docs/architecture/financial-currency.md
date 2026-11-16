@@ -130,8 +130,12 @@ adopt it rather than contradict it.
 ### 3. Fail closed on the refund threshold
 
 - If a currency map is configured, require an exact key or an explicit
-  `default`. A missing key must return `null` (misconfigured) and the caller
-  must block the release, not skip the approval.
+  `default`. A missing key must return `null` (misconfigured); the caller then
+  falls back to the built-in threshold instead of treating the claim as
+  below-threshold and releasing it on one admin's click.
+- Status: the parsing fix is implemented in `fix/refund-threshold-currency`
+  (`releaseThreshold` returns `null` for a missing key, with tests). The
+  currency map itself is still a configuration decision — see the default below.
 - Set the shipped default as a map keyed by the currencies actually in use:
   `{"USD": 500, "GHS": 6000}` — roughly equivalent at current rates, and
   reviewable as policy.

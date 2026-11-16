@@ -199,7 +199,14 @@ function releaseThreshold(raw, currency) {
   if (parsed && typeof parsed === 'object') {
     const key = String(currency || 'USD').toUpperCase();
     const value = parsed[key] ?? parsed.default;
-    if (value == null) return 0;
+    if (value == null) {
+      // A map that omits this currency is a configuration gap, not an
+      // instruction to disable the control. Returning null makes the caller
+      // fall back to the built-in default threshold; returning 0 would mark
+      // every refund in that currency as below-threshold and release it on a
+      // single admin's click.
+      return null;
+    }
     const n = Number(value);
     return Number.isFinite(n) && n >= 0 ? n : null;
   }
@@ -995,3 +1002,4 @@ exports.CLAIM_WINDOW_DAYS = CLAIM_WINDOW_DAYS;
 exports.CLAIM_REASONS = CLAIM_REASONS;
 exports.OPEN_CLAIM_STATUSES = OPEN_CLAIM_STATUSES;
 exports.assertClaimable = assertClaimable;
+exports.releaseThreshold = releaseThreshold;
