@@ -159,19 +159,25 @@ correct single-currency figure, never a mixed sum.
 - Log when a currency is missing from the map, so the gap is visible before a
   large refund hits it.
 
-### 4. Decide the payout-method rule
+### 4. Payout-method rule — Option A implemented
 
-Pick one and document it:
+**Option A is now the policy:** one settlement currency per supplier, and every
+payout method must use it.
 
-- **Option A (recommended):** the payout currency is the supplier's settlement
-  currency, and every payout method must match it. A supplier with GHS
-  settlement cannot attach a USD PayPal account.
-- **Option B:** multiple payout methods may exist in different currencies, and a
-  payout request specifies the method; the request currency must equal the
-  method currency. This is more flexible and more code.
+- `payoutMethodController.addMethod` derives the settlement currency from the
+  supplier's existing methods, or from `payoutInfo.payoutCurrency` before the
+  first method exists. A method in any other currency is rejected.
+- `updateMethod` refuses to change a method's currency while another method
+  exists. The only method may change currency, which becomes the new settlement.
+- `supplierApplicationPayload` now defaults every application payout method to
+  GHS when no `payoutCurrency` is provided; PayPal no longer silently defaults
+  to USD. The application's explicit `payoutCurrency` still wins.
+- Covered by `__tests__/unit/payoutMethodController.test.js` and
+  `__tests__/unit/supplierApplicationPayload.test.js`.
 
-Option A matches how the payout request already behaves and requires validation
-at method creation, not a new money-flow model.
+**Legacy data:** methods created before this change may already be mixed. The
+controller prevents new mixes but does not rewrite existing rows. Audit
+`PayoutMethod` per supplier before enabling payouts for an affected account.
 
 ### 5. Add a `currency` invariant test — implemented
 
@@ -210,7 +216,7 @@ required. If no, Option A plus grouped reporting is sufficient, and the current
 `GHS`/`USD` split inside `supplierApplicationPayload.js` should be reduced to a
 single settlement currency per supplier.
 
-Reporting no longer mixes currencies. What is still undecided is the
-**settlement and payout-method rule**: whether a supplier may hold methods in
-more than one currency, and which currency a payout request must use. The code
-should not add amounts from different currencies while that decision is pending.
+Reporting no longer mixes currencies, and Option A now enforces one settlement
+currency for payout methods. What remains is the **property/booking creation
+default** (still GHS for Stays, still implicit in places) and a **backfill/audit
+of legacy mixed methods**. Neither blocks the reporting change.

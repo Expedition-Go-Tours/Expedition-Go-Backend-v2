@@ -211,7 +211,7 @@ function payoutMethodFromApplication(payoutInfo) {
   if (type === 'PAYPAL') {
     const paypalEmail = clean(payoutInfo.paypalEmail);
     if (!paypalEmail) return null;
-    return { type, currency: currency || 'USD', paypalEmail, accountName: clean(payoutInfo.paypalAccountName) };
+    return { type, currency: currency || 'GHS', paypalEmail, accountName: clean(payoutInfo.paypalAccountName) };
   }
 
   const mobileNumber = clean(payoutInfo.momoNumber);
