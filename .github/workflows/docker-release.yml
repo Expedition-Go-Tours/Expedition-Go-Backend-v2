@@ -1,0 +1,351 @@
+# Build and publish the two API images, then deploy them behind an explicit gate.
+#
+# This workflow is ADDITIVE. The existing `ci.yml` still runs the full regression
+# suite and the PM2 deploy, because that is what is live in production today.
+# Nothing here touches the VPS unless both conditions hold:
+#
+#   1. the deploy jobs are reached (a migration/publish succeeds), and
+#   2. the repository variable DOCKER_DEPLOY_ENABLED is exactly "true".
+#
+# Leave the variable unset and this workflow only publishes images — which is
+# the state it ships in. Enabling it without first disabling the PM2 deploy in
+# ci.yml would run two deploy mechanisms at once.
+#
+# Images never use the `latest` tag. Every build gets the immutable commit-SHA
+# tags; a `vX.Y.Z` tag additionally gets semver tags. The deploy scripts refuse
+# anything else.
+
+name: Docker Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  # One image build per commit. Do not cancel a running publish — a half-pushed
+  # manifest is worse than a queued one.
+  group: docker-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_OWNER: expedition-go-tours
+  # App directory on the VPS, matching ecosystem.config.js.
+  DEPLOY_PATH: /home/deploy/Expedition-Go-Backend-v2
+
+jobs:
+  # ── Which images does this change need? ────────────────────────────────────
+  changes:
+    name: Detect affected applications
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      platform: ${{ steps.filter.outputs.platform }}
+      stays: ${{ steps.filter.outputs.stays }}
+      migrations: ${{ steps.filter.outputs.migrations }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Evaluate ci/dependency-map.json
+        id: filter
+        shell: bash
+        env:
+          EVENT_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            # Manual run: rebuild both on purpose.
+            node ci/detect-changes.js --all
+          elif [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            base="${EVENT_BEFORE:-}"
+            if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]]; then
+              base="$(git rev-parse "${GITHUB_SHA}^" 2>/dev/null || true)"
+            fi
+            if [ -n "$base" ]; then
+              git diff --name-only "$base" "$GITHUB_SHA" | node ci/detect-changes.js --stdin
+            else
+              # New branch with no parent: treat every tracked file as changed.
+              git ls-files | node ci/detect-changes.js --stdin
+            fi
+          else
+            node ci/detect-changes.js --all
+          fi
+
+  # ── Build and push ─────────────────────────────────────────────────────────
+  build:
+    name: Build ${{ matrix.app }}
+    needs: changes
+    if: ${{ needs.changes.outputs.platform == 'true' || needs.changes.outputs.stays == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: platform
+            image: platform-api
+            target: platform-api
+            changed: ${{ needs.changes.outputs.platform }}
+          - app: stays
+            image: stays-api
+            target: stays-api
+            changed: ${{ needs.changes.outputs.stays }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Skip unaffected application
+        id: gate
+        shell: bash
+        run: |
+          if [ "${NEEDS_OUTPUT}" = "true" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "No change requires the ${{ matrix.app }} image; skipping." >> "$GITHUB_STEP_SUMMARY"
+          fi
+        env:
+          NEEDS_OUTPUT: ${{ matrix.changed }}
+
+      - name: Set up Buildx
+        if: steps.gate.outputs.build == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: steps.gate.outputs.build == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags and labels
+        id: meta
+        if: steps.gate.outputs.build == 'true'
+        uses: docker/metadata-action@v5
+        with:
+          # GHCR requires a lowercase path; the owner below is already lowercase.
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.image }}
+          # `latest` is never produced, not even for a semver tag.
+          flavor: |
+            latest=false
+          tags: |
+            type=sha,format=short,prefix=sha-
+            type=sha,format=long,prefix=sha-
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.image }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+
+      - name: Build and push
+        id: push
+        if: steps.gate.outputs.build == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            RELEASE_VERSION=${{ github.ref_name }}
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+          provenance: true
+          sbom: true
+
+      - name: Record image digest
+        if: steps.gate.outputs.build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### ${{ matrix.image }}"
+            echo ""
+            echo "- digest: \`${{ steps.push.outputs.digest }}\`"
+            echo "- tags:"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Migrations (once, before any container is replaced) ────────────────────
+  migrate:
+    name: Apply migrations
+    needs: [changes, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.changes.outputs.migrations == 'true' && vars.DOCKER_DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Repository-wide serialisation for schema changes. A second release waits
+    # instead of racing `prisma migrate deploy` against the first.
+    concurrency:
+      group: production-database
+      cancel-in-progress: false
+    steps:
+      - name: Prepare SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Pin the host key from a repository secret rather than trusting
+          # whatever answers on port 22 the first time.
+          printf '%s\n' "${{ secrets.DEPLOY_HOST_KEY }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Run deploy-migrations.sh on the host
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="${REGISTRY}/${IMAGE_OWNER}/platform-api:sha-${GITHUB_SHA:0:7}"
+          ssh -i ~/.ssh/deploy_key \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "cd '${DEPLOY_PATH}' && ./deploy/scripts/deploy-migrations.sh '${IMAGE}'"
+
+  # ── Deploy Platform API ────────────────────────────────────────────────────
+  deploy-platform:
+    name: Deploy platform-api
+    needs: [changes, build, migrate]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.migrate.result != 'failure' && vars.DOCKER_DEPLOY_ENABLED == 'true' && needs.changes.outputs.platform == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: deploy-platform-api
+      cancel-in-progress: false
+    steps:
+      - name: Prepare SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.DEPLOY_HOST_KEY }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Run deploy-platform.sh on the host
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="${REGISTRY}/${IMAGE_OWNER}/platform-api:sha-${GITHUB_SHA:0:7}"
+          ssh -i ~/.ssh/deploy_key \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "cd '${DEPLOY_PATH}' && ./deploy/scripts/deploy-platform.sh '${IMAGE}'"
+
+      - name: Verify both services from the host
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "cd '${DEPLOY_PATH}' && ./deploy/scripts/verify-deployment.sh"
+
+  # ── Deploy Stays API ───────────────────────────────────────────────────────
+  deploy-stays:
+    name: Deploy stays-api
+    needs: [changes, build, migrate]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.migrate.result != 'failure' && vars.DOCKER_DEPLOY_ENABLED == 'true' && needs.changes.outputs.stays == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: deploy-stays-api
+      cancel-in-progress: false
+    steps:
+      - name: Prepare SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.DEPLOY_HOST_KEY }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Run deploy-stays.sh on the host
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="${REGISTRY}/${IMAGE_OWNER}/stays-api:sha-${GITHUB_SHA:0:7}"
+          ssh -i ~/.ssh/deploy_key \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "cd '${DEPLOY_PATH}' && ./deploy/scripts/deploy-stays.sh '${IMAGE}'"
+
+      - name: Verify both services from the host
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "cd '${DEPLOY_PATH}' && ./deploy/scripts/verify-deployment.sh"
+
+  # ── Notification ───────────────────────────────────────────────────────────
+  notify:
+    name: Notify
+    needs: [changes, build, migrate, deploy-platform, deploy-stays]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Post release summary to Discord
+        shell: bash
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          CHANGES: ${{ needs.changes.outputs.platform == 'true' && 'platform' || '' }}${{ needs.changes.outputs.platform == 'true' && needs.changes.outputs.stays == 'true' && ', ' || '' }}${{ needs.changes.outputs.stays == 'true' && 'stays' || '' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${WEBHOOK}" ]; then
+            echo "DISCORD_RELEASE_WEBHOOK is not configured; skipping notification."
+            exit 0
+          fi
+
+          status() {
+            case "$1" in
+              success) echo "ok" ;;
+              skipped) echo "skipped" ;;
+              cancelled) echo "cancelled" ;;
+              *) echo "FAILED" ;;
+            esac
+          }
+
+          # The JS below uses template literals; the single-quoted heredoc-style
+          # argument is intentional, so SC2016 is a false positive here.
+          # shellcheck disable=SC2016
+          payload=$(node -e '
+            const [apps, sha, ref, build, migrate, platform, stays] = process.argv.slice(1);
+            const line = (label, value) => `${label}: ${value}`;
+            console.log(JSON.stringify({
+              username: "Travio Release",
+              content: `${build === "success" ? "Images published" : "Image build did not succeed"} — ${apps || "nothing"} @ ${ref}`,
+              embeds: [{
+                title: `Release ${sha.slice(0, 7)}`,
+                description: [
+                  line("Commit", sha),
+                  line("Ref", ref),
+                  line("Images", build),
+                  line("Migrations", migrate),
+                  line("platform-api deploy", platform),
+                  line("stays-api deploy", stays),
+                  line("Rollback", "rollback-platform.sh / rollback-stays.sh (restores the previously recorded image)"),
+                ].join("\n"),
+                color: build === "success" && platform !== "failure" && stays !== "failure" ? 3066993 : 15158332,
+              }],
+            }));
+          ' "$CHANGES" "$GITHUB_SHA" "$GITHUB_REF_NAME" \
+            "$(status '${{ needs.build.result }}')" \
+            "$(status '${{ needs.migrate.result }}')" \
+            "$(status '${{ needs.deploy-platform.result }}')" \
+            "$(status '${{ needs.deploy-stays.result }}')")
+
+          curl -fsS -X POST -H 'Content-Type: application/json' -d "$payload" "$WEBHOOK"

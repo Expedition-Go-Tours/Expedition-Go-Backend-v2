@@ -1,0 +1,105 @@
+# Production Compose — two independently deployable API containers.
+#
+# Design notes worth reading before changing anything here:
+#
+# 1. HOST NETWORKING IS INTENTIONAL.
+#    PostgreSQL (127.0.0.1:5432) and Redis (127.0.0.1:6379) are host services
+#    bound to loopback only. A bridge network cannot reach them without changing
+#    `listen_addresses`, `pg_hba.conf` and the firewall — i.e. exposing the
+#    database to make container networking convenient. With `network_mode: host`
+#    the containers reach the existing loopback services unchanged and bind
+#    their own ports to 127.0.0.1 (see HOST in each env file).
+#
+# 2. THE APPS BIND TO LOOPBACK, NOT 0.0.0.0.
+#    `HOST=127.0.0.1` is set below and in the image. Nginx on the host proxies
+#    to 127.0.0.1:5000 / 127.0.0.1:5100. Nothing new is reachable from the
+#    internet, and ufw's 22/80/443 rule set does not need to change.
+#
+# 3. IMAGES ARE PINNED BY TAG OR DIGEST.
+#    `latest` is never used. The deploy scripts pass the exact tag/digest and
+#    record the previously running one for rollback.
+#
+# 4. NO MIGRATIONS RUN HERE.
+#    Schema changes are applied once by `deploy-migrations.sh` before either
+#    service is replaced. Neither container mutates the schema on startup.
+#
+# Usage (from the deploy scripts, which set the image variables):
+#
+#   PLATFORM_IMAGE=ghcr.io/.../platform-api:sha-abc1234 \
+#   STAYS_IMAGE=ghcr.io/.../stays-api:sha-def5678 \
+#   docker compose -f deploy/compose.production.yml up -d --no-deps platform-api
+
+name: travio-api
+
+services:
+  platform-api:
+    image: ${PLATFORM_IMAGE:?PLATFORM_IMAGE must be an immutable tag or digest}
+    container_name: travio-platform-api
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - ${PLATFORM_ENV_FILE:-/etc/travio/platform-api.env}
+    environment:
+      # Set here, not left to the env file: NODE_ENV=production is what keeps
+      # stack traces out of responses and the Swagger UI unmounted. A missing
+      # or misspelled line in /etc/travio/platform-api.env must not silently
+      # put the process into development mode.
+      NODE_ENV: production
+      # Africa/Accra is UTC+0 with no DST, so pinning UTC cannot change the
+      # dates the app formats. It prevents drift if the base image or host
+      # timezone changes.
+      TZ: UTC
+      HOST: 127.0.0.1
+      PORT: "5000"
+      SERVICE_NAME: platform-api
+    # SIGTERM → graceful shutdown. The app allows itself 8s; give Docker 20s
+    # before SIGKILL so in-flight requests finish.
+    stop_grace_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    # Measured baseline on the current VPS: ~312 MB RSS. 768 MB leaves room for
+    # Prisma engines, BullMQ workers and a traffic spike without letting one
+    # runaway process consume the whole 4 GB host.
+    mem_limit: 768m
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:5000/ready',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  stays-api:
+    image: ${STAYS_IMAGE:?STAYS_IMAGE must be an immutable tag or digest}
+    container_name: travio-stays-api
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - ${STAYS_ENV_FILE:-/etc/travio/stays-api.env}
+    environment:
+      NODE_ENV: production
+      TZ: UTC
+      HOST: 127.0.0.1
+      STAYS_PORT: "5100"
+      SERVICE_NAME: stays-api
+    stop_grace_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    # Smaller surface: no workers, no Socket.IO. 384 MB is generous for a
+    # process whose heaviest dependency is the Prisma query engine.
+    mem_limit: 384m
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:5100/ready',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s

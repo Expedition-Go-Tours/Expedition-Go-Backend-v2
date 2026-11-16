@@ -1,0 +1,74 @@
+# Local Docker Compose — a conventional bridge network, for trying the images
+# on a developer machine or in a Docker-enabled CI runner.
+#
+# This is NOT the production configuration. Production uses host networking
+# (see compose.production.yml) because the database and Redis are loopback-only
+# host services on the VPS.
+#
+# Usage:
+#   docker compose -f deploy/compose.local.yml build
+#   docker compose -f deploy/compose.local.yml up -d
+#
+# The containers reach a database running on the host through
+# `host.docker.internal`, which is mapped to the host gateway on Linux. If your
+# .env points DATABASE_URL at `localhost:5433` (the dev Postgres from
+# docker-compose.yml), override it for the containers:
+#
+#   DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:5433/travio
+#
+# The API ports are published on loopback only, matching production behaviour.
+
+name: travio-api-local
+
+services:
+  platform-api:
+    build:
+      context: ..
+      target: platform-api
+      args:
+        GIT_SHA: local
+        RELEASE_VERSION: local
+    image: travio-platform-api:local
+    container_name: travio-platform-api-local
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      PORT: "5000"
+    ports:
+      - "127.0.0.1:5000:5000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  stays-api:
+    build:
+      context: ..
+      target: stays-api
+      args:
+        GIT_SHA: local
+        RELEASE_VERSION: local
+    image: travio-stays-api:local
+    container_name: travio-stays-api-local
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      STAYS_PORT: "5100"
+    ports:
+      - "127.0.0.1:5100:5100"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
