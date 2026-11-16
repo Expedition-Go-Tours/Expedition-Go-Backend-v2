@@ -196,6 +196,7 @@ router.post('/apply', uploadSupplierDocuments, supplierController.applyToBeSuppl
  *                   example: No file uploaded
  */
 router.post('/logo', resolveSupplier, requireTeamPermission('settings.business'), uploadSupplierLogo, supplierController.uploadLogo);
+router.delete('/logo', resolveSupplier, requireTeamPermission('settings.business'), supplierController.deleteLogo);
 
 /**
  * @swagger

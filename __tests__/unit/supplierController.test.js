@@ -1371,4 +1371,57 @@ describe('supplierController', () => {
       );
     });
   });
+
+  // ============================
+  // deleteLogo
+  // ============================
+  describe('deleteLogo', () => {
+    const LOGO = 'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/supplier-logos/logo.png';
+
+    it('clears the supplier account logo, not the viewer’s', async () => {
+      // A team member acting for the business.
+      req.user = { id: 'member-1' };
+      req.supplierId = 'owner-1';
+      prisma.user.findUnique.mockResolvedValue({ logoUrl: LOGO });
+
+      await controller.deleteLogo(req, res, next);
+
+      expect(deleteCloudinaryImage).toHaveBeenCalledWith(LOGO, 3, { userId: 'owner-1' });
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'owner-1' },
+        data: { logoUrl: null },
+      });
+      expect(prisma.media.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { url: LOGO },
+          data: expect.objectContaining({ status: 'ORPHANED' }),
+        }),
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith({ status: 'success', data: { logoUrl: null } });
+    });
+
+    it('is a no-op when the account has no logo', async () => {
+      prisma.user.findUnique.mockResolvedValue({ logoUrl: null });
+
+      await controller.deleteLogo(req, res, next);
+
+      expect(deleteCloudinaryImage).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('still clears the row when the Cloudinary delete fails', async () => {
+      prisma.user.findUnique.mockResolvedValue({ logoUrl: LOGO });
+      deleteCloudinaryImage.mockRejectedValueOnce(new Error('cloudinary down'));
+
+      await controller.deleteLogo(req, res, next);
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'u-1' },
+        data: { logoUrl: null },
+      });
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+  });
 });

@@ -2329,3 +2329,42 @@ exports.uploadLogo = catchAsync(async (req, res, next) => {
     data: { logoUrl: updatedUser.logoUrl },
   });
 });
+
+/**
+ * DELETE /suppliers/logo
+ *
+ * Removes the BUSINESS logo, for whoever is allowed to change it. The setting
+ * belongs to the supplier account, not the viewer: a team member acting for
+ * the business must clear the owner's logo, never null their own account's
+ * (which has no logo to begin with).
+ */
+exports.deleteLogo = catchAsync(async (req, res, next) => {
+  const supplierId = req.supplierId || req.user.id;
+
+  const user = await prisma.user.findUnique({
+    where: { id: supplierId },
+    select: { logoUrl: true },
+  });
+
+  if (user?.logoUrl) {
+    // The asset delete is best effort — clearing the reference is the promise.
+    // `exclude.userId` lets the reference guard ignore the row we are clearing.
+    await deleteCloudinaryImage(user.logoUrl, 3, { userId: supplierId }).catch((err) =>
+      console.warn('[Supplier] Logo asset delete failed:', err.message),
+    );
+
+    await prisma.user.update({
+      where: { id: supplierId },
+      data: { logoUrl: null },
+    });
+
+    await prisma.media
+      .updateMany({
+        where: { url: user.logoUrl },
+        data: { status: 'ORPHANED', entity: null, entityId: null },
+      })
+      .catch(() => {});
+  }
+
+  res.status(200).json({ status: 'success', data: { logoUrl: null } });
+});
