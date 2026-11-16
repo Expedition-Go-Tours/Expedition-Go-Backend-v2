@@ -306,13 +306,15 @@ Not done yet:
 
 ## 9. Remaining work, in order
 
-1. **Merge the CI gate** (`chore/retire-pm2-deploy`) before any other push to
-   `main`. Until it lands, a merge would run the old PM2 deploy.
+1. **Merge this PR** before any other push to `main`. It includes the CI gate
+   (`PM2_DEPLOY_ENABLED`, unset); until it lands, a merge would run the old PM2
+   deploy.
 2. **Enable the container pipeline** by setting `DOCKER_DEPLOY_ENABLED=true`,
    then ship a Stays-only change and confirm the Platform container's
    `StartedAt` does not move.
-3. **Drill the rollback** (`rollback-stays.sh`, then deploy forward; then the
-   Platform equivalent in a window).
+3. **Drill the Platform-to-PM2 fallback in a window.** The Stays image
+   rollback and the Nginx routing rollback have already been drilled on the
+   host; the Platform fallback stops the container, so it needs a window.
 4. **Click through the supplier dashboard** on the new Stays process: property
    list, calendar, a test reservation (then cancel), finance.
 5. **Decide and configure the currency policy**; implement grouped reporting
@@ -327,9 +329,11 @@ Not done yet:
   bounded interruption on Platform replacement. The runbook says so.
 - Migrations are forward-only; every change must be additive first.
 - `sha-<commit>` tags are mutable on GHCR; use digests for exact provenance.
-- The deploy scripts have now run against the real host (`deploy-stays.sh`,
-  `deploy-platform.sh`, `verify-deployment.sh`). The **rollback** scripts have
-  not been drilled yet; an untested rollback is not a rollback.
+- The deploy scripts have run against the real host (`deploy-stays.sh`,
+  `deploy-platform.sh`, `verify-deployment.sh`). The Stays image rollback was
+  drilled with a real container recreate (short-SHA ↔ long-SHA tags of the same
+  image), and the Nginx routing rollback was drilled live with no downtime. The
+  Platform-to-PM2 fallback has **not** been drilled; it needs a window.
 - Images are `linux/amd64` only, matching the VPS.
 - No image signing (`cosign`) yet; provenance and SBOM are published.
 - The Stays/Platform import boundary is enforced by tests, not by an ESLint

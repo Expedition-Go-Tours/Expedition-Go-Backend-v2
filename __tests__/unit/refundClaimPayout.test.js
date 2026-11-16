@@ -400,7 +400,58 @@ describe('adminRelease — who pays', () => {
   });
 });
 
+describe('releaseThreshold', () => {
+  const { releaseThreshold } = controller;
+
+  it('uses a scalar for every currency', () => {
+    expect(releaseThreshold('500', 'GHS')).toBe(500);
+  });
+
+  it('keeps an explicit zero as "disabled"', () => {
+    expect(releaseThreshold('0', 'USD')).toBe(0);
+  });
+
+  it('reads an exact currency key', () => {
+    expect(releaseThreshold('{"USD":500,"GHS":6000}', 'GHS')).toBe(6000);
+  });
+
+  it('uses an explicit default when the currency is absent', () => {
+    expect(releaseThreshold('{"USD":500,"default":300}', 'GHS')).toBe(300);
+  });
+
+  it('returns null when a map omits the currency and has no default', () => {
+    expect(releaseThreshold('{"USD":500}', 'GHS')).toBeNull();
+  });
+
+  it('returns null for an unparseable value', () => {
+    expect(releaseThreshold('not-a-number', 'USD')).toBeNull();
+  });
+});
+
 describe('adminRelease — two-person control', () => {
+  it('requires approval when a currency map has no entry for the claim currency', async () => {
+    // A map configured only for USD must not disable the control for GHS.
+    getConfig.__threshold = JSON.stringify({ USD: 100000 });
+    prisma.refundClaim.findFirst.mockResolvedValue(
+      adminClaim(adminBooking({ currency: 'GHS' })),
+    );
+    prisma.user.count.mockResolvedValue(2);
+
+    const next = jest.fn();
+    const response = res();
+    await controller.adminRelease(adminReq({ releasedAmount: 600 }), response, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(refundBookingPayment).not.toHaveBeenCalled();
+    expect(response.status).toHaveBeenCalledWith(202);
+    expect(response.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'pending_approval',
+        data: expect.objectContaining({ requiresSecondApproval: true, threshold: 500 }),
+      }),
+    );
+  });
+
   it('records a first approval instead of moving money above the threshold', async () => {
     getConfig.__threshold = '50';
     prisma.refundClaim.findFirst.mockResolvedValue(adminClaim());
