@@ -34,7 +34,7 @@ and `USD` to a PayPal account. That may be a deliberate product decision, but it
 is not written down anywhere, and it means one supplier can hold payout methods
 in two currencies with no rule about which one a payout uses.
 
-### Reporting adds currencies together
+### Reporting used to add currencies together
 
 `src/brands/ghana/staysAnalyticsController.js`:
 
@@ -58,11 +58,18 @@ looks authoritative.
 So `availableBalance: { amount: 5400 }` with `currency: 'GHS'` can include USD
 bookings.
 
-The payout **request** path is correct: `createPayoutRequest`
-(`staysFinanceController.js:271`) refuses to combine currencies and tells the
-supplier to request each separately. That makes the dashboard/summary
-inconsistency worse, not better — the UI shows a combined balance and the
-request then fails.
+The payout **request** path was already correct: `createPayoutRequest`
+refuses to combine currencies and tells the supplier to request each separately.
+That made the dashboard/summary inconsistency worse: the UI showed a combined
+balance and the request then failed.
+
+**Fixed on 2026-11-16.** `getAnalytics`, `getAnalyticsSummary`,
+`getPropertyAnalytics`, `getMonthlyRevenue`, `getSummary` and `getEarnings` now
+group every amount by currency. The legacy scalar fields are scoped to one
+primary currency (the largest bucket; finance prefers available balance); the
+full split is returned in `currencies`; `mixedCurrencies` flags a split.
+`__tests__/api/staysCurrencyReporting.test.js` creates one GHS and one USD
+booking and asserts that no response contains a mixed total.
 
 ### A refund control can be silently disabled
 
@@ -73,7 +80,7 @@ or a per-currency map:
 ```js
 const key = String(currency || 'USD').toUpperCase();
 const value = parsed[key] ?? parsed.default;
-if (value == null) return 0;
+if (value == null) return null;   // fixed: was 0, which disabled the control
 ```
 
 and the caller treats `0` as "control disabled":
@@ -87,9 +94,13 @@ Consequences:
 - A scalar threshold of `500` is applied to GHS and USD identically, so a
   500 GHS refund (~USD 35) needs two approvals while a 500 USD refund also does.
   The policy is currency-blind.
-- A map configured as `{"USD": 500}` and nothing else returns `0` for a GHS
-  claim, which **turns the second approval off** for GHS. The safe fallback is
-  to fail closed, not open.
+- A map configured as `{"USD": 500}` and nothing else **used to** return `0`
+  for a GHS claim, which turned the second approval off. It now returns `null`,
+  so the caller falls back to the built-in threshold. The scalar-versus-map
+  policy is still a configuration decision.
+
+Status: the parsing fix is merged and covered by
+`__tests__/unit/refundClaimPayout.test.js`.
 
 ## What is *not* wrong
 
@@ -112,20 +123,26 @@ Consequences:
   property.currency`; a missing currency on a money row should be a data error,
   not a default.
 
-### 2. Never aggregate across currencies
+### 2. Never aggregate across currencies — implemented
 
-Change the aggregates to `groupBy: ['currency']` and return a list:
+The Stays analytics and finance summaries now group by currency. Each response
+keeps its legacy scalar fields for the primary currency and adds:
 
 ```json
-{ "currencies": [ { "currency": "GHS", "amount": 3200 }, { "currency": "USD", "amount": 410 } ] }
+{
+  "currency": "GHS",
+  "mixedCurrencies": true,
+  "currencies": [
+    { "currency": "GHS", "grossBookingValue": 3200 },
+    { "currency": "USD", "grossBookingValue": 410 }
+  ]
+}
 ```
 
-The supplier dashboard then displays one line per currency. Where a single number
-is unavoidable (a badge, a chart), show the supplier's payout currency and label
-the rest as "other currencies", with the breakdown one click away.
-
-This is the same rule the payout request already enforces; the summary should
-adopt it rather than contradict it.
+Finance uses `supplierPayout` for its buckets; analytics uses `amount`. The
+dashboard should show one line per currency, and label the scalar as the primary
+currency rather than "total". A frontend that ignores `currencies` still sees a
+correct single-currency figure, never a mixed sum.
 
 ### 3. Fail closed on the refund threshold
 
@@ -156,16 +173,17 @@ Pick one and document it:
 Option A matches how the payout request already behaves and requires validation
 at method creation, not a new money-flow model.
 
-### 5. Add a `currency` invariant test
+### 5. Add a `currency` invariant test — implemented
 
-A database test that creates one GHS booking and one USD booking for the same
-supplier and asserts:
+`__tests__/api/staysCurrencyReporting.test.js` creates one GHS and one USD
+booking for the same supplier and asserts:
 
-- `getAnalyticsSummary` returns two currency buckets, not one mixed total;
-- `getSummary` returns one bucket per currency;
-- `createPayoutRequest` still refuses a mixed selection.
-
-That test would fail against the current implementation, which is the point.
+- `getAnalyticsSummary` and `getAnalytics` return two buckets, with the headline
+  scoped to one currency;
+- property and monthly revenue expose `revenueByCurrency` / `series`;
+- `getSummary` and `getEarnings` return one bucket per currency;
+- `createPayoutRequest` continues to refuse a mixed selection (covered by the
+  existing finance tests).
 
 ## Migration
 
@@ -192,5 +210,7 @@ required. If no, Option A plus grouped reporting is sufficient, and the current
 `GHS`/`USD` split inside `supplierApplicationPayload.js` should be reduced to a
 single settlement currency per supplier.
 
-Until that is decided, the code should not silently choose a default and add the
-result to another currency's total.
+Reporting no longer mixes currencies. What is still undecided is the
+**settlement and payout-method rule**: whether a supplier may hold methods in
+more than one currency, and which currency a payout request must use. The code
+should not add amounts from different currencies while that decision is pending.
