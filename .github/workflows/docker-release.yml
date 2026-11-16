@@ -319,6 +319,9 @@ jobs:
             esac
           }
 
+          # The JS below uses template literals; the single-quoted heredoc-style
+          # argument is intentional, so SC2016 is a false positive here.
+          # shellcheck disable=SC2016
           payload=$(node -e '
             const [apps, sha, ref, build, migrate, platform, stays] = process.argv.slice(1);
             const line = (label, value) => `${label}: ${value}`;

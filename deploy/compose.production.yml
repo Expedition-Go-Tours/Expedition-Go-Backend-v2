@@ -40,6 +40,15 @@ services:
     env_file:
       - ${PLATFORM_ENV_FILE:-/etc/travio/platform-api.env}
     environment:
+      # Set here, not left to the env file: NODE_ENV=production is what keeps
+      # stack traces out of responses and the Swagger UI unmounted. A missing
+      # or misspelled line in /etc/travio/platform-api.env must not silently
+      # put the process into development mode.
+      NODE_ENV: production
+      # Africa/Accra is UTC+0 with no DST, so pinning UTC cannot change the
+      # dates the app formats. It prevents drift if the base image or host
+      # timezone changes.
+      TZ: UTC
       HOST: 127.0.0.1
       PORT: "5000"
       SERVICE_NAME: platform-api
@@ -72,6 +81,8 @@ services:
     env_file:
       - ${STAYS_ENV_FILE:-/etc/travio/stays-api.env}
     environment:
+      NODE_ENV: production
+      TZ: UTC
       HOST: 127.0.0.1
       STAYS_PORT: "5100"
       SERVICE_NAME: stays-api

@@ -123,7 +123,43 @@ first.
    (plus optional `REDIS_URL`, `SENTRY_DSN`, `ALLOWED_ORIGINS`,
    `CLIENT_URL`, `SUPPLIER_DASHBOARD_URL`).
 
-2. Place the Compose file where the scripts expect it (default
+   Two rules that are easy to get wrong:
+
+   - `JWT_SECRET` and `JWT_REFRESH_SECRET` **must be byte-identical** in both
+     files. A token minted for the Platform API has to verify in the Stays
+     service, otherwise every Stays request returns 401 after cutover.
+   - `DATABASE_URL` and `REDIS_URL` must also match, since both processes read
+     the same data and cache keys.
+
+   Compose sets `NODE_ENV=production`, `HOST=127.0.0.1` and `TZ=UTC` itself, so
+   those cannot be lost by a bad env file. Everything else is the env file's
+   responsibility.
+
+   Validate before starting anything:
+
+   ```bash
+   PLATFORM_IMAGE=ghcr.io/expedition-go-tours/platform-api:sha-<commit> \
+   STAYS_IMAGE=ghcr.io/expedition-go-tours/stays-api:sha-<commit> \
+   docker compose -f /opt/travio/api/deploy/compose.production.yml config >/dev/null
+   ```
+
+2. Runtime differences from PM2 worth knowing before the cutover:
+
+   | Concern | PM2 today | Container |
+   | --- | --- | --- |
+   | Process model | `exec_mode: cluster`, 1 instance; God owns the socket | One process, binds directly |
+   | Memory guard | `max_memory_restart: 500M`, `--max-old-space-size=400` | `mem_limit: 768m`; Node sizes the heap from the cgroup |
+   | `NODE_ENV` | Set in `ecosystem.config.js` | Set in Compose |
+   | Timezone | Host timezone | `TZ=UTC` (Africa/Accra is also UTC+0) |
+   | Shutdown | SIGINT, `kill_timeout: 15000` | SIGTERM, `stop_grace_period: 20s`, app drains in 8s |
+   | Env source | `.env` + PM2's cached copy | `/etc/travio/<app>.env` |
+   | Logs | `/home/deploy/.pm2/logs/*.log` | `docker logs`, json-file capped at 10 MB × 5 |
+
+   After the Platform container has run for a business cycle, compare its
+   observed RSS against the 768 MB ceiling. If it approaches the limit, raise the
+   limit rather than letting the OOM killer be the restart policy.
+
+3. Place the Compose file where the scripts expect it (default
    `COMPOSE_FILE=/opt/travio/api/deploy/compose.production.yml`):
 
    ```bash
@@ -133,13 +169,13 @@ first.
 
    Or export `COMPOSE_FILE` in the deploy environment instead of copying.
 
-3. Authenticate to GHCR with a **read-only** package token:
+4. Authenticate to GHCR with a **read-only** package token:
 
    ```bash
    echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u <user> --password-stdin
    ```
 
-4. Pull both images without starting anything:
+5. Pull both images without starting anything:
 
    ```bash
    docker pull ghcr.io/expedition-go-tours/platform-api:sha-<commit>

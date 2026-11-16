@@ -166,6 +166,30 @@ does not, and the script reports the difference instead of hiding it.
 
 `docker run --entrypoint id` returns `uid=1000(node)` for both images.
 
+### Static validation of the deployment artifacts
+
+These run without a Docker host or a VPS:
+
+| Check | Result |
+| --- | --- |
+| `docker compose -f deploy/compose.production.yml config` (with image/env overrides) | exit 0; `network_mode: host` on both, `HOST: 127.0.0.1`, memory ceilings applied |
+| `nginx -t` with `api-routing.conf` included in a test `server` block | syntax ok |
+| `shellcheck -x deploy/scripts/*.sh` | clean |
+| `actionlint .github/workflows/docker-release.yml` | clean (one SC2016 false positive fixed in the notify step) |
+| `npm audit --omit=dev` | 5 low; no high or critical |
+
+The production Compose file now sets `NODE_ENV=production` and `TZ: UTC`
+explicitly. Relying on the env file for `NODE_ENV` meant one missing line would
+silently run the container in development mode — stack traces in responses and
+Swagger mounted. The PM2 config always set it, so this closes a gap introduced
+by moving the runtime declaration.
+
+The audit findings are the known `deepmerge` advisory (reached through
+`@sendgrid/mail`, no patched release without a breaking downgrade) and
+`fast-xml-parser`. Neither is high or critical. They are not upgraded in this
+branch because a dependency change immediately before a cutover is a worse risk
+than a low-severity advisory; they are a separate PR.
+
 ---
 
 ## 6. Financial currency finding (GHS/USD)
