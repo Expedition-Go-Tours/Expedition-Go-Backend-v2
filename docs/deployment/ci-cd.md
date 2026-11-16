@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | `.github/workflows/ci.yml` | **unchanged** | Lint, full regression suite (258 suites / 4,974 tests baseline), existing PM2 deploy on `main` |
 | `.github/workflows/docker-release.yml` | **new** | Build affected image(s), publish to GHCR, optionally deploy through the scripts |
+| `.github/workflows/deploy-validation.yml` | **new** | Validate Compose rendering, the Nginx fragment, shell scripts and the image-reference guard on deployment changes |
 
 Nothing in `ci.yml` was removed or reordered. The PM2 deploy it performs is still
 the live mechanism, because the VPS still runs PM2. `docker-release.yml` is
@@ -13,6 +14,14 @@ additive and gated off by default.
 
 Run both concurrently and you have two deploy mechanisms. The gate exists to
 make that impossible by accident.
+
+`deploy-validation.yml` exists because the main test suite never parses a Compose
+file, never asks Nginx to read the routing fragment, and never runs a deploy
+script. Those failures would otherwise surface mid-cutover. It is path-filtered
+to deployment inputs and also asserts the two negative cases that matter: a
+missing `*_IMAGE` variable must fail Compose rendering, and `validate_image_ref`
+must reject `:latest` and a foreign repository.
+
 
 ## The change filter
 

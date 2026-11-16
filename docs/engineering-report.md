@@ -176,7 +176,14 @@ These run without a Docker host or a VPS:
 | `nginx -t` with `api-routing.conf` included in a test `server` block | syntax ok |
 | `shellcheck -x deploy/scripts/*.sh` | clean |
 | `actionlint .github/workflows/docker-release.yml` | clean (one SC2016 false positive fixed in the notify step) |
+| `actionlint .github/workflows/deploy-validation.yml` | clean |
 | `npm audit --omit=dev` | 5 low; no high or critical |
+
+The same checks are now permanent: `.github/workflows/deploy-validation.yml`
+runs `bash -n`, shellcheck, Compose rendering (including a missing-image failure
+case), the Nginx fragment under `nginx -t`, and the `validate_image_ref`
+negative cases whenever a deployment input changes. Every step was executed
+locally before the workflow was committed.
 
 The production Compose file now sets `NODE_ENV=production` and `TZ: UTC`
 explicitly. Relying on the env file for `NODE_ENV` meant one missing line would
