@@ -1,3 +1,17 @@
+# LEGACY — not used in production.
+#
+# Caddy is not installed on the VPS and this configuration is not loaded. TLS and
+# routing are handled by host Nginx (`/etc/nginx/sites-enabled/`), which proxies
+# to the PM2 process on 127.0.0.1:5000 and — after the split — to the Stays
+# container on 127.0.0.1:5100. See `deploy/nginx/api-routing.conf`.
+#
+# Do not start this file's stack: it publishes ports 80 and 443, which host Nginx
+# already owns, and it sends *all* paths to one application. The current
+# container topology is `deploy/compose.production.yml`; the legacy single-app
+# stack it belongs to is `docker-compose.prod.yml`.
+#
+# Kept only so the historical deployment files remain readable side by side.
+
 apiv1.travioafrica.com {
 	reverse_proxy app:5000
 }

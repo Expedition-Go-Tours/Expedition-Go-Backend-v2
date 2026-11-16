@@ -1,0 +1,70 @@
+{
+  "$comment": "Which deployable application(s) a changed path can affect. Read by ci/detect-changes.js and asserted by __tests__/unit/ciDependencyMap.test.js. Rules are evaluated in order per file; the first match wins. Shared rules come last so a Stays-specific file is not also treated as shared.",
+  "apps": ["platform", "stays"],
+  "rules": [
+    {
+      "name": "stays-domain",
+      "apps": ["stays"],
+      "paths": [
+        "src/brands/ghana/stays*.js",
+        "src/core/services/staysValidation.js",
+        "apps/stays-api/**"
+      ]
+    },
+    {
+      "name": "platform-domain",
+      "apps": ["platform"],
+      "paths": [
+        "apps/platform-api/**",
+        "routes/**",
+        "providers/**",
+        "app.js",
+        "server.js"
+      ]
+    },
+    {
+      "name": "shared-runtime",
+      "apps": ["platform", "stays"],
+      "paths": [
+        "src/**",
+        "middleware/**",
+        "config/**",
+        "apps/shared/**",
+        "prisma/**",
+        "package.json",
+        "package-lock.json",
+        "Dockerfile",
+        ".dockerignore",
+        "deploy/**",
+        ".github/workflows/docker-release.yml"
+      ]
+    }
+  ],
+  "ignore": [
+    "__tests__/**",
+    "coverage/**",
+    "docs/**",
+    "*.md",
+    "**/*.md",
+    "public/**",
+    "email-templates/**",
+    "sendgrid-templates/**",
+    "bots/**",
+    "utils/**",
+    "scripts/**",
+    "k6/**",
+    "k6-output/**",
+    "reports/**",
+    "junit.xml",
+    ".github/workflows/ci.yml",
+    ".github/workflows/perf.yml",
+    ".github/workflows/security.yml",
+    ".github/workflows/performance-nightly.yml",
+    ".github/workflows/ai-debug.yml",
+    ".github/workflows/ai-debug-prompt.txt"
+  ],
+  "migrations": [
+    "prisma/migrations/**",
+    "prisma/schema.prisma"
+  ]
+}

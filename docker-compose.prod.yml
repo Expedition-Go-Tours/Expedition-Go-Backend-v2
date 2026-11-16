@@ -1,3 +1,23 @@
+# LEGACY — not the production topology. Kept for reference and rollback only.
+#
+# This file describes a single-container, Caddy-fronted bridge-network stack.
+# It is NOT what runs on the VPS: production runs PM2 (`ecosystem.config.js`)
+# behind the host Nginx, and the Docker target described in
+# `deploy/compose.production.yml` replaces it container by container.
+#
+# Why it is obsolete as a deployment path:
+#   - one image serves both applications, so Stays cannot be released alone;
+#   - Caddy terminates TLS on 80/443, but the VPS already uses host Nginx and
+#     ufw rules for those ports — running both would fight for the sockets;
+#   - images are built locally (`build: .`) rather than pulled by immutable tag;
+#   - Redis is a container, while production Redis is a loopback host service.
+#
+# Do not deploy from this file. It has no `container_name` collision protection
+# against the production containers either.
+#
+# Retained because `Caddyfile` references it and both document the earlier
+# container layout that some runbooks still mention.
+
 services:
   app:
     build: .

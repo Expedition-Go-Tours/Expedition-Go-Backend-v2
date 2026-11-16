@@ -12,6 +12,7 @@ node_modules
 
 # Tests & CI
 __tests__
+ci
 coverage
 reports
 junit.xml
@@ -32,6 +33,7 @@ add-test-user.js
 create-test-user.js
 
 # Deployment files (not needed inside the image)
+deploy
 Dockerfile
 .dockerignore
 docker-compose.yml

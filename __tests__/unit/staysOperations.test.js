@@ -1,7 +1,7 @@
 jest.mock('../../src/core/services/prismaClient', () => {
   const prisma = {
     stayProperty: { findMany: jest.fn(), findFirst: jest.fn(), groupBy: jest.fn() },
-    stayAvailabilityOverride: { findFirst: jest.fn() },
+    stayAvailabilityOverride: { findFirst: jest.fn(), findMany: jest.fn() },
     stayBooking: {
       findMany: jest.fn(),
       findFirst: jest.fn(),
@@ -27,6 +27,8 @@ jest.mock('../../src/core/services/prismaClient', () => {
     },
     bookingCounter: { upsert: jest.fn() },
     systemConfig: { findUnique: jest.fn() },
+    $queryRaw: jest.fn(),
+    $queryRawUnsafe: jest.fn(),
     $transaction: jest.fn(),
   };
   prisma.$transaction.mockImplementation((arg) => (
@@ -126,6 +128,8 @@ describe('staysBookingsController', () => {
     });
     prisma.stayBooking.count.mockResolvedValue(0);
     prisma.stayAvailabilityOverride.findFirst.mockResolvedValue(null);
+    prisma.stayAvailabilityOverride.findMany.mockResolvedValue([]);
+    prisma.stayBooking.findMany.mockResolvedValue([]);
     prisma.stayBooking.create.mockResolvedValue(bookingRow());
 
     req.body = {
@@ -157,6 +161,127 @@ describe('staysBookingsController', () => {
     }));
     expect(payload.bookingNumber).toMatch(/^TRG-S-/);
     expect(res.status).toHaveBeenCalledWith(201);
+  });
+
+  it('applies a per-date price override instead of the room rate', async () => {
+    prisma.stayProperty.findFirst.mockResolvedValue({
+      id: 'sp-1',
+      name: 'Akwaaba Coast Hotel',
+      data: {
+        currency: 'GHS',
+        rooms: [{ id: 'r1', name: 'Deluxe King Room', count: 4, price: 120 }],
+        ratePlans: [{ id: 'plan-r1', roomId: 'r1', name: 'Standard rate', price: 120 }],
+      },
+    });
+    prisma.stayAvailabilityOverride.findMany.mockResolvedValue([
+      { date: new Date('2026-11-11T00:00:00.000Z'), closed: false, count: null, price: 200, minStay: null },
+    ]);
+    prisma.stayBooking.findMany.mockResolvedValue([]);
+    prisma.stayBooking.create.mockResolvedValue(bookingRow());
+
+    req.body = {
+      propertyId: 'sp-1',
+      roomId: 'r1',
+      guestName: 'Ama Mensah',
+      checkIn: '2026-11-10',
+      checkOut: '2026-11-12',
+    };
+
+    await bookings.createBooking(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    // 2026-11-10 at the base rate (120) + 2026-11-11 at the override (200).
+    expect(prisma.stayBooking.create.mock.calls[0][0].data.amount).toBe(320);
+  });
+
+  it('rejects a night whose override count leaves no inventory', async () => {
+    prisma.stayProperty.findFirst.mockResolvedValue({
+      id: 'sp-1',
+      name: 'Akwaaba Coast Hotel',
+      data: {
+        currency: 'GHS',
+        rooms: [{ id: 'r1', name: 'Deluxe King Room', count: 4, price: 120 }],
+        ratePlans: [],
+      },
+    });
+    prisma.stayAvailabilityOverride.findMany.mockResolvedValue([
+      { date: new Date('2026-11-11T00:00:00.000Z'), closed: false, count: 0, price: null, minStay: null },
+    ]);
+    prisma.stayBooking.findMany.mockResolvedValue([]);
+
+    req.body = {
+      propertyId: 'sp-1',
+      roomId: 'r1',
+      guestName: 'Ama Mensah',
+      checkIn: '2026-11-10',
+      checkOut: '2026-11-12',
+    };
+
+    await bookings.createBooking(req, res, next);
+
+    expect(prisma.stayBooking.create).not.toHaveBeenCalled();
+    expect(next.mock.calls[0][0].statusCode).toBe(400);
+    expect(next.mock.calls[0][0].message).toMatch(/No rooms are available for 2026-11-11/);
+  });
+
+  it('rejects a stay shorter than the date minimum', async () => {
+    prisma.stayProperty.findFirst.mockResolvedValue({
+      id: 'sp-1',
+      name: 'Akwaaba Coast Hotel',
+      data: {
+        currency: 'GHS',
+        rooms: [{ id: 'r1', name: 'Deluxe King Room', count: 4, price: 120 }],
+        ratePlans: [],
+      },
+    });
+    prisma.stayAvailabilityOverride.findMany.mockResolvedValue([
+      { date: new Date('2026-11-10T00:00:00.000Z'), closed: false, count: null, price: null, minStay: 3 },
+    ]);
+    prisma.stayBooking.findMany.mockResolvedValue([]);
+
+    req.body = {
+      propertyId: 'sp-1',
+      roomId: 'r1',
+      guestName: 'Ama Mensah',
+      checkIn: '2026-11-10',
+      checkOut: '2026-11-12',
+    };
+
+    await bookings.createBooking(req, res, next);
+
+    expect(prisma.stayBooking.create).not.toHaveBeenCalled();
+    expect(next.mock.calls[0][0].statusCode).toBe(400);
+    expect(next.mock.calls[0][0].message).toMatch(/minimum stay of 3 night/i);
+  });
+
+  it('rejects a closed night', async () => {
+    prisma.stayProperty.findFirst.mockResolvedValue({
+      id: 'sp-1',
+      name: 'Akwaaba Coast Hotel',
+      data: {
+        currency: 'GHS',
+        rooms: [{ id: 'r1', name: 'Deluxe King Room', count: 4, price: 120 }],
+        ratePlans: [],
+      },
+    });
+    prisma.stayAvailabilityOverride.findMany.mockResolvedValue([
+      { date: new Date('2026-11-10T00:00:00.000Z'), closed: true, count: null, price: null, minStay: null },
+    ]);
+    prisma.stayBooking.findMany.mockResolvedValue([]);
+
+    req.body = {
+      propertyId: 'sp-1',
+      roomId: 'r1',
+      guestName: 'Ama Mensah',
+      checkIn: '2026-11-10',
+      checkOut: '2026-11-12',
+    };
+
+    await bookings.createBooking(req, res, next);
+
+    expect(prisma.stayBooking.create).not.toHaveBeenCalled();
+    expect(next.mock.calls[0][0].statusCode).toBe(400);
+    expect(next.mock.calls[0][0].message).toMatch(/blocked for this room/);
   });
 
   it('rejects an invalid status transition', async () => {
