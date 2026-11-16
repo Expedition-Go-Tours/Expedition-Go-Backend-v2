@@ -229,11 +229,32 @@ jobs:
           fi
           REMOTE
 
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve platform image digest
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${REGISTRY}/${IMAGE_OWNER}/platform-api:sha-${GITHUB_SHA:0:7}"
+          digest="$(docker buildx imagetools inspect "$tag" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          [ -n "$digest" ] || { echo "::error::could not resolve a digest for $tag"; exit 1; }
+          echo "ref=${tag%@*}@${digest}" >> "$GITHUB_OUTPUT"
+          echo "Resolved ${tag} -> ${digest}" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Run deploy-migrations.sh on the host
         shell: bash
         run: |
           set -euo pipefail
-          IMAGE="${REGISTRY}/${IMAGE_OWNER}/platform-api:sha-${GITHUB_SHA:0:7}"
+          IMAGE="${{ steps.image.outputs.ref }}"
           ssh -i ~/.ssh/deploy_key \
             "root@${{ secrets.HETZNER_HOST }}" \
             "cd '${DEPLOY_PATH}' && ./deploy/scripts/deploy-migrations.sh '${IMAGE}'"
@@ -283,11 +304,32 @@ jobs:
           fi
           REMOTE
 
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve platform image digest
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${REGISTRY}/${IMAGE_OWNER}/platform-api:sha-${GITHUB_SHA:0:7}"
+          digest="$(docker buildx imagetools inspect "$tag" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          [ -n "$digest" ] || { echo "::error::could not resolve a digest for $tag"; exit 1; }
+          echo "ref=${tag%@*}@${digest}" >> "$GITHUB_OUTPUT"
+          echo "Resolved ${tag} -> ${digest}" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Run deploy-platform.sh on the host
         shell: bash
         run: |
           set -euo pipefail
-          IMAGE="${REGISTRY}/${IMAGE_OWNER}/platform-api:sha-${GITHUB_SHA:0:7}"
+          IMAGE="${{ steps.image.outputs.ref }}"
           ssh -i ~/.ssh/deploy_key \
             "root@${{ secrets.HETZNER_HOST }}" \
             "cd '${DEPLOY_PATH}' && ./deploy/scripts/deploy-platform.sh '${IMAGE}'"
@@ -345,11 +387,32 @@ jobs:
           fi
           REMOTE
 
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve stays image digest
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${REGISTRY}/${IMAGE_OWNER}/stays-api:sha-${GITHUB_SHA:0:7}"
+          digest="$(docker buildx imagetools inspect "$tag" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          [ -n "$digest" ] || { echo "::error::could not resolve a digest for $tag"; exit 1; }
+          echo "ref=${tag%@*}@${digest}" >> "$GITHUB_OUTPUT"
+          echo "Resolved ${tag} -> ${digest}" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Run deploy-stays.sh on the host
         shell: bash
         run: |
           set -euo pipefail
-          IMAGE="${REGISTRY}/${IMAGE_OWNER}/stays-api:sha-${GITHUB_SHA:0:7}"
+          IMAGE="${{ steps.image.outputs.ref }}"
           ssh -i ~/.ssh/deploy_key \
             "root@${{ secrets.HETZNER_HOST }}" \
             "cd '${DEPLOY_PATH}' && ./deploy/scripts/deploy-stays.sh '${IMAGE}'"
@@ -362,10 +425,23 @@ jobs:
             "root@${{ secrets.HETZNER_HOST }}" \
             "cd '${DEPLOY_PATH}' && ./deploy/scripts/verify-deployment.sh"
 
+  # ── Public ingress ─────────────────────────────────────────────────────────
+  verify-public:
+    name: Verify public ingress
+    needs: [deploy-platform, deploy-stays]
+    if: ${{ !cancelled() && needs.deploy-platform.result != 'failure' && needs.deploy-stays.result != 'failure' && (needs.deploy-platform.result == 'success' || needs.deploy-stays.result == 'success') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify every public vhost
+        shell: bash
+        run: ./deploy/scripts/verify-public-ingress.sh
+
   # ── Notification ───────────────────────────────────────────────────────────
   notify:
     name: Notify
-    needs: [changes, build, migrate, deploy-platform, deploy-stays]
+    needs: [changes, build, migrate, deploy-platform, deploy-stays, verify-public]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
