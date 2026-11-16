@@ -1,11 +1,18 @@
 # Hetzner cutover runbook
 
-> **Status: not executed.**
+> **Status: executed on 2026-11-16.**
 >
-> Everything in this document is a plan. No Docker installation, Nginx edit,
-> PM2 change, firewall change, database migration, container start or DNS
-> change has been performed on the live server as part of this work. Every step
-> below requires explicit approval before it is run.
+> Phases 1–5 were run with explicit approval: Docker 29.9.3 and Compose 5.7.1
+> installed; `/etc/travio/*.env` created; both `sha-d92644f` images pulled;
+> Stays started on 5100; Nginx split for the four Stays prefixes; Platform
+> moved from PM2 to its container. The cutover interruption was ~4–5 seconds.
+> PM2 is retired from boot (`pm2-deploy.service` disabled, resurrect dump
+> emptied) and retained as a manual rollback path.
+>
+> A database dump and configuration archive were taken immediately afterwards;
+> there was no schema migration in this release. The "Verified current state"
+> table below is the pre-cutover snapshot and is kept as the starting point for
+> a rollback or review.
 
 ## Verified current state (read-only)
 
