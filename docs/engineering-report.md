@@ -260,6 +260,10 @@ The first `main` run (`d92644f`) built and pushed both images and skipped both
 deploy jobs, exactly as intended. Those are the first immutable images available
 for the container cutover.
 
+The first dispatch of the new pipeline exposed a second configuration gap: the
+deploy jobs referenced `DEPLOY_*` secrets that do not exist. They now use the
+repository's existing `HETZNER_HOST` and `HETZNER_SSH_KEY`, run as `root`, and
+accept an optional pinned `DEPLOY_HOST_KEY` with an `ssh-keyscan` fallback.
 The variable and secrets required are listed in `docs/deployment/ci-cd.md`.
 The PM2 deploy in `ci.yml` is now gated behind `PM2_DEPLOY_ENABLED` (unset as of
 the cutover), so the two mechanisms cannot run together. Setting

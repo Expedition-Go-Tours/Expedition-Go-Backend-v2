@@ -198,18 +198,26 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.HETZNER_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           # Pin the host key from a repository secret rather than trusting
           # whatever answers on port 22 the first time.
-          printf '%s\n' "${{ secrets.DEPLOY_HOST_KEY }}" > ~/.ssh/known_hosts
+          # Prefer a pinned host key. When DEPLOY_HOST_KEY is not configured,
+          # fall back to ssh-keyscan so the pipeline can still run; add the
+          # secret to remove the trust-on-first-use window.
+          if [ -n "${{ secrets.DEPLOY_HOST_KEY }}" ]; then
+            printf '%s\n' "${{ secrets.DEPLOY_HOST_KEY }}" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -H "${{ secrets.HETZNER_HOST }}" > ~/.ssh/known_hosts 2>/dev/null
+            [ -s ~/.ssh/known_hosts ] || { echo "::error::could not obtain the host key"; exit 1; }
+          fi
           chmod 600 ~/.ssh/known_hosts
 
       - name: Sync deployment checkout
         shell: bash
         run: |
           ssh -i ~/.ssh/deploy_key \
-            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "root@${{ secrets.HETZNER_HOST }}" \
             "bash -s -- '${DEPLOY_PATH}' '${GITHUB_SHA}'" <<'REMOTE'
           set -euo pipefail
           DEPLOY_PATH="$1"
@@ -227,7 +235,7 @@ jobs:
           set -euo pipefail
           IMAGE="${REGISTRY}/${IMAGE_OWNER}/platform-api:sha-${GITHUB_SHA:0:7}"
           ssh -i ~/.ssh/deploy_key \
-            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "root@${{ secrets.HETZNER_HOST }}" \
             "cd '${DEPLOY_PATH}' && ./deploy/scripts/deploy-migrations.sh '${IMAGE}'"
 
   # ── Deploy Platform API ────────────────────────────────────────────────────
@@ -246,16 +254,24 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.HETZNER_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          printf '%s\n' "${{ secrets.DEPLOY_HOST_KEY }}" > ~/.ssh/known_hosts
+          # Prefer a pinned host key. When DEPLOY_HOST_KEY is not configured,
+          # fall back to ssh-keyscan so the pipeline can still run; add the
+          # secret to remove the trust-on-first-use window.
+          if [ -n "${{ secrets.DEPLOY_HOST_KEY }}" ]; then
+            printf '%s\n' "${{ secrets.DEPLOY_HOST_KEY }}" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -H "${{ secrets.HETZNER_HOST }}" > ~/.ssh/known_hosts 2>/dev/null
+            [ -s ~/.ssh/known_hosts ] || { echo "::error::could not obtain the host key"; exit 1; }
+          fi
           chmod 600 ~/.ssh/known_hosts
 
       - name: Sync deployment checkout
         shell: bash
         run: |
           ssh -i ~/.ssh/deploy_key \
-            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "root@${{ secrets.HETZNER_HOST }}" \
             "bash -s -- '${DEPLOY_PATH}' '${GITHUB_SHA}'" <<'REMOTE'
           set -euo pipefail
           DEPLOY_PATH="$1"
@@ -273,7 +289,7 @@ jobs:
           set -euo pipefail
           IMAGE="${REGISTRY}/${IMAGE_OWNER}/platform-api:sha-${GITHUB_SHA:0:7}"
           ssh -i ~/.ssh/deploy_key \
-            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "root@${{ secrets.HETZNER_HOST }}" \
             "cd '${DEPLOY_PATH}' && ./deploy/scripts/deploy-platform.sh '${IMAGE}'"
 
       - name: Verify both services from the host
@@ -281,7 +297,7 @@ jobs:
         run: |
           set -euo pipefail
           ssh -i ~/.ssh/deploy_key \
-            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "root@${{ secrets.HETZNER_HOST }}" \
             "cd '${DEPLOY_PATH}' && ./deploy/scripts/verify-deployment.sh"
 
   # ── Deploy Stays API ───────────────────────────────────────────────────────
@@ -300,16 +316,24 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.HETZNER_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          printf '%s\n' "${{ secrets.DEPLOY_HOST_KEY }}" > ~/.ssh/known_hosts
+          # Prefer a pinned host key. When DEPLOY_HOST_KEY is not configured,
+          # fall back to ssh-keyscan so the pipeline can still run; add the
+          # secret to remove the trust-on-first-use window.
+          if [ -n "${{ secrets.DEPLOY_HOST_KEY }}" ]; then
+            printf '%s\n' "${{ secrets.DEPLOY_HOST_KEY }}" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -H "${{ secrets.HETZNER_HOST }}" > ~/.ssh/known_hosts 2>/dev/null
+            [ -s ~/.ssh/known_hosts ] || { echo "::error::could not obtain the host key"; exit 1; }
+          fi
           chmod 600 ~/.ssh/known_hosts
 
       - name: Sync deployment checkout
         shell: bash
         run: |
           ssh -i ~/.ssh/deploy_key \
-            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "root@${{ secrets.HETZNER_HOST }}" \
             "bash -s -- '${DEPLOY_PATH}' '${GITHUB_SHA}'" <<'REMOTE'
           set -euo pipefail
           DEPLOY_PATH="$1"
@@ -327,7 +351,7 @@ jobs:
           set -euo pipefail
           IMAGE="${REGISTRY}/${IMAGE_OWNER}/stays-api:sha-${GITHUB_SHA:0:7}"
           ssh -i ~/.ssh/deploy_key \
-            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "root@${{ secrets.HETZNER_HOST }}" \
             "cd '${DEPLOY_PATH}' && ./deploy/scripts/deploy-stays.sh '${IMAGE}'"
 
       - name: Verify both services from the host
@@ -335,7 +359,7 @@ jobs:
         run: |
           set -euo pipefail
           ssh -i ~/.ssh/deploy_key \
-            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "root@${{ secrets.HETZNER_HOST }}" \
             "cd '${DEPLOY_PATH}' && ./deploy/scripts/verify-deployment.sh"
 
   # ── Notification ───────────────────────────────────────────────────────────
