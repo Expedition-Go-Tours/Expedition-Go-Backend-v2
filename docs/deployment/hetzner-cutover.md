@@ -166,8 +166,10 @@ first.
    observed RSS against the 768 MB ceiling. If it approaches the limit, raise the
    limit rather than letting the OOM killer be the restart policy.
 
-3. Place the Compose file where the scripts expect it (default
-   `COMPOSE_FILE=/opt/travio/api/deploy/compose.production.yml`):
+3. Optional: place the Compose file at `/opt/travio/api/deploy/`. The deploy
+   scripts now default to `<repo>/deploy/compose.production.yml`, and the release
+   workflow syncs the checkout to the release commit, so the copy is only for
+   manual/legacy runs:
 
    ```bash
    install -m 0644 /home/deploy/Expedition-Go-Backend-v2/deploy/compose.production.yml \

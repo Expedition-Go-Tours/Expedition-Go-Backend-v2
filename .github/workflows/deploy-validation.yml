@@ -112,6 +112,33 @@ jobs:
             -v "${conf}:/etc/nginx/conf.d/default.conf:ro" \
             nginx:alpine nginx -t
 
+      - name: Readiness gate requires the right container and a healthy one
+        shell: bash
+        run: |
+          set -euo pipefail
+          healthy=travio-health-positive
+          unhealthy=travio-health-negative
+          docker run -d --name "$healthy" \
+            --health-cmd "exit 0" --health-interval 1s --health-timeout 1s --health-retries 1 \
+            alpine sleep 30 > /dev/null
+          docker run -d --name "$unhealthy" \
+            --health-cmd "exit 1" --health-interval 1s --health-timeout 1s --health-retries 1 \
+            alpine sleep 30 > /dev/null
+          trap 'docker rm -f "$healthy" "$unhealthy" > /dev/null 2>&1 || true' EXIT
+          sleep 3
+          if ! ( . deploy/scripts/lib.sh; wait_container_healthy "$healthy" alpine 5 1 ); then
+            echo "::error::readiness gate rejected a healthy container"
+            exit 1
+          fi
+          if ( . deploy/scripts/lib.sh; wait_container_healthy "$unhealthy" alpine 1 0 ); then
+            echo "::error::readiness gate accepted an unhealthy container"
+            exit 1
+          fi
+          if ( . deploy/scripts/lib.sh; wait_container_healthy "$healthy" not-the-image 1 0 ); then
+            echo "::error::readiness gate accepted the wrong image"
+            exit 1
+          fi
+
       - name: Deploy scripts reject the wrong image
         shell: bash
         run: |

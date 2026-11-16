@@ -205,6 +205,22 @@ jobs:
           printf '%s\n' "${{ secrets.DEPLOY_HOST_KEY }}" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
+      - name: Sync deployment checkout
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "bash -s -- '${DEPLOY_PATH}' '${GITHUB_SHA}'" <<'REMOTE'
+          set -euo pipefail
+          DEPLOY_PATH="$1"
+          GITHUB_SHA="$2"
+          if [ "$(id -u)" -eq 0 ] && id deploy >/dev/null 2>&1; then
+            su - deploy -c "cd '$DEPLOY_PATH' && git fetch --quiet origin && git reset --hard '$GITHUB_SHA'"
+          else
+            cd "$DEPLOY_PATH" && git fetch --quiet origin && git reset --hard "$GITHUB_SHA"
+          fi
+          REMOTE
+
       - name: Run deploy-migrations.sh on the host
         shell: bash
         run: |
@@ -234,6 +250,22 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           printf '%s\n' "${{ secrets.DEPLOY_HOST_KEY }}" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
+
+      - name: Sync deployment checkout
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "bash -s -- '${DEPLOY_PATH}' '${GITHUB_SHA}'" <<'REMOTE'
+          set -euo pipefail
+          DEPLOY_PATH="$1"
+          GITHUB_SHA="$2"
+          if [ "$(id -u)" -eq 0 ] && id deploy >/dev/null 2>&1; then
+            su - deploy -c "cd '$DEPLOY_PATH' && git fetch --quiet origin && git reset --hard '$GITHUB_SHA'"
+          else
+            cd "$DEPLOY_PATH" && git fetch --quiet origin && git reset --hard "$GITHUB_SHA"
+          fi
+          REMOTE
 
       - name: Run deploy-platform.sh on the host
         shell: bash
@@ -272,6 +304,22 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           printf '%s\n' "${{ secrets.DEPLOY_HOST_KEY }}" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
+
+      - name: Sync deployment checkout
+        shell: bash
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "bash -s -- '${DEPLOY_PATH}' '${GITHUB_SHA}'" <<'REMOTE'
+          set -euo pipefail
+          DEPLOY_PATH="$1"
+          GITHUB_SHA="$2"
+          if [ "$(id -u)" -eq 0 ] && id deploy >/dev/null 2>&1; then
+            su - deploy -c "cd '$DEPLOY_PATH' && git fetch --quiet origin && git reset --hard '$GITHUB_SHA'"
+          else
+            cd "$DEPLOY_PATH" && git fetch --quiet origin && git reset --hard "$GITHUB_SHA"
+          fi
+          REMOTE
 
       - name: Run deploy-stays.sh on the host
         shell: bash
