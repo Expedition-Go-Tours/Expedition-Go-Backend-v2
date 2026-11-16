@@ -222,11 +222,20 @@ jobs:
           set -euo pipefail
           DEPLOY_PATH="$1"
           GITHUB_SHA="$2"
+          # deploy-platform and deploy-stays run concurrently and both reset
+          # this checkout. Concurrent `git fetch` updates the same remote ref and
+          # fails with "incorrect old value provided"; serialize the whole
+          # fetch+reset through one lock.
+          mkdir -p /var/lib/travio
+          LOCK="/var/lib/travio/checkout.lock"
+          exec 9>"$LOCK"
+          flock -w 120 9
           if [ "$(id -u)" -eq 0 ] && id deploy >/dev/null 2>&1; then
             su - deploy -c "cd '$DEPLOY_PATH' && git fetch --quiet origin && git reset --hard '$GITHUB_SHA'"
           else
             cd "$DEPLOY_PATH" && git fetch --quiet origin && git reset --hard "$GITHUB_SHA"
           fi
+          flock -u 9
           REMOTE
 
       - name: Set up Buildx
@@ -297,11 +306,20 @@ jobs:
           set -euo pipefail
           DEPLOY_PATH="$1"
           GITHUB_SHA="$2"
+          # deploy-platform and deploy-stays run concurrently and both reset
+          # this checkout. Concurrent `git fetch` updates the same remote ref and
+          # fails with "incorrect old value provided"; serialize the whole
+          # fetch+reset through one lock.
+          mkdir -p /var/lib/travio
+          LOCK="/var/lib/travio/checkout.lock"
+          exec 9>"$LOCK"
+          flock -w 120 9
           if [ "$(id -u)" -eq 0 ] && id deploy >/dev/null 2>&1; then
             su - deploy -c "cd '$DEPLOY_PATH' && git fetch --quiet origin && git reset --hard '$GITHUB_SHA'"
           else
             cd "$DEPLOY_PATH" && git fetch --quiet origin && git reset --hard "$GITHUB_SHA"
           fi
+          flock -u 9
           REMOTE
 
       - name: Set up Buildx
@@ -380,11 +398,20 @@ jobs:
           set -euo pipefail
           DEPLOY_PATH="$1"
           GITHUB_SHA="$2"
+          # deploy-platform and deploy-stays run concurrently and both reset
+          # this checkout. Concurrent `git fetch` updates the same remote ref and
+          # fails with "incorrect old value provided"; serialize the whole
+          # fetch+reset through one lock.
+          mkdir -p /var/lib/travio
+          LOCK="/var/lib/travio/checkout.lock"
+          exec 9>"$LOCK"
+          flock -w 120 9
           if [ "$(id -u)" -eq 0 ] && id deploy >/dev/null 2>&1; then
             su - deploy -c "cd '$DEPLOY_PATH' && git fetch --quiet origin && git reset --hard '$GITHUB_SHA'"
           else
             cd "$DEPLOY_PATH" && git fetch --quiet origin && git reset --hard "$GITHUB_SHA"
           fi
+          flock -u 9
           REMOTE
 
       - name: Set up Buildx
