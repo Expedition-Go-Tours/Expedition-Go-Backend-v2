@@ -98,11 +98,21 @@ describe('staysFinanceController', () => {
     expect(res.json).toHaveBeenCalledWith({
       status: 'success',
       data: expect.objectContaining({
-        availableBalance: { amount: 306, bookingCount: 1 },
-        pendingClearance: expect.objectContaining({ amount: 200, bookingCount: 1 }),
-        inReview: expect.objectContaining({ total: 150, count: 1 }),
-        paidOut: { total: 100, count: 1 },
+        availableBalance: { amount: 306, bookingCount: 1, currency: 'GHS' },
+        pendingClearance: expect.objectContaining({ amount: 200, bookingCount: 1, currency: 'GHS' }),
+        inReview: expect.objectContaining({ total: 150, count: 1, currency: 'GHS' }),
+        paidOut: { total: 100, count: 1, currency: 'GHS' },
         currency: 'GHS',
+        mixedCurrencies: false,
+        currencies: expect.arrayContaining([
+          expect.objectContaining({
+            currency: 'GHS',
+            availableBalance: { amount: 306, bookingCount: 1 },
+            pendingClearance: { amount: 200, bookingCount: 1 },
+            inReview: { total: 150, count: 1, requestCount: 1 },
+            paidOut: { total: 100, count: 1 },
+          }),
+        ]),
       }),
     });
   });

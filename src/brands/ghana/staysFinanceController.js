@@ -33,6 +33,19 @@ function money(value) {
   return Number(value || 0);
 }
 
+/** Group rows by their currency and sum one amount column. */
+function groupByCurrency(rows, amountKey) {
+  const map = new Map();
+  for (const row of rows) {
+    const currency = row.currency || 'GHS';
+    const current = map.get(currency) || { currency, amount: 0, count: 0 };
+    current.amount += money(row[amountKey]);
+    current.count += 1;
+    map.set(currency, current);
+  }
+  return [...map.values()].sort((a, b) => b.amount - a.amount);
+}
+
 function serializeEarning(row) {
   const openDispute = (row.disputes || []).find(
     (dispute) => dispute.status === 'OPEN' || dispute.status === 'UNDER_REVIEW',
@@ -48,7 +61,7 @@ function serializeEarning(row) {
     supplierPayout: money(row.supplierPayout),
     platformCommission: money(row.platformCommission),
     commissionRate: Number(row.commissionRate || 0),
-    currency: row.currency || 'USD',
+    currency: row.currency || 'GHS',
     payoutStatus: row.payoutStatus,
     status: displayBookingStatus(row.status),
     property: { name: row.property?.name || 'Property' },
@@ -108,8 +121,44 @@ exports.getSummary = catchAsync(async (req, res) => {
       && inPayoutStatuses.has(booking.payoutStatus),
   );
   const paid = bookings.filter((booking) => booking.payoutStatus === 'PAID');
-  const sum = (rows) => rows.reduce((total, row) => total + money(row.supplierPayout), 0);
-  const currency = bookings.find((booking) => booking.currency)?.currency || 'USD';
+
+  const availableBuckets = groupByCurrency(available, 'supplierPayout');
+  const pendingBuckets = groupByCurrency(pending, 'supplierPayout');
+  const paidBuckets = groupByCurrency(paid, 'supplierPayout');
+  const requestBuckets = groupByCurrency(requests, 'amount');
+  const currencies = [...new Set(
+    [...availableBuckets, ...pendingBuckets, ...paidBuckets, ...requestBuckets]
+      .map((bucket) => bucket.currency),
+  )];
+  const bucketFor = (list, currency) =>
+    list.find((bucket) => bucket.currency === currency) || { currency, amount: 0, count: 0 };
+
+  const currencyRows = currencies.map((currency) => {
+    const a = bucketFor(availableBuckets, currency);
+    const p = bucketFor(pendingBuckets, currency);
+    const r = bucketFor(requestBuckets, currency);
+    const d = bucketFor(paidBuckets, currency);
+    return {
+      currency,
+      availableBalance: { amount: a.amount, bookingCount: a.count },
+      pendingClearance: { amount: p.amount, bookingCount: p.count },
+      inReview: { total: r.amount, count: r.count, requestCount: r.count },
+      paidOut: { total: d.amount, count: d.count },
+    };
+  });
+
+  const primary = [...currencyRows].sort(
+    (a, b) =>
+      (b.availableBalance.amount + b.pendingClearance.amount)
+      - (a.availableBalance.amount + a.pendingClearance.amount),
+  )[0] || {
+    currency: 'GHS',
+    availableBalance: { amount: 0, bookingCount: 0 },
+    pendingClearance: { amount: 0, bookingCount: 0 },
+    inReview: { total: 0, count: 0, requestCount: 0 },
+    paidOut: { total: 0, count: 0 },
+  };
+
   const now = new Date();
   const closesAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
@@ -123,19 +172,31 @@ exports.getSummary = catchAsync(async (req, res) => {
   res.status(200).json({
     status: 'success',
     data: {
-      availableBalance: { amount: sum(available), bookingCount: available.length },
+      availableBalance: {
+        amount: primary.availableBalance.amount,
+        bookingCount: primary.availableBalance.bookingCount,
+        currency: primary.currency,
+      },
       pendingClearance: {
-        amount: sum(pending),
-        bookingCount: pending.length,
+        amount: primary.pendingClearance.amount,
+        bookingCount: primary.pendingClearance.bookingCount,
         clearanceBufferDays: 0,
-        currency,
+        currency: primary.currency,
       },
       inReview: {
-        total: requests.reduce((total, request) => total + money(request.amount), 0),
-        count: requests.length,
-        requestCount: requests.length,
+        total: primary.inReview.total,
+        count: primary.inReview.count,
+        requestCount: primary.inReview.requestCount,
+        currency: primary.currency,
       },
-      paidOut: { total: sum(paid), count: paid.length },
+      paidOut: {
+        total: primary.paidOut.total,
+        count: primary.paidOut.count,
+        currency: primary.currency,
+      },
+      currency: primary.currency,
+      mixedCurrencies: currencyRows.length > 1,
+      currencies: currencyRows,
       withdrawalWindow: {
         open: available.length > 0 && Boolean(plan.hasVerifiedPayoutMethod),
         opensAt: now,
@@ -143,7 +204,6 @@ exports.getSummary = catchAsync(async (req, res) => {
       },
       currentCycle: { label: plan.scheduleLabel || '' },
       payoutPlan,
-      currency,
     },
   });
 });
@@ -170,18 +230,48 @@ exports.getEarnings = catchAsync(async (req, res) => {
     prisma.stayBooking.count({ where }),
     prisma.stayBooking.findMany({
       where: { supplierId, status: NON_CANCELLED },
-      select: { supplierPayout: true, payoutStatus: true },
+      select: { supplierPayout: true, payoutStatus: true, currency: true },
     }),
   ]);
 
+  const totalBuckets = groupByCurrency(allRows, 'supplierPayout');
+  const eligibleBuckets = groupByCurrency(
+    allRows.filter(
+      (row) => row.payoutStatus === 'ELIGIBLE' || row.payoutStatus === 'PENDING',
+    ),
+    'supplierPayout',
+  );
+  const paidBuckets = groupByCurrency(
+    allRows.filter((row) => row.payoutStatus === 'PAID'),
+    'supplierPayout',
+  );
+  const summaryCurrencies = [...new Set(
+    [...totalBuckets, ...eligibleBuckets, ...paidBuckets].map((bucket) => bucket.currency),
+  )];
+  const bucketFor = (list, currency) =>
+    list.find((bucket) => bucket.currency === currency) || { currency, amount: 0, count: 0 };
+  const summaryRows = summaryCurrencies.map((currency) => {
+    const total = bucketFor(totalBuckets, currency);
+    const eligible = bucketFor(eligibleBuckets, currency);
+    const paid = bucketFor(paidBuckets, currency);
+    return {
+      currency,
+      total: total.amount,
+      eligible: eligible.amount,
+      paid: paid.amount,
+      bookings: total.count,
+    };
+  });
+  const primary = summaryRows[0] || {
+    currency: 'GHS', total: 0, eligible: 0, paid: 0, bookings: 0,
+  };
   const summary = {
-    total: allRows.reduce((total, row) => total + money(row.supplierPayout), 0),
-    eligible: allRows
-      .filter((row) => row.payoutStatus === 'ELIGIBLE' || row.payoutStatus === 'PENDING')
-      .reduce((total, row) => total + money(row.supplierPayout), 0),
-    paid: allRows
-      .filter((row) => row.payoutStatus === 'PAID')
-      .reduce((total, row) => total + money(row.supplierPayout), 0),
+    total: primary.total,
+    eligible: primary.eligible,
+    paid: primary.paid,
+    currency: primary.currency,
+    mixedCurrencies: summaryRows.length > 1,
+    currencies: summaryRows,
   };
 
   res.status(200).json({
@@ -273,7 +363,7 @@ exports.createPayoutRequest = catchAsync(async (req, res) => {
     throw new AppError('Eligible bookings span multiple currencies; request each currency separately', 400);
   }
 
-  const currency = currencies[0] || 'USD';
+  const currency = currencies[0] || 'GHS';
   const amount = eligible.reduce((total, booking) => total + money(booking.supplierPayout), 0);
   if (!(amount > 0)) throw new AppError('There is no payable balance to request', 400);
 
@@ -365,7 +455,7 @@ exports.getCharges = catchAsync(async (req, res) => {
   const openTotals = new Map();
   for (const row of rows) {
     if (row.status !== 'OPEN') continue;
-    const currency = row.currency || 'USD';
+    const currency = row.currency || 'GHS';
     openTotals.set(currency, (openTotals.get(currency) || 0) + money(row.amount));
   }
 
@@ -407,7 +497,7 @@ function serializeDispute(dispute) {
       property: { name: dispute.stayBooking?.property?.name || 'Property' },
       travelDate: dateKey(dispute.stayBooking?.checkIn),
       grossAmount: money(dispute.stayBooking?.amount),
-      currency: dispute.stayBooking?.currency || 'USD',
+      currency: dispute.stayBooking?.currency || 'GHS',
     },
   };
 }
@@ -519,7 +609,7 @@ function serializeClaim(claim) {
     booking: {
       bookingNumber: claim.stayBooking?.bookingNumber || '',
       grossAmount: money(claim.stayBooking?.amount),
-      currency: claim.stayBooking?.currency || 'USD',
+      currency: claim.stayBooking?.currency || 'GHS',
       customerName: claim.stayBooking?.guestName || claim.stayBooking?.customer?.name || 'Guest',
       customerEmail: claim.stayBooking?.guestEmail || claim.stayBooking?.customer?.email || '',
       propertyTitle: claim.stayBooking?.property?.name || 'Property',

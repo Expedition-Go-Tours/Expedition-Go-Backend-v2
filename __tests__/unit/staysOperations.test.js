@@ -408,7 +408,9 @@ describe('staysAnalyticsController', () => {
       { status: 'DRAFT', _count: 1 },
     ]);
     prisma.stayBooking.count.mockResolvedValue(5);
-    prisma.stayBooking.aggregate.mockResolvedValue({ _sum: { amount: 1200 } });
+    prisma.stayBooking.groupBy.mockResolvedValue([
+      { currency: 'GHS', _sum: { amount: 1200 }, _count: 5 },
+    ]);
     prisma.stayReview.aggregate.mockResolvedValue({ _avg: { rating: 4.5 }, _count: 4 });
 
     await analytics.getAnalyticsSummary(req, res, next);
@@ -419,7 +421,12 @@ describe('staysAnalyticsController', () => {
       data: {
         properties: { active: 2, total: 3 },
         bookings: { total: 5 },
-        earnings: { totalEarnings: 1200 },
+        earnings: {
+          totalEarnings: 1200,
+          currency: 'GHS',
+          mixedCurrencies: false,
+          currencies: [{ currency: 'GHS', totalEarnings: 1200, bookings: 5 }],
+        },
         reviews: { averageRating: 4.5, total: 4 },
       },
     });
