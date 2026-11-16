@@ -10,8 +10,8 @@ exercised, what has not, and the exact commands for the remaining case.
 | Stays image | **drilled 2026-11-16** | short-SHA ↔ long-SHA tag of the same image, real container recreate, readiness gate passed |
 | Nginx routing | **drilled 2026-11-16** | pre-include vhosts restored, Stays still served by 5000, split re-applied, Stays back on 5100; no downtime |
 | Database restore | **automated weekly + manual 16 Nov** | `docs/deployment/backup-restore.md` |
-| Platform image (`rollback-platform.sh`) | **not drilled** | previous image is recorded (`PLATFORM_IMAGE_PREVIOUS`); needs a window |
-| Platform → PM2 fallback | **not drilled** | needs a window; PM2 app definition is removed, ecosystem file retained |
+| Platform image (`rollback-platform.sh`) | **drilled 2026-11-16** | 8b3e127 → b709f99 → 8b3e127; readiness gate passed; Stays `StartedAt` unchanged |
+| Platform → PM2 fallback | **drilled 2026-11-16** | container stopped, PM2 served `/ready` in 3s, routes verified, container restored in 3s |
 
 ## Stays image rollback (executed)
 
@@ -46,24 +46,29 @@ PM2 process.
 
 No downtime: both upstreams served Stays during the drill.
 
-## Platform image rollback (planned)
+## Platform image rollback (executed 2026-11-16)
 
-The previous image is recorded, e.g. `PLATFORM_IMAGE_PREVIOUS=…/platform-api:sha-5d8a6b3`.
-In a low-traffic window:
+Recorded current image:
+`…/platform-api:sha-8b3e127@sha256:2131e9db…`; previous `…/platform-api:sha-b709f99`.
 
 ```bash
-cd /home/deploy/Expedition-Go-Backend-v2
 ./deploy/scripts/rollback-platform.sh
-./deploy/scripts/verify-deployment.sh
+./deploy/scripts/deploy-platform.sh "<the saved digest ref>"
 ```
 
-Then deploy the intended image forward again. Confirm `travio-stays-api`
-`StartedAt` is unchanged.
+Observed:
 
-## Platform → PM2 fallback (planned)
+- Rollback recreated the container on `b709f99`; `/health` reported commit
+  `b709f99`, Tours 200 and Stays 401.
+- Forward deploy recreated it on the saved digest; `/health` reported commit
+  `8b3e127`.
+- `travio-stays-api` `StartedAt` stayed `2026-11-16T15:38:07Z` throughout.
+- Both directions passed the container-identity/health gate before `/ready`.
 
-Use only if the container cannot be recovered. This causes an interruption
-because two processes cannot bind `127.0.0.1:5000`.
+## Platform → PM2 fallback (executed 2026-11-16)
+
+This causes an interruption because two processes cannot bind `127.0.0.1:5000`.
+It was exercised in a window with the container on `8b3e127`.
 
 1. Stop the container:
 
@@ -92,6 +97,14 @@ because two processes cannot bind `127.0.0.1:5000`.
    ```
 
    Then run `verify-deployment.sh` and the public-ingress check.
+
+Observed during the drill:
+
+- `/ready` returned 200 through PM2 after 3 seconds; `/health` was successful,
+  Tours 200 and Stays 401.
+- `travio-stays-api` was untouched (same `StartedAt`).
+- After returning, the container was ready in 3 seconds, healthy, and reported
+  commit `8b3e127`; PM2 had no app and the dump was empty.
 
 ## Acceptance for the remaining drills
 

@@ -317,31 +317,36 @@ image **and** its Docker healthcheck to be healthy before the application
 commit before running deploy scripts; previously a stale checkout meant a script
 fix would not take effect on the next release.
 
-Not done yet:
+The `8b3e127` release exposed one more race: the two deploy jobs fetched the
+same checkout concurrently and the Stays job failed with `incorrect old value
+provided`. The sync is now serialized with `flock`. The Stays container was
+redeployed manually to `8b3e127`, then the Platform image and PM2 fallback
+drills were run.
 
-- `DOCKER_DEPLOY_ENABLED` is still unset; releases do not auto-deploy.
-- The currency map and grouped reporting are unchanged.
+Current state after the 16 November releases:
+
+- `DOCKER_DEPLOY_ENABLED` is enabled; main pushes build and deploy the affected
+  images.
+- Public ingress is checked automatically (`verify-public`) and by
+  `verify-public-ingress.sh`.
+- Deploys are digest-pinned.
+- The Platform image rollback and the Platform-to-PM2 fallback were drilled.
+- Currency reporting and the settlement policy are still unchanged.
 - No staging environment.
 
 ---
 
 ## 9. Remaining work, in order
 
-1. **Merge this readiness fix.** It adds the container-identity gate and the
-   host-checkout sync. The PM2 deploy gate is already on `main`.
-2. **Enable the container pipeline** by setting `DOCKER_DEPLOY_ENABLED=true`,
-   then ship a Stays-only change and confirm the Platform container's
-   `StartedAt` does not move.
-3. **Drill the Platform-to-PM2 fallback in a window.** The Stays image
-   rollback and the Nginx routing rollback have already been drilled on the
-   host; the Platform fallback stops the container, so it needs a window.
-4. **Click through the supplier dashboard** on the new Stays process: property
+1. **Merge the checkout-sync race fix.** Concurrent `git fetch` in the two
+   deploy jobs failed on `8b3e127`; the sync is now serialized with `flock`.
+2. **Click through the supplier dashboard** on the Stays process: property
    list, calendar, a test reservation (then cancel), finance.
-5. **Decide and configure the currency policy**; implement grouped reporting
+3. **Decide and configure the currency policy**; implement grouped reporting
    and the currency-aware refund threshold map as a separate change.
-6. **Add a staging environment.** The readiness gate and the DB-backed suite are
+4. **Add a staging environment.** The readiness gate and the DB-backed suite are
    still the only pre-production signals.
-7. **Relational inventory** as a separate project with a backfill dry run.
+5. **Relational inventory** as a separate project with a backfill dry run.
 
 ## 10. Known limitations
 
@@ -351,9 +356,9 @@ Not done yet:
 - `sha-<commit>` tags are mutable on GHCR; use digests for exact provenance.
 - The deploy scripts have run against the real host (`deploy-stays.sh`,
   `deploy-platform.sh`, `verify-deployment.sh`). The Stays image rollback was
-  drilled with a real container recreate (short-SHA ↔ long-SHA tags of the same
-  image), and the Nginx routing rollback was drilled live with no downtime. The
-  Platform-to-PM2 fallback has **not** been drilled; it needs a window.
+  drilled with a real container recreate, the Nginx routing rollback was drilled
+  live with no downtime, and the Platform image + PM2 fallback were drilled on
+  2026-11-16. See `docs/deployment/rollback-drills.md`.
 - Images are `linux/amd64` only, matching the VPS.
 - No image signing (`cosign`) yet; provenance and SBOM are published.
 - The Stays/Platform import boundary is enforced by tests, not by an ESLint
