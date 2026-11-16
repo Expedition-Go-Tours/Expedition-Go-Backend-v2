@@ -2,10 +2,10 @@
 
 **Branch:** `feat/two-app-split` (merged to `main` as `d92644f`)
 **Date:** 2026-11-16
-**Status:** merged and deployed through the existing PM2 pipeline, then verified
-healthy. The container/host cutover has **not** started: Docker is not installed,
-Nginx and PM2 configuration are unchanged, and this release applied no database
-migration.
+**Status:** merged (`d92644f`) and fully cut over to containers on 2026-11-16.
+The Platform API and Stays API run as independent containers behind host Nginx;
+PM2 is retired from the runtime and retained only as a rollback path. This
+release applied no database migration.
 
 This report separates three things that are easy to conflate:
 
@@ -261,62 +261,64 @@ deploy jobs, exactly as intended. Those are the first immutable images available
 for the container cutover.
 
 The variable and secrets required are listed in `docs/deployment/ci-cd.md`.
-**Enabling it while the PM2 deploy in `ci.yml` still runs would put two deploy
-mechanisms on one host.** That ordering is a precondition, not a suggestion.
+The PM2 deploy in `ci.yml` is now gated behind `PM2_DEPLOY_ENABLED` (unset as of
+the cutover), so the two mechanisms cannot run together. Setting
+`DOCKER_DEPLOY_ENABLED=true` enables the container pipeline; setting
+`PM2_DEPLOY_ENABLED=true` is the deliberate rollback path.
 
 ---
 
-## 8. Production state
+## 8. Production state after the cutover
 
-The merge to `main` (`d92644f`, PR #178) triggered the existing `ci.yml` PM2
-deploy. Verified read-only immediately afterwards:
+Both applications run as containers as of 2026-11-16. Verified from the host and
+from outside:
 
 | Item | Observed |
 | --- | --- |
-| Checkout | `d92644f` |
-| PM2 | `expedition-api` online, cluster mode, restarted by the deploy, ~317 MB RSS |
-| `/health` | 200, `service: platform-api`, database and Redis healthy, 12/12 workers running, no missing or stale schedules |
-| `/api/v1/tours` and `/api/tours` | 200 |
-| Stays route, both prefixes | 401 (mounted and guarded) |
-| Port 5000 | `127.0.0.1:5000`; the loopback bind took effect and PM2's God daemon owns the socket |
-| Docker | not installed |
-| Nginx, PM2 config, firewall, DNS | unchanged |
-| Database migration | none in this release |
+| Platform container | `travio-platform-api`, healthy, `sha-d92644f`, non-root, 768 MB limit, ~257 MB RSS |
+| Stays container | `travio-stays-api`, healthy, `sha-d92644f`, non-root, 384 MB limit, ~114 MB RSS |
+| Platform `/health` | 200, `service: platform-api`, DB and Redis healthy, 12/12 workers, 33/32 schedules, commit `d92644f` |
+| Stays `/health` | 200, `service: stays-api`, DB and Redis healthy |
+| Ports | `127.0.0.1:5000` and `127.0.0.1:5100`, both owned by the container processes; public 5100 refused |
+| Nginx | Stays prefixes → 5100, everything else → 5000, on all three vhosts |
+| WebSocket | **101** through Nginx on every vhost |
+| PM2 | app removed from the daemon and the resurrect dump; `pm2-deploy.service` disabled; Docker enabled at boot |
+| Deploy state | `/var/lib/travio/deploy-state.env` records both images |
+| Database migration | none |
+| Cutover interruption | ~4–5 seconds of connection-refused/502 at 11:56:16–18, bounded by the readiness gate |
 
-`docker-release.yml` also ran on the same push: both images built and were
-pushed, and both deploy jobs were skipped because `DOCKER_DEPLOY_ENABLED` is not
-set. No container was started.
+The PM2 rollback path is retained: stop the Platform container, then
+`systemctl enable --now pm2-deploy` and
+`pm2 start ecosystem.config.js --only expedition-api`. The Stays container and
+the Nginx routing are independent of that step.
 
-Not done, and still approval-gated:
+Backups taken before further changes: an 11 MB custom-format `pg_dump`
+(`/var/backups/travio-20261116-1158.dump`, `0600`) and a configuration archive
+covering Nginx, `/etc/travio`, `/opt/travio` and the deploy state.
 
-- Docker install and the `/etc/travio/*.env` files
-- GHCR login on the host and an image pull
-- the Nginx routing fragment
-- a Stays container, and the Platform container cutover
-- any firewall or DNS change
+Not done yet:
 
-The PM2 rollback path remains available: revert the merge commit and let
-`ci.yml` deploy again. No container state is involved.
+- `DOCKER_DEPLOY_ENABLED` is still unset; releases do not auto-deploy.
+- The currency map and grouped reporting are unchanged.
+- No staging environment.
 
 ---
 
 ## 9. Remaining work, in order
 
-1. **Container cutover, phases 1-3.** The code half is live. The runbook is
-   `docs/deployment/hetzner-cutover.md`; every phase is approval-gated and Stays
-   is introduced before the Platform container replaces PM2.
-2. **Disable the PM2 deploy in `ci.yml`** before setting
-   `DOCKER_DEPLOY_ENABLED=true`.
-3. **Create the deploy secrets and `/etc/travio/*.env`** on the host, with a
-   read-only GHCR token. The JWT and database values must match across both
-   files.
-4. **Test a rollback deliberately** (`rollback-stays.sh`, then deploy forward)
-   before relying on it.
-5. **Decide the currency question** in `financial-currency.md`; implement
-   grouped reporting and a fail-closed refund threshold as a separate change.
-6. **Add a staging environment.** The single biggest remaining gap: the
-   readiness gate and the DB-backed suite are currently the only pre-production
-   signals beyond this PM2 release.
+1. **Merge the CI gate** (`chore/retire-pm2-deploy`) before any other push to
+   `main`. Until it lands, a merge would run the old PM2 deploy.
+2. **Enable the container pipeline** by setting `DOCKER_DEPLOY_ENABLED=true`,
+   then ship a Stays-only change and confirm the Platform container's
+   `StartedAt` does not move.
+3. **Drill the rollback** (`rollback-stays.sh`, then deploy forward; then the
+   Platform equivalent in a window).
+4. **Click through the supplier dashboard** on the new Stays process: property
+   list, calendar, a test reservation (then cancel), finance.
+5. **Decide and configure the currency policy**; implement grouped reporting
+   and the currency-aware refund threshold map as a separate change.
+6. **Add a staging environment.** The readiness gate and the DB-backed suite are
+   still the only pre-production signals.
 7. **Relational inventory** as a separate project with a backfill dry run.
 
 ## 10. Known limitations
@@ -325,8 +327,9 @@ The PM2 rollback path remains available: revert the merge commit and let
   bounded interruption on Platform replacement. The runbook says so.
 - Migrations are forward-only; every change must be additive first.
 - `sha-<commit>` tags are mutable on GHCR; use digests for exact provenance.
-- Deploy scripts are syntax-checked and reviewed, not executed against a real
-  Docker host — the workflow cannot prove them until the cutover runs.
+- The deploy scripts have now run against the real host (`deploy-stays.sh`,
+  `deploy-platform.sh`, `verify-deployment.sh`). The **rollback** scripts have
+  not been drilled yet; an untested rollback is not a rollback.
 - Images are `linux/amd64` only, matching the VPS.
 - No image signing (`cosign`) yet; provenance and SBOM are published.
 - The Stays/Platform import boundary is enforced by tests, not by an ESLint
