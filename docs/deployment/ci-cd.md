@@ -140,19 +140,27 @@ notify ◀───────────────────────�
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `DOCKER_DEPLOY_ENABLED` | unset (`false`) | When exactly `"true"`, deploy jobs run. Otherwise images are published only. |
+| `DOCKER_DEPLOY_ENABLED` | unset (`false`) | When exactly `"true"`, the container deploy jobs run. Otherwise images are published only. |
+| `PM2_DEPLOY_ENABLED` | unset (`false`) | When exactly `"true"`, the legacy PM2 deploy and verify jobs run. Leave unset while containers are the runtime; set it only for a deliberate rollback. |
+
+Current state after the 2026-11-16 cutover: `PM2_DEPLOY_ENABLED` is unset, so
+`ci.yml` no longer touches the host. `DOCKER_DEPLOY_ENABLED` is also unset, so
+images are published but not deployed. Enabling the container pipeline is the
+next step; the two variables must never both be true.
 
 ## Enabling the new pipeline
 
 Do these in order:
 
-1. Confirm `ci.yml`'s PM2 deploy is disabled or moved to a manual workflow.
-   Running both is not a migration; it is two systems updating one host.
-2. Create `/etc/travio/{platform-api,stays-api}.env` on the VPS (0600, owned by
-   the deploy user) and `docker login ghcr.io` with a read-only package token.
-3. Run the cutover phases in `hetzner-cutover.md`. Stays is introduced first;
-   the Platform container replaces PM2 only after Stays is verified.
-4. Set `DOCKER_DEPLOY_ENABLED=true`.
+Done in the 2026-11-16 cutover:
+
+1. ~~Disable the PM2 deploy~~ — gated behind `PM2_DEPLOY_ENABLED` in `ci.yml`.
+2. ~~Create the env files and log in to GHCR~~ — both exist on the host.
+3. ~~Run the cutover phases~~ — both containers are healthy and Nginx is split.
+
+Still to do:
+
+4. Set `DOCKER_DEPLOY_ENABLED=true` (leave `PM2_DEPLOY_ENABLED` unset).
 5. Push a change that affects only Stays and confirm the Platform container's
    `StartedAt` does not change:
 
