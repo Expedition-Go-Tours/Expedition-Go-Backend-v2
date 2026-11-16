@@ -147,12 +147,16 @@ cases.
 
 | Secret | Used by | Notes |
 | --- | --- | --- |
-| `DEPLOY_SSH_KEY` | migrate, deploy, verify | Private key for the deploy user |
-| `DEPLOY_HOST_KEY` | migrate, deploy, verify | Pinned `known_hosts` line; avoids TOFU |
-| `DEPLOY_USER` | migrate, deploy, verify | e.g. `deploy` |
-| `DEPLOY_HOST` | migrate, deploy, verify | VPS address |
+| `HETZNER_SSH_KEY` | migrate, deploy, verify | Private key for `root@HETZNER_HOST`; the same key the PM2 pipeline uses |
+| `HETZNER_HOST` | migrate, deploy, verify | VPS address |
+| `DEPLOY_HOST_KEY` | migrate, deploy, verify | Optional pinned `known_hosts` line. When unset, the workflow falls back to `ssh-keyscan`; add it to remove the TOFU window |
 | `DISCORD_RELEASE_WEBHOOK` | notify | Optional |
 | `GITHUB_TOKEN` | build | Automatic; needs `packages: write` (set in workflow permissions) |
+
+The deploy commands run as `root`, matching the existing pipeline. A dedicated
+deploy user with Docker access would be tighter, but Docker group membership is
+root-equivalent; do not treat it as a privilege reduction without a separate
+design.
 
 ### Repository variable
 
