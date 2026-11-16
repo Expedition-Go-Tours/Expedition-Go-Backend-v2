@@ -246,31 +246,44 @@ exports.getDashboard = catchAsync(async (req, res) => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
+  const grossByCurrency = new Map();
+  for (const booking of activeBookings) {
+    const code = booking.currency || 'GHS';
+    const current = grossByCurrency.get(code) || { currency: code, gross: 0, bookings: 0 };
+    current.gross += Number(booking.amount || 0);
+    current.bookings += 1;
+    grossByCurrency.set(code, current);
+  }
+  const currencyBuckets = [...grossByCurrency.values()].sort((a, b) => b.gross - a.gross);
+  const primary = currencyBuckets[0] || { currency: 'GHS', gross: 0, bookings: 0 };
+  const currency = primary.currency;
+
   const byProperty = new Map();
   for (const booking of activeBookings) {
-    const current = byProperty.get(booking.propertyId) || { bookings: 0, revenue: 0 };
+    const current = byProperty.get(booking.propertyId) || { bookings: 0, byCurrency: new Map() };
     current.bookings += 1;
-    current.revenue += Number(booking.amount || 0);
+    const code = booking.currency || 'GHS';
+    current.byCurrency.set(
+      code,
+      (current.byCurrency.get(code) || 0) + Number(booking.amount || 0),
+    );
     byProperty.set(booking.propertyId, current);
   }
 
   const topProperties = rows.map((row) => {
     const data = objectOrEmpty(row.data);
-    const stats = byProperty.get(row.id) || { bookings: 0, revenue: 0 };
+    const stats = byProperty.get(row.id) || { bookings: 0, byCurrency: new Map() };
+    const revenueByCurrency = Object.fromEntries(stats.byCurrency);
     return {
       id: row.id,
       name: row.name,
       bookings: stats.bookings,
       roomTypes: Array.isArray(data.rooms) ? data.rooms.length : 0,
-      revenue: stats.revenue,
+      revenue: stats.byCurrency.get(currency) || 0,
+      currency,
+      revenueByCurrency,
     };
   }).sort((a, b) => b.bookings - a.bookings).slice(0, 5);
-
-  const currency = rows
-    .map((row) => objectOrEmpty(row.data).currency)
-    .find((value) => typeof value === 'string' && value)
-    || bookings.find((booking) => booking.currency)?.currency
-    || 'GHS';
 
   const cancelled = bookings.filter((booking) => booking.status === 'CANCELLED').length;
   const newReservations = bookings.filter((booking) => booking.status === 'NEW').length;
@@ -282,9 +295,15 @@ exports.getDashboard = catchAsync(async (req, res) => {
         upcomingArrivals: activeBookings.filter((booking) => booking.checkIn >= today).length,
         newReservations,
         liveProperties: counts.ACTIVE || 0,
-        grossBookingValue: activeBookings.reduce((sum, booking) => sum + Number(booking.amount || 0), 0),
+        grossBookingValue: primary.gross,
       },
       currency,
+      mixedCurrencies: currencyBuckets.length > 1,
+      currencies: currencyBuckets.map((bucket) => ({
+        currency: bucket.currency,
+        grossBookingValue: bucket.gross,
+        bookings: bucket.bookings,
+      })),
       cancellation: {
         rate: bookings.length ? Math.round((cancelled / bookings.length) * 1000) / 10 : 0,
         cancelled,

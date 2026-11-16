@@ -176,6 +176,18 @@ describeDb('currency-safe Stays reporting', () => {
     ]));
   });
 
+  it('groups the dashboard gross value by currency', async () => {
+    const res = await get('/dashboard');
+    expect(res.status).toBe(200);
+    expect(res.body.data.currency).toBe('GHS');
+    expect(res.body.data.mixedCurrencies).toBe(true);
+    expect(res.body.data.stats.grossBookingValue).toBe(300);
+    expect(res.body.data.currencies).toEqual(expect.arrayContaining([
+      expect.objectContaining({ currency: 'GHS', grossBookingValue: 300 }),
+      expect.objectContaining({ currency: 'USD', grossBookingValue: 100 }),
+    ]));
+  });
+
   it('scopes the finance summary and lists each currency balance', async () => {
     const res = await get('/finance/summary');
     expect(res.status).toBe(200);
