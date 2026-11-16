@@ -85,7 +85,15 @@ jobs:
 
       - name: Local Compose renders
         shell: bash
-        run: docker compose -f deploy/compose.local.yml config > /dev/null
+        run: |
+          set -euo pipefail
+          # The local file intentionally reads the developer's `.env`, which is
+          # gitignored and therefore absent on a clean runner. Create an empty
+          # one for validation only, and leave a real one untouched.
+          had_env=0
+          if [ -f .env ]; then had_env=1; else : > .env; fi
+          docker compose -f deploy/compose.local.yml config > /dev/null
+          [ "$had_env" -eq 1 ] || rm -f .env
 
       - name: Nginx fragment is syntactically valid
         shell: bash
