@@ -282,7 +282,7 @@ from outside:
 | Ports | `127.0.0.1:5000` and `127.0.0.1:5100`, both owned by the container processes; public 5100 refused |
 | Nginx | Stays prefixes → 5100, everything else → 5000, on all three vhosts |
 | WebSocket | **101** through Nginx on every vhost |
-| PM2 | app removed from the daemon and the resurrect dump; `pm2-deploy.service` disabled; Docker enabled at boot |
+| PM2 | app removed from the daemon and the resurrect dump; `pm2-deploy.service` disabled; Docker enabled at boot. The docs merge re-ran the old deploy once; see the incident below |
 | Deploy state | `/var/lib/travio/deploy-state.env` records both images |
 | Database migration | none |
 | Cutover interruption | ~4–5 seconds of connection-refused/502 at 11:56:16–18, bounded by the readiness gate |
@@ -296,6 +296,23 @@ Backups taken before further changes: an 11 MB custom-format `pg_dump`
 (`/var/backups/travio-20261116-1158.dump`, `0600`) and a configuration archive
 covering Nginx, `/etc/travio`, `/opt/travio` and the deploy state.
 
+### Deployment gate incident (2026-11-16)
+
+The docs merge (`7dd9ef0`) landed before the CI gate existed, so its push ran the
+old PM2 deploy. PM2 started `expedition-api` while the Platform container still
+held 5000, and crash-looped. When the Platform image was then rolled to
+`5d8a6b3`, the container released 5000 for a moment and PM2 won the race. The
+deploy script curled `127.0.0.1:5000/ready`, received a 200 from the PM2 process,
+and recorded a successful deploy of a container that had never bound the port.
+
+Detected by inspecting the running image and container logs, not by the gate.
+Fixed by stopping and deleting the PM2 app again, restarting the container, and
+changing the deploy gate to require the container to be running the requested
+image **and** its Docker healthcheck to be healthy before the application
+`/ready` check. The release workflow also syncs the host checkout to the release
+commit before running deploy scripts; previously a stale checkout meant a script
+fix would not take effect on the next release.
+
 Not done yet:
 
 - `DOCKER_DEPLOY_ENABLED` is still unset; releases do not auto-deploy.
@@ -306,9 +323,8 @@ Not done yet:
 
 ## 9. Remaining work, in order
 
-1. **Merge this PR** before any other push to `main`. It includes the CI gate
-   (`PM2_DEPLOY_ENABLED`, unset); until it lands, a merge would run the old PM2
-   deploy.
+1. **Merge this readiness fix.** It adds the container-identity gate and the
+   host-checkout sync. The PM2 deploy gate is already on `main`.
 2. **Enable the container pipeline** by setting `DOCKER_DEPLOY_ENABLED=true`,
    then ship a Stays-only change and confirm the Platform container's
    `StartedAt` does not move.

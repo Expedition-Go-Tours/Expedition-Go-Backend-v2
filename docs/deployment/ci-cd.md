@@ -103,6 +103,24 @@ notify ◀───────────────────────�
   image>`. The script also takes a file lock and refuses `db push`.
 - Runs **before** either container is replaced. If it fails, no deploy job runs.
 
+### Host checkout sync and readiness
+
+Before running any deploy script, the workflow SSHes to the host and resets the
+checkout to the release commit (as the `deploy` user when the SSH user is root).
+Without this, a fix to the scripts themselves would never reach the host: the
+first container deploy ran from whatever commit happened to be checked out.
+
+The deploy scripts then verify the container, not just the port:
+
+1. the container is running the requested image (`Config.Image`), and
+2. its Docker healthcheck is `healthy`,
+
+and only then call `/ready`. This ordering exists because a stale PM2 process
+can hold `127.0.0.1:5000` while a new container crash-loops; a port-only check
+will accept the stale process's 200 and record a deploy that never ran. A
+regression test in `deploy-validation.yml` covers the unhealthy/wrong-image
+cases.
+
 ### `deploy-platform` / `deploy-stays`
 
 - Independent jobs, separate concurrency groups.

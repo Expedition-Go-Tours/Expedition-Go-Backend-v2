@@ -7,7 +7,12 @@
 set -euo pipefail
 
 # ── Locations (override with environment variables) ─────────────────────────
-COMPOSE_FILE="${COMPOSE_FILE:-/opt/travio/api/deploy/compose.production.yml}"
+# The deploy workflow syncs this checkout to the release commit before invoking
+# any script, so the repo is the source of truth for the Compose file as well as
+# the scripts. A manual operator can still point COMPOSE_FILE elsewhere.
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+REPO_ROOT="$(cd "$LIB_DIR/../.." && pwd)"
+COMPOSE_FILE="${COMPOSE_FILE:-$REPO_ROOT/deploy/compose.production.yml}"
 STATE_DIR="${STATE_DIR:-/var/lib/travio}"
 STATE_FILE="${STATE_FILE:-$STATE_DIR/deploy-state.env}"
 PLATFORM_ENV_FILE="${PLATFORM_ENV_FILE:-/etc/travio/platform-api.env}"
@@ -98,6 +103,45 @@ wait_ready() {
   return 1
 }
 
+# Container name used by compose.production.yml.
+container_name_for() {
+  case "$1" in
+    platform) printf 'travio-platform-api\n' ;;
+    stays)    printf 'travio-stays-api\n' ;;
+    *) die "Unknown application: $1" ;;
+  esac
+}
+
+# Wait for the specific container to be running the expected image AND for its
+# Docker healthcheck to report healthy.
+#
+# The port is not enough. On 2026-11-16 a stale PM2 process held port 5000 while
+# the new Platform container crash-looped; `curl /ready` hit the stale process
+# and the deploy reported success for a container that never bound the port.
+# Checking `Config.Image` and `.State.Health` against the requested image makes
+# that failure mode impossible: a different process cannot satisfy it, and a
+# crash-looping container never reports healthy.
+wait_container_healthy() {
+  local container="$1" expected_image="$2" attempts="${3:-60}" delay="${4:-2}"
+  local i running image health
+
+  for i in $(seq 1 "$attempts"); do
+    running="$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || true)"
+    image="$(docker inspect -f '{{.Config.Image}}' "$container" 2>/dev/null || true)"
+    health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container" 2>/dev/null || true)"
+
+    if [ "$running" = "running" ] && [ "$image" = "$expected_image" ] && [ "$health" = "healthy" ]; then
+      log "container healthy: $container ($expected_image)"
+      return 0
+    fi
+
+    log "container not healthy yet (attempt ${i}/${attempts}: status=${running:-missing} image=${image:-none} health=${health:-none})"
+    sleep "$delay"
+  done
+
+  return 1
+}
+
 # ── Compose wrapper ─────────────────────────────────────────────────────────
 # Both image variables must be defined even when only one service is being
 # changed: Compose interpolates the whole file before honouring --no-deps.
@@ -176,10 +220,16 @@ deploy_app() {
     PLATFORM_ENV_FILE="$PLATFORM_ENV_FILE" STAYS_ENV_FILE="$STAYS_ENV_FILE" \
     docker compose -f "$COMPOSE_FILE" pull "$service"
 
+  local container
+  container="$(container_name_for "$app")"
+
   log "Replacing only the '$service' container (no other service is touched)"
   compose_up_one "$app" "$image" "$service"
 
-  if wait_ready "$port" /ready 45 2; then
+  # Container identity and Docker health first, then the application's own
+  # readiness endpoint. The order matters: a stale process on the port must not
+  # be able to satisfy the gate on behalf of a container that never started.
+  if wait_container_healthy "$container" "$image" 75 2 && wait_ready "$port" /ready 45 2; then
     [ -z "$previous" ] || state_set "$previous_key" "$previous"
     state_set "$current_key" "$image"
     log "$service is healthy on image $image"
@@ -192,7 +242,7 @@ deploy_app() {
   if [ -n "$previous" ]; then
     warn "Rolling back $service to $previous"
     compose_up_one "$app" "$previous" "$service" || true
-    if wait_ready "$port" /ready 30 2; then
+    if wait_container_healthy "$container" "$previous" 60 2 && wait_ready "$port" /ready 30 2; then
       warn "Rollback of $service succeeded; deployment FAILED. Previous image is running."
     else
       warn "Rollback of $service did NOT become ready. Manual intervention required."
@@ -219,13 +269,16 @@ rollback_app() {
   target="$(state_get "$previous_key")"
   [ -n "$target" ] || die "No previous image recorded for $service; nothing to roll back to."
 
+  local container
+  container="$(container_name_for "$app")"
+
   log "Rolling $service back to $target"
   compose_up_one "$app" "$target" "$service"
 
-  wait_ready "$port" /ready 45 2 || {
+  if ! wait_container_healthy "$container" "$target" 75 2 || ! wait_ready "$port" /ready 45 2; then
     compose_logs "$service"
     die "$service did not become ready after rollback."
-  }
+  fi
 
   local current
   current="$(state_get "$current_key")"
