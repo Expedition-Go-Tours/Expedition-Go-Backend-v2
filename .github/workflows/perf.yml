@@ -18,6 +18,11 @@ env:
   CLOUDINARY_API_KEY: '000000000000000'
   CLOUDINARY_API_SECRET: dummy-secret
   SENDGRID_API_KEY: SG.dummy
+  # platform-api validates its required environment in production mode and
+  # exits when one is missing. NODE_ENV is production here on purpose, so every
+  # key in PLATFORM_REQUIRED_IN_PROD must be present — this one was not, and the
+  # 2026-11-17 run failed at "Wait for health endpoint" before k6 ever started.
+  RESEND_API_KEY: re_perf_dummy
   FIREBASE_PROJECT_ID: dummy-project
   FIREBASE_CLIENT_EMAIL: dummy@dummy.com
   FIREBASE_PRIVATE_KEY: |
@@ -87,7 +92,7 @@ jobs:
 
       - name: Start application in background
         run: |
-          node server.js &
+          node server.js > /tmp/platform-api.log 2>&1 &
           APP_PID=$!
           echo "APP_PID=$APP_PID" >> $GITHUB_ENV
 
@@ -98,8 +103,17 @@ jobs:
               echo "Server is healthy after ${i}s"
               break
             fi
+            # A fatal startup check (validateEnv) exits the process long before
+            # the 30s timeout, and the reason only exists in the server log.
+            # Fail immediately and print it instead of reporting a bare timeout.
+            if ! kill -0 "$APP_PID" 2>/dev/null; then
+              echo "Server process exited before becoming healthy:"
+              tail -50 /tmp/platform-api.log
+              exit 1
+            fi
             if [ "$i" -eq 30 ]; then
-              echo "Server failed to start within 30s"
+              echo "Server failed to start within 30s:"
+              tail -50 /tmp/platform-api.log
               exit 1
             fi
             sleep 1
