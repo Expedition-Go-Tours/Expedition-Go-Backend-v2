@@ -139,7 +139,12 @@ const mockTour = {
   country: 'South Africa',
   schedulesAndPricing: {
     travelerDetails: { pricingModel: 'perPerson', maxTravelersPerBooking: 15, ageGroups: [] },
-    pricingSchedules: { currency: 'USD', schedules: [{ startDate: '2026-01-01', endDate: '2026-12-31', prices: [{ ageGroup: 'Adult', retailPrice: 50 }] }] },
+    // Open-ended on purpose: the booking tests derive the travel date from
+    // "now + 45 days", so a schedule that ends on a real calendar day silently
+    // expires and every pay-later booking is refused as unavailable. That is
+    // what broke the suite on 2026-11-18 (2026-12-31 end date, travel date
+    // 2027-01-02).
+    pricingSchedules: { currency: 'USD', schedules: [{ startDate: '2026-01-01', endDate: '2099-12-31', prices: [{ ageGroup: 'Adult', retailPrice: 50 }] }] },
   },
   supplier: {
     id: 'supplier-1',
