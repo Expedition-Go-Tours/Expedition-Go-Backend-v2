@@ -542,6 +542,7 @@ exports.getInvoices = catchAsync(async (req, res) => {
         ...inv,
         grossTotal: toNumber(inv.grossTotal),
         commissionTotal: toNumber(inv.commissionTotal),
+        chargesTotal: toNumber(inv.chargesTotal),
         netTotal: toNumber(inv.netTotal),
         bookingCount: inv.items?.length ?? inv.bookingCount,
       })),
@@ -560,6 +561,17 @@ exports.getInvoiceById = catchAsync(async (req, res, next) => {
     include: {
       supplier: { select: { id: true, name: true, email: true } },
       payoutMethod: { select: METHOD_SELECT },
+      charges: {
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          amount: true,
+          reason: true,
+          status: true,
+          bookingId: true,
+          booking: { select: { bookingNumber: true, tour: { select: { title: true } } } },
+        },
+      },
       items: {
         orderBy: { createdAt: 'asc' },
         include: {
@@ -592,6 +604,7 @@ exports.getInvoiceById = catchAsync(async (req, res, next) => {
         ...invoice,
         grossTotal: toNumber(invoice.grossTotal),
         commissionTotal: toNumber(invoice.commissionTotal),
+        chargesTotal: toNumber(invoice.chargesTotal),
         netTotal: toNumber(invoice.netTotal),
         items: invoice.items.map((i) => ({
           ...i,
@@ -599,6 +612,7 @@ exports.getInvoiceById = catchAsync(async (req, res, next) => {
           platformCommission: toNumber(i.platformCommission),
           supplierPayout: toNumber(i.supplierPayout),
         })),
+        charges: (invoice.charges || []).map((c) => ({ ...c, amount: toNumber(c.amount) })),
       },
     },
   });
