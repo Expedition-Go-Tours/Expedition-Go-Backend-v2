@@ -90,8 +90,8 @@ test suite cannot ship.
 ## The release pipeline
 
 ```
-changes ──▶ build (matrix: platform, stays) ──▶ migrate ──▶ deploy-platform ─┐
-                                                    └────▶ deploy-stays ─────┴─▶ verify-public ─▶ notify
+CI (success) ─▶ changes ─▶ build (matrix: platform, stays) ─▶ migrate ─▶ deploy-platform ─┐
+                                                              └────▶ deploy-stays ──────────┴─▶ verify-public ─▶ notify
 ```
 
 ### `build`
