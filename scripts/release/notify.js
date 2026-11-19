@@ -87,6 +87,8 @@ function buildStartPayload({ apps, sha, ref, meta, runUrl, event, actor }) {
   return {
     username: 'Travio Release',
     content: `Deploy started — ${apps || 'nothing'} @ ${ref}`,
+    // Commit text is untrusted: it must never be able to mention anyone.
+    allowed_mentions: { parse: [] },
     embeds: [embed],
     components: [{ type: 1, components }],
   };
@@ -159,6 +161,9 @@ function buildFinalPayload({
   return {
     username: 'Travio Release',
     content: `${mention}${headline} — ${apps || 'nothing'} @ ${ref}`,
+    // Only the on-call role may be mentioned, and only on failure. Commit
+    // text is untrusted, so success parses no mentions at all.
+    allowed_mentions: { parse: failed && oncallRoleId ? ['roles'] : [] },
     embeds: [{
       title: truncate(`Release ${short}${failed ? ' — failed' : ''}`, 240),
       url: runUrl,

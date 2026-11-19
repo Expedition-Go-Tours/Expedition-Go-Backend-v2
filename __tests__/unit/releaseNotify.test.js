@@ -50,6 +50,7 @@ describe('release notifier', () => {
     expect(payload.content).toContain('platform, stays');
     expect(payload.embeds[0].title).toBe(META.subject);
     expect(payload.embeds[0].color).toBe(0x3498db);
+    expect(payload.allowed_mentions).toEqual({ parse: [] });
     expect(payload.embeds[0].fields[0].name).toBe('Commit message');
     const labels = payload.components[0].components.map((c) => c.label);
     expect(labels).toEqual(expect.arrayContaining(['View run', 'Commit', 'PR #184']));
@@ -74,6 +75,7 @@ describe('release notifier', () => {
 
     expect(payload.content).toContain('✅ Deployed');
     expect(payload.content).not.toContain('<@&');
+    expect(payload.allowed_mentions).toEqual({ parse: [] });
     expect(payload.embeds[0].color).toBe(0x2ecc71);
     expect(payload.embeds[0].fields.map((f) => f.name)).toEqual(
       expect.arrayContaining(['Stages', 'Tests', 'Health', 'Commit message']),
@@ -98,6 +100,7 @@ describe('release notifier', () => {
 
     expect(payload.content.startsWith('<@&1234>')).toBe(true);
     expect(payload.content).toContain('❌ Release failed');
+    expect(payload.allowed_mentions).toEqual({ parse: ['roles'] });
     expect(payload.embeds[0].color).toBe(0xe74c3c);
     const stages = payload.embeds[0].fields.find((f) => f.name === 'Stages').value;
     expect(stages).toContain('Ingress');
