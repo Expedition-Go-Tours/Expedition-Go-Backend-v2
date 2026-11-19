@@ -352,13 +352,13 @@ jobs:
             "root@${{ secrets.HETZNER_HOST }}" \
             "cd '${DEPLOY_PATH}' && ./deploy/scripts/deploy-platform.sh '${IMAGE}'"
 
-      - name: Verify both services from the host
+      - name: Verify platform-api from the host
         shell: bash
         run: |
           set -euo pipefail
           ssh -i ~/.ssh/deploy_key \
             "root@${{ secrets.HETZNER_HOST }}" \
-            "cd '${DEPLOY_PATH}' && ./deploy/scripts/verify-deployment.sh"
+            "cd '${DEPLOY_PATH}' && ./deploy/scripts/verify-deployment.sh platform"
 
   # ── Deploy Stays API ───────────────────────────────────────────────────────
   deploy-stays:
@@ -444,13 +444,13 @@ jobs:
             "root@${{ secrets.HETZNER_HOST }}" \
             "cd '${DEPLOY_PATH}' && ./deploy/scripts/deploy-stays.sh '${IMAGE}'"
 
-      - name: Verify both services from the host
+      - name: Verify stays-api from the host
         shell: bash
         run: |
           set -euo pipefail
           ssh -i ~/.ssh/deploy_key \
             "root@${{ secrets.HETZNER_HOST }}" \
-            "cd '${DEPLOY_PATH}' && ./deploy/scripts/verify-deployment.sh"
+            "cd '${DEPLOY_PATH}' && ./deploy/scripts/verify-deployment.sh stays"
 
   # ── Public ingress ─────────────────────────────────────────────────────────
   verify-public:

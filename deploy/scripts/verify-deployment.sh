@@ -30,6 +30,13 @@ command -v curl >/dev/null 2>&1 || die "curl is required."
 
 FAILURES=0
 
+# A deploy gate must not fail on a single connection blip: the two deploy jobs
+# run concurrently, and a route can be mid-recreate for a second. Retry only
+# outcomes that are genuinely transient (connection failure, rate limit, 5xx);
+# a wrong 200/401/404 is a real failure and is reported immediately.
+RETRY_ATTEMPTS="${VERIFY_RETRIES:-3}"
+RETRY_DELAY="${VERIFY_RETRY_DELAY:-2}"
+
 # Status code for a GET, or 000 when the connection failed.
 status_of() {
   local url="$1"
@@ -39,12 +46,21 @@ status_of() {
 # assert_status <url> <expected-regex> <description>
 assert_status() {
   local url="$1" expected="$2" description="$3"
-  local code
-  code="$(status_of "$url")"
-  if [[ "$code" =~ ^($expected)$ ]]; then
-    log "ok    ${code}  ${description}"
-    return 0
-  fi
+  local code attempt
+  for attempt in $(seq 1 "$RETRY_ATTEMPTS"); do
+    code="$(status_of "$url")"
+    if [[ "$code" =~ ^($expected)$ ]]; then
+      log "ok    ${code}  ${description}"
+      return 0
+    fi
+    if [[ "$code" =~ ^(000|429|5[0-9][0-9])$ ]] && [ "$attempt" -lt "$RETRY_ATTEMPTS" ]; then
+      warn "retry ${code:-000} (attempt ${attempt}/${RETRY_ATTEMPTS})  ${description}  ${url}"
+      sleep "$RETRY_DELAY"
+      continue
+    fi
+    break
+  done
+
   warn "FAIL  ${code:-000} (expected ${expected})  ${description}  ${url}"
   FAILURES=$((FAILURES + 1))
   return 1
