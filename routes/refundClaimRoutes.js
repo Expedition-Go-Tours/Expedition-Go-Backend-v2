@@ -1,5 +1,6 @@
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { requirePermission } = require('../middleware/permissionMiddleware');
 const { resolveSupplier, requireTeamPermission } = require('../middleware/teamRoleMiddleware');
 const refundClaimController = require('../src/core/domain/refundClaimController');
 
@@ -39,8 +40,8 @@ router.patch('/supplier/:id/approve', resolveSupplier, requireTeamPermission('pa
 router.patch('/supplier/:id/decline', resolveSupplier, requireTeamPermission('payouts.request'), refundClaimController.supplierDecline);
 
 // ── Admin ────────────────────────────────────────────────────────────────
-router.get('/admin', restrictTo('admin'), refundClaimController.getAdminClaims);
-router.patch('/admin/:id/release', restrictTo('admin'), refundClaimController.adminRelease);
-router.patch('/admin/:id/decline', restrictTo('admin'), refundClaimController.adminDecline);
+router.get('/admin', restrictTo('admin'), requirePermission('payouts.view'), refundClaimController.getAdminClaims);
+router.patch('/admin/:id/release', restrictTo('admin'), requirePermission('payouts.approve'), refundClaimController.adminRelease);
+router.patch('/admin/:id/decline', restrictTo('admin'), requirePermission('payouts.approve'), refundClaimController.adminDecline);
 
 module.exports = router;

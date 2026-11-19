@@ -11,6 +11,7 @@
 
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { requireSuperAdmin } = require('../middleware/permissionMiddleware');
 const adminSystemController = require('../src/core/domain/adminSystemController');
 
 const router = express.Router();
@@ -95,6 +96,6 @@ router.get('/health', adminSystemController.getSystemHealth);
  *                   type: string
  *                   example: Application cache cleared
  */
-router.post('/cache/clear', adminSystemController.clearSystemCache);
+router.post('/cache/clear', requireSuperAdmin, adminSystemController.clearSystemCache);
 
 module.exports = router;

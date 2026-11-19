@@ -129,6 +129,37 @@ async function upsertUser(email, data) {
   });
 }
 
+/**
+ * Admin authorization is role-based: `blog.manage` is what the dashboard's
+ * blog pages check, so the fixture admin needs a role that actually holds it.
+ * Returning the role id lets a test mint an admin without it and prove the
+ * API refuses.
+ */
+async function ensureAdminRole(name, permissionKeys) {
+  const permissions = await Promise.all(
+    permissionKeys.map((key) =>
+      prisma.adminPermission.upsert({
+        where: { key },
+        update: {},
+        create: { key, name: key, category: 'Blog test' },
+      }),
+    ),
+  );
+
+  const role = await prisma.adminRole.upsert({
+    where: { name },
+    update: {},
+    create: { name, description: 'Blog API test role', isSystem: false },
+  });
+
+  await prisma.adminRolePermission.createMany({
+    data: permissions.map((permission) => ({ roleId: role.id, permissionId: permission.id })),
+    skipDuplicates: true,
+  });
+
+  return role;
+}
+
 async function createArticle({ slug, ...overrides }) {
   return prisma.article.create({
     data: {
@@ -179,6 +210,9 @@ describeDb('Blog API', () => {
     });
     adminId = admin.id;
     adminToken = signAccessToken({ userId: admin.id });
+
+    const blogEditorRole = await ensureAdminRole(`${PREFIX}content_editor`, ['blog.manage']);
+    await prisma.user.update({ where: { id: admin.id }, data: { adminRoleId: blogEditorRole.id } });
 
     const customer = await upsertUser(CUSTOMER_EMAIL, {
       name: 'Blogtst Customer',
@@ -288,6 +322,8 @@ describeDb('Blog API', () => {
     await prisma.articleTag.deleteMany({ where: { slug: { startsWith: PREFIX } } });
     await prisma.articleCategory.deleteMany({ where: { slug: { startsWith: PREFIX } } });
     await prisma.user.deleteMany({ where: { email: { startsWith: PREFIX } } });
+    await prisma.adminRole.deleteMany({ where: { name: { startsWith: PREFIX } } });
+    await prisma.adminPermission.deleteMany({ where: { category: 'Blog test' } });
     await prisma.$disconnect();
   });
 
@@ -1473,6 +1509,23 @@ describeDb('Blog API', () => {
       expect(res.status).toBe(403);
       // The guard runs before the handler, so the draft is never even looked up.
       expect(res.body.data).toBeUndefined();
+    });
+
+    it('returns 403 for an admin whose role lacks blog.manage', async () => {
+      const outsider = await upsertUser(`${PREFIX}finance-admin@test.com`, {
+        name: 'Blogtst Finance Admin',
+        roles: ['admin'],
+        active: true,
+      });
+      const financeRole = await ensureAdminRole(`${PREFIX}finance_admin`, ['payouts.view']);
+      await prisma.user.update({ where: { id: outsider.id }, data: { adminRoleId: financeRole.id } });
+
+      const res = await request(app)
+        .get('/api/blog/admin/articles')
+        .set('Authorization', `Bearer ${signAccessToken({ userId: outsider.id })}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('PERMISSION_DENIED');
     });
   });
 });

@@ -105,6 +105,32 @@ async function upsertUser(name, roles) {
   });
 }
 
+/** Admin endpoints check role permissions, so the fixture admin needs one. */
+async function ensureAdminRole(name, permissionKeys) {
+  const permissions = await Promise.all(
+    permissionKeys.map((key) =>
+      prisma.adminPermission.upsert({
+        where: { key },
+        update: {},
+        create: { key, name: key, category: 'Refund test' },
+      }),
+    ),
+  );
+
+  const role = await prisma.adminRole.upsert({
+    where: { name },
+    update: {},
+    create: { name, description: 'Refund API test role', isSystem: false },
+  });
+
+  await prisma.adminRolePermission.createMany({
+    data: permissions.map((permission) => ({ roleId: role.id, permissionId: permission.id })),
+    skipDuplicates: true,
+  });
+
+  return role;
+}
+
 async function makeCustomer() {
   const user = await upsertUser(unique('customer'), ['customer']);
   return { user, token: signAccessToken({ userId: user.id }) };
@@ -226,6 +252,8 @@ describeDb('refund claim release — real HTTP, real database', () => {
   beforeAll(async () => {
     const owner = await upsertUser(OWNER, ['supplier']);
     const admin = await upsertUser(ADMIN, ['admin']);
+    const financeRole = await ensureAdminRole(`${PREFIX}finance_admin`, ['payouts.view', 'payouts.approve']);
+    await prisma.user.update({ where: { id: admin.id }, data: { adminRoleId: financeRole.id } });
     ownerId = owner.id;
 
     await prisma.supplierProfile.upsert({
@@ -288,6 +316,8 @@ describeDb('refund claim release — real HTTP, real database', () => {
         ],
       },
     });
+    await prisma.adminRole.deleteMany({ where: { name: { startsWith: PREFIX } } });
+    await prisma.adminPermission.deleteMany({ where: { category: 'Refund test' } });
   });
 
   beforeEach(() => {

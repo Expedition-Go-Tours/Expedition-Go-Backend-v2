@@ -2,6 +2,7 @@ const express = require('express');
 const { createLimiter } = require('../middleware/dynamicRateLimiter');
 const { protect } = require('../middleware/authMiddleware');
 const { restrictTo } = require('../middleware/authMiddleware');
+const { requirePermission } = require('../middleware/permissionMiddleware');
 const blogController = require('../src/core/domain/blogController');
 const validate = require('../middleware/validate');
 const {
@@ -238,7 +239,7 @@ const adminLimiter = createLimiter({
   message: { status: 'fail', message: 'Too many admin requests from this IP, please try again later.' },
 });
 
-router.use('/admin', protect, restrictTo('admin'), adminLimiter);
+router.use('/admin', protect, restrictTo('admin'), requirePermission('blog.manage'), adminLimiter);
 
 /**
  * @swagger
