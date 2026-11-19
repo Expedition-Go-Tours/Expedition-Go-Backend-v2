@@ -760,6 +760,71 @@ jobs:
           name: coverage-badge
           path: coverage-badge.svg
 
+  # Machine-readable test counts for the release notifier. The Docker Release
+  # workflow downloads this artifact by run id; job outputs are not readable
+  # from another workflow run.
+  test-summary:
+    name: Test summary
+    needs: [unit-tests, integration-tests, e2e-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Record changed files for the release gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > changed-files.txt
+          if [ "${GITHUB_EVENT_NAME}" = "push" ] \
+            && [ -n "${EVENT_BEFORE:-}" ] \
+            && [[ "${EVENT_BEFORE}" != 0000000000000000000000000000000000000000 ]]; then
+            git diff --name-only "${EVENT_BEFORE}" "${GITHUB_SHA}" > changed-files.txt
+          fi
+        env:
+          EVENT_BEFORE: ${{ github.event.before }}
+
+      - name: Write test-summary.json
+        env:
+          UNIT: ${{ toJSON(needs.unit-tests.outputs) }}
+          INTEGRATION: ${{ toJSON(needs.integration-tests.outputs) }}
+          E2E: ${{ toJSON(needs.e2e-tests.outputs) }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const parse = (raw) => {
+              let value = {};
+              try { value = JSON.parse(raw || "{}"); } catch { value = {}; }
+              return {
+                passed: Number(value.passed || 0),
+                failed: Number(value.failed || 0),
+                skipped: Number(value.skipped || 0),
+              };
+            };
+            const summary = {
+              unit: parse(process.env.UNIT),
+              integration: parse(process.env.INTEGRATION),
+              e2e: parse(process.env.E2E),
+            };
+            summary.total = Object.values(summary).reduce((total, suite) => ({
+              passed: total.passed + suite.passed,
+              failed: total.failed + suite.failed,
+              skipped: total.skipped + suite.skipped,
+            }), { passed: 0, failed: 0, skipped: 0 });
+            fs.writeFileSync("test-summary.json", JSON.stringify(summary, null, 2));
+          '
+      - uses: actions/upload-artifact@v7
+        with:
+          name: test-summary
+          path: |
+            test-summary.json
+            changed-files.txt
+          retention-days: 14
+          if-no-files-found: error
+
   # ── Deploy to Hetzner (main only) ────────────────────────────────
   deploy:
     # The Platform API runs in Docker as of 2026-11-16. PM2 remains installed

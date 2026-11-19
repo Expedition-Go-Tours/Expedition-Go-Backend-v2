@@ -4,16 +4,15 @@
 
 | Workflow | State | Purpose |
 | --- | --- | --- |
-| `.github/workflows/ci.yml` | **unchanged** | Lint, full regression suite (258 suites / 4,974 tests baseline), existing PM2 deploy on `main` |
-| `.github/workflows/docker-release.yml` | **new** | Build affected image(s), publish to GHCR, optionally deploy through the scripts |
-| `.github/workflows/deploy-validation.yml` | **new** | Validate Compose rendering, the Nginx fragment, shell scripts and the image-reference guard on deployment changes |
+| `.github/workflows/ci.yml` | **test suite** | Lint, full regression suite, and the `test-summary` artifact (counts + changed files). Its legacy PM2 deploy is gated off behind `PM2_DEPLOY_ENABLED`. |
+| `.github/workflows/docker-release.yml` | **live deploy** | Triggered by a successful CI run on `main`; builds affected images, deploys them, verifies ingress, notifies Discord |
+| `.github/workflows/deploy-validation.yml` | validation | Validate Compose rendering, the Nginx fragment, shell scripts and the image-reference guard on deployment changes |
 
-Nothing in `ci.yml` was removed or reordered. The PM2 deploy it performs is still
-the live mechanism, because the VPS still runs PM2. `docker-release.yml` is
-additive and gated off by default.
-
-Run both concurrently and you have two deploy mechanisms. The gate exists to
-make that impossible by accident.
+A main-branch deploy is **gated on CI**. `docker-release.yml` no longer triggers
+on a raw push: it runs on `workflow_run` after the CI workflow completes and
+only when the conclusion is `success`. Tag pushes and manual dispatches still
+publish images; `DOCKER_DEPLOY_ENABLED` gates the deploy jobs. PM2 is kept only
+as a rollback path.
 
 `deploy-validation.yml` exists because the main test suite never parses a Compose
 file, never asks Nginx to read the routing fragment, and never runs a deploy
@@ -71,6 +70,22 @@ source trees — the exact drift the split is meant to prevent.
 
 The map is data, not code, so the tests also assert every pattern compiles and
 every rule names a known application.
+
+## The CI gate
+
+`docker-release.yml` listens for the **CI** workflow's `completed` event on
+`main`. `changes` refuses to run unless the conclusion is `success`, so a red
+test suite cannot ship.
+
+- `RELEASE_SHA` is `workflow_run.head_sha`, not `GITHUB_SHA` — the branch head at
+  trigger time can be newer than the commit CI tested. Checkouts, image tags,
+  migrations and deploys all use `RELEASE_SHA`.
+- CI uploads `test-summary.json` and `changed-files.txt`. `changes` downloads
+  them and feeds the file list to `ci/detect-changes.js`; `notify` uses the
+  counts. The artifact is the authoritative record of what was tested.
+- Tag pushes and `workflow_dispatch` skip the gate; they publish images, and
+  deploy only when `DOCKER_DEPLOY_ENABLED=true`.
+- Runs are serialised by `docker-release-<sha>` so a re-run cannot race itself.
 
 ## The release pipeline
 
@@ -164,19 +179,23 @@ header fails the release instead of waiting for a customer to find it.
 
 - Runs after `changes`, only when `DOCKER_DEPLOY_ENABLED=true` and at least one
   application changed.
-- Posts a blue **"Deploy started"** embed (apps, commit, ref, trigger, run link)
-  so the channel is not silent during the build.
+- Calls `scripts/release/notify.js` in `MODE=start`: blue **"Deploy started"**
+  card with the commit subject/body, author, PR, trigger and run link.
 - Posts to `DISCORD_RELEASE_WEBHOOK` (falls back to `DISCORD_DEPLOY_WEBHOOK`).
   Missing webhook or a Discord failure is a `::warning::`, never a failed job.
 
 ### `notify`
 
 - `if: always()` **and** at least one application changed, so workflow-only
-  pushes do not post a false "image build did not succeed".
-- Posts app(s), commit, ref, trigger, build/migration/deploy **and
-  `verify-public`** status, plus the run link and rollback procedure.
-- The colour is red if the build, either deploy, or public ingress failed or was
-  cancelled — a green embed with a broken vhost is not allowed.
+  pushes do not post a false failure.
+- Calls `scripts/release/notify.js` in `MODE=final`, which renders:
+  - a stage table with durations from the run's jobs API;
+  - test counts from the CI artifact, with the CI run link;
+  - health/latency for every public vhost;
+  - commit subject/body, author, PR, and URL buttons for run, commit, PR, CI run
+    and the rollback runbook.
+- The card is red if the build, either deploy, or public ingress failed or was
+  cancelled. Failure pings `@on-call` via `DISCORD_ONCALL_ROLE_ID` when set.
 - Missing webhook or a Discord failure is a `::warning::`; it never fails the
   release.
 
@@ -190,7 +209,7 @@ header fails the release instead of waiting for a customer to find it.
 | `HETZNER_HOST` | migrate, deploy, verify | VPS address |
 | `DEPLOY_HOST_KEY` | migrate, deploy, verify | Optional pinned `known_hosts` line. When unset, the workflow falls back to `ssh-keyscan`; add it to remove the TOFU window |
 | `DISCORD_RELEASE_WEBHOOK` | announce, notify | Optional. Release start/summary embeds; falls back to `DISCORD_DEPLOY_WEBHOOK` when unset |
-| `GITHUB_TOKEN` | build | Automatic; needs `packages: write` (set in workflow permissions) |
+| `GITHUB_TOKEN` | build, notify | Automatic; needs `packages: write`, `actions: read` (artifact + job timings) and `pull-requests: read` (PR link) |
 
 The deploy commands run as `root`, matching the existing pipeline. A dedicated
 deploy user with Docker access would be tighter, but Docker group membership is
@@ -203,6 +222,7 @@ design.
 | --- | --- | --- |
 | `DOCKER_DEPLOY_ENABLED` | unset (`false`) | When exactly `"true"`, the container deploy jobs run. Otherwise images are published only. |
 | `PM2_DEPLOY_ENABLED` | unset (`false`) | When exactly `"true"`, the legacy PM2 deploy and verify jobs run. Leave unset while containers are the runtime; set it only for a deliberate rollback. |
+| `DISCORD_ONCALL_ROLE_ID` | unset | Optional Discord role ID pinged on a failed release. Success never pings. |
 
 Current state after the 2026-11-16 cutover: `PM2_DEPLOY_ENABLED` is unset, so
 `ci.yml` no longer touches the host. `DOCKER_DEPLOY_ENABLED` is `true`, so the
