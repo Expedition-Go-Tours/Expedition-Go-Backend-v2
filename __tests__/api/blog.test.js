@@ -1044,6 +1044,25 @@ describeDb('Blog API', () => {
       expect(row.tags.map((t) => t.tagId)).toEqual([tagAfricaId]);
     });
 
+    it('creates a draft when the excerpt and body are omitted', async () => {
+      const res = await request(app)
+        .post('/api/blog/admin/articles')
+        .set(auth())
+        .send({
+          title: 'Empty draft in a test',
+          slug: `${slug}-empty`,
+          body: null,
+          authorId: adminId,
+          status: 'DRAFT',
+        });
+
+      expect(res.status).toBe(201);
+      // Both columns are required in the model; the API fills them so a draft
+      // saved before the editor has content does not 500.
+      expect(res.body.data.article.excerpt).toBe('');
+      expect(res.body.data.article.body).toEqual({ type: 'doc', content: [] });
+    });
+
     it('leaves publishedAt empty for a draft', async () => {
       const draftSlug = `${PREFIX}created-draft`;
       const res = await request(app)

@@ -618,8 +618,11 @@ exports.createArticle = catchAsync(async (req, res, next) => {
     data: {
       title,
       slug,
-      excerpt,
-      body,
+      // Both columns are required in the model. A draft may legitimately be
+      // saved before the editor has an excerpt or a body — default them here
+      // instead of letting Prisma throw "Argument `excerpt` is missing".
+      excerpt: excerpt || '',
+      body: body ?? { type: 'doc', content: [] },
       featuredImage,
       images: images || undefined,
       metaTitle,
