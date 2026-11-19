@@ -57,6 +57,13 @@ services:
     stop_grace_period: 20s
     security_opt:
       - no-new-privileges:true
+    # GA4 Data API service-account key. It cannot live in the env file without
+    # putting a private key in `docker inspect` output, and the container cannot
+    # read the host path the env file used to point at (it was never mounted),
+    # which is why the supplier Performance page reported "GA4 not connected".
+    # Read-only, and owned by the same uid the container runs as.
+    volumes:
+      - /etc/travio/ga4-service-account.json:/run/secrets/ga4-service-account.json:ro
     logging:
       driver: json-file
       options:
