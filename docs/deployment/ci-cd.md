@@ -160,12 +160,25 @@ The `X-Served-By` header is set by each application, so the check proves which
 upstream answered. A missing Nginx `include`, a DNS mistake or a lost websocket
 header fails the release instead of waiting for a customer to find it.
 
+### `announce`
+
+- Runs after `changes`, only when `DOCKER_DEPLOY_ENABLED=true` and at least one
+  application changed.
+- Posts a blue **"Deploy started"** embed (apps, commit, ref, trigger, run link)
+  so the channel is not silent during the build.
+- Posts to `DISCORD_RELEASE_WEBHOOK` (falls back to `DISCORD_DEPLOY_WEBHOOK`).
+  Missing webhook or a Discord failure is a `::warning::`, never a failed job.
+
 ### `notify`
 
-- `if: always()`.
-- Posts app(s), commit, ref, build/migration/deploy status, and the rollback
-  procedure to `DISCORD_RELEASE_WEBHOOK` when configured; otherwise logs and
-  exits 0.
+- `if: always()` **and** at least one application changed, so workflow-only
+  pushes do not post a false "image build did not succeed".
+- Posts app(s), commit, ref, trigger, build/migration/deploy **and
+  `verify-public`** status, plus the run link and rollback procedure.
+- The colour is red if the build, either deploy, or public ingress failed or was
+  cancelled — a green embed with a broken vhost is not allowed.
+- Missing webhook or a Discord failure is a `::warning::`; it never fails the
+  release.
 
 ## Required configuration
 
@@ -176,7 +189,7 @@ header fails the release instead of waiting for a customer to find it.
 | `HETZNER_SSH_KEY` | migrate, deploy, verify | Private key for `root@HETZNER_HOST`; the same key the PM2 pipeline uses |
 | `HETZNER_HOST` | migrate, deploy, verify | VPS address |
 | `DEPLOY_HOST_KEY` | migrate, deploy, verify | Optional pinned `known_hosts` line. When unset, the workflow falls back to `ssh-keyscan`; add it to remove the TOFU window |
-| `DISCORD_RELEASE_WEBHOOK` | notify | Optional |
+| `DISCORD_RELEASE_WEBHOOK` | announce, notify | Optional. Release start/summary embeds; falls back to `DISCORD_DEPLOY_WEBHOOK` when unset |
 | `GITHUB_TOKEN` | build | Automatic; needs `packages: write` (set in workflow permissions) |
 
 The deploy commands run as `root`, matching the existing pipeline. A dedicated
@@ -192,9 +205,9 @@ design.
 | `PM2_DEPLOY_ENABLED` | unset (`false`) | When exactly `"true"`, the legacy PM2 deploy and verify jobs run. Leave unset while containers are the runtime; set it only for a deliberate rollback. |
 
 Current state after the 2026-11-16 cutover: `PM2_DEPLOY_ENABLED` is unset, so
-`ci.yml` no longer touches the host. `DOCKER_DEPLOY_ENABLED` is also unset, so
-images are published but not deployed. Enabling the container pipeline is the
-next step; the two variables must never both be true.
+`ci.yml` no longer touches the host. `DOCKER_DEPLOY_ENABLED` is `true`, so the
+container deploy jobs run for every change that touches either application. The
+two variables must never both be true.
 
 ## Enabling the new pipeline
 
@@ -208,7 +221,7 @@ Done in the 2026-11-16 cutover:
 
 Still to do:
 
-4. Set `DOCKER_DEPLOY_ENABLED=true` (leave `PM2_DEPLOY_ENABLED` unset).
+4. ~~Set `DOCKER_DEPLOY_ENABLED=true`~~ — live since the cutover.
 5. Push a change that affects only Stays and confirm the Platform container's
    `StartedAt` does not change:
 

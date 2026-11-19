@@ -79,6 +79,56 @@ jobs:
             node ci/detect-changes.js --all
           fi
 
+  # ── Deploy start notification ──────────────────────────────────────────────
+  announce:
+    name: Announce deploy
+    needs: [changes]
+    if: ${{ !cancelled() && vars.DOCKER_DEPLOY_ENABLED == 'true' && (needs.changes.outputs.platform == 'true' || needs.changes.outputs.stays == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Post deploy start to Discord
+        # A notification must never fail a release.
+        continue-on-error: true
+        shell: bash
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK || secrets.DISCORD_DEPLOY_WEBHOOK }}
+          CHANGES: ${{ needs.changes.outputs.platform == 'true' && 'platform' || '' }}${{ needs.changes.outputs.platform == 'true' && needs.changes.outputs.stays == 'true' && ', ' || '' }}${{ needs.changes.outputs.stays == 'true' && 'stays' || '' }}
+          ACTOR: ${{ github.actor }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${WEBHOOK}" ]; then
+            echo "::warning::No Discord release webhook configured (DISCORD_RELEASE_WEBHOOK / DISCORD_DEPLOY_WEBHOOK); skipping deploy-start notification."
+            exit 0
+          fi
+
+          # shellcheck disable=SC2016
+          payload=$(node -e '
+            const [apps, sha, ref, actor, runUrl, event] = process.argv.slice(1);
+            const line = (label, value) => `${label}: ${value}`;
+            console.log(JSON.stringify({
+              username: "Travio Release",
+              content: `Deploy started — ${apps || "nothing"} @ ${ref}`,
+              embeds: [{
+                title: `Release ${sha.slice(0, 7)} in progress`,
+                url: runUrl,
+                description: [
+                  line("Commit", sha),
+                  line("Ref", ref),
+                  line("Trigger", `${event} by ${actor}`),
+                  line("Run", runUrl),
+                ].join("\n"),
+                color: 3447003,
+              }],
+            }));
+          ' "$CHANGES" "$GITHUB_SHA" "$GITHUB_REF_NAME" "$ACTOR" "$RUN_URL" "$EVENT")
+
+          curl -fsS --retry 3 --retry-delay 2 \
+            -X POST -H 'Content-Type: application/json' -d "$payload" "$WEBHOOK" \
+            || { echo "::warning::Discord deploy-start post failed; the release is unaffected."; exit 0; }
+
   # ── Build and push ─────────────────────────────────────────────────────────
   build:
     name: Build ${{ matrix.app }}
@@ -469,58 +519,77 @@ jobs:
   notify:
     name: Notify
     needs: [changes, build, migrate, deploy-platform, deploy-stays, verify-public]
-    if: always()
+    # Nothing built means nothing to announce: workflow-only pushes used to post
+    # a red "image build did not succeed" for a run that never needed an image.
+    if: ${{ always() && (needs.changes.outputs.platform == 'true' || needs.changes.outputs.stays == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Post release summary to Discord
+        # A notification must never fail a release.
+        continue-on-error: true
         shell: bash
         env:
-          WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK || secrets.DISCORD_DEPLOY_WEBHOOK }}
           CHANGES: ${{ needs.changes.outputs.platform == 'true' && 'platform' || '' }}${{ needs.changes.outputs.platform == 'true' && needs.changes.outputs.stays == 'true' && ', ' || '' }}${{ needs.changes.outputs.stays == 'true' && 'stays' || '' }}
+          ACTOR: ${{ github.actor }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
           if [ -z "${WEBHOOK}" ]; then
-            echo "DISCORD_RELEASE_WEBHOOK is not configured; skipping notification."
+            echo "::warning::No Discord release webhook configured (DISCORD_RELEASE_WEBHOOK / DISCORD_DEPLOY_WEBHOOK); skipping release summary."
             exit 0
           fi
-
-          status() {
-            case "$1" in
-              success) echo "ok" ;;
-              skipped) echo "skipped" ;;
-              cancelled) echo "cancelled" ;;
-              *) echo "FAILED" ;;
-            esac
-          }
 
           # The JS below uses template literals; the single-quoted heredoc-style
           # argument is intentional, so SC2016 is a false positive here.
           # shellcheck disable=SC2016
           payload=$(node -e '
-            const [apps, sha, ref, build, migrate, platform, stays] = process.argv.slice(1);
+            const [apps, sha, ref, actor, runUrl, event, build, migrate, platform, stays, verify] = process.argv.slice(1);
             const line = (label, value) => `${label}: ${value}`;
+            const show = (value) => (
+              value === "success" ? "ok"
+                : value === "skipped" ? "skipped"
+                  : value === "cancelled" ? "cancelled"
+                    : "FAILED"
+            );
+            // verify-public is part of the release: a green embed with a failed
+            // ingress check is worse than no notification at all. Anything that
+            // is not a success or a deliberate skip is treated as a failure.
+            const failed = [build, platform, stays, verify]
+              .some((result) => result !== "success" && result !== "skipped");
+            const headline = failed
+              ? "Release failed"
+              : build === "success" ? "Images published" : "Images not published";
             console.log(JSON.stringify({
               username: "Travio Release",
-              content: `${build === "success" ? "Images published" : "Image build did not succeed"} — ${apps || "nothing"} @ ${ref}`,
+              content: `${headline} — ${apps || "nothing"} @ ${ref}`,
               embeds: [{
                 title: `Release ${sha.slice(0, 7)}`,
+                url: runUrl,
                 description: [
                   line("Commit", sha),
                   line("Ref", ref),
-                  line("Images", build),
-                  line("Migrations", migrate),
-                  line("platform-api deploy", platform),
-                  line("stays-api deploy", stays),
+                  line("Trigger", `${event} by ${actor}`),
+                  line("Images", show(build)),
+                  line("Migrations", show(migrate)),
+                  line("platform-api deploy", show(platform)),
+                  line("stays-api deploy", show(stays)),
+                  line("Public ingress", show(verify)),
+                  line("Run", runUrl),
                   line("Rollback", "rollback-platform.sh / rollback-stays.sh (restores the previously recorded image)"),
                 ].join("\n"),
-                color: build === "success" && platform !== "failure" && stays !== "failure" ? 3066993 : 15158332,
+                color: failed ? 15158332 : 3066993,
               }],
             }));
-          ' "$CHANGES" "$GITHUB_SHA" "$GITHUB_REF_NAME" \
-            "$(status '${{ needs.build.result }}')" \
-            "$(status '${{ needs.migrate.result }}')" \
-            "$(status '${{ needs.deploy-platform.result }}')" \
-            "$(status '${{ needs.deploy-stays.result }}')")
+          ' "$CHANGES" "$GITHUB_SHA" "$GITHUB_REF_NAME" "$ACTOR" "$RUN_URL" "$EVENT" \
+            '${{ needs.build.result }}' \
+            '${{ needs.migrate.result }}' \
+            '${{ needs.deploy-platform.result }}' \
+            '${{ needs.deploy-stays.result }}' \
+            '${{ needs.verify-public.result }}')
 
-          curl -fsS -X POST -H 'Content-Type: application/json' -d "$payload" "$WEBHOOK"
+          curl -fsS --retry 3 --retry-delay 2 \
+            -X POST -H 'Content-Type: application/json' -d "$payload" "$WEBHOOK" \
+            || { echo "::warning::Discord release-summary post failed; the release is unaffected."; exit 0; }
