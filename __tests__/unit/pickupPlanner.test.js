@@ -49,13 +49,15 @@ const day = (d) => new Date(`${d}T00:00:00.000Z`);
 function makeBooking(over = {}) {
   return {
     id: over.id,
-    bookingNumber: over.id,
+    bookingNumber: over.bookingNumber || over.id,
     status: 'CONFIRMED',
     travelDate: over.travelDate || day('2026-10-01'),
     selectedTime: over.selectedTime ?? '09:00',
     pickup: over.pickup,
     pickupOrder: over.pickupOrder ?? null,
     pickedUpAt: over.pickedUpAt ?? null,
+    leadTravelerName: over.leadTravelerName ?? null,
+    guest: over.guest ?? null,
     customer: { id: 'c1', name: 'Ann', email: 'a@b.c', phone: '0244', photoURL: null },
     tour: { id: 't1', title: 'City Tour', photos: [], bookingAndTickets: '{}' },
   };
@@ -132,6 +134,22 @@ describe('getPickupPlanner', () => {
     const res = mockRes();
     await controller.getPickupPlanner(mockReq({ query: { q: 'akuafo' } }), res, next);
     expect(res.json.mock.calls[0][0].data.bookings.map((b) => b.id)).toEqual(['a']);
+  });
+
+  it('searches by the lead traveller and by a walk-in guest name', async () => {
+    prisma.booking.findMany.mockResolvedValue([
+      makeBooking({ id: 'lead', pickup: complete, leadTravelerName: 'Kwesi Boateng' }),
+      makeBooking({ id: 'guest', pickup: complete, guest: { name: 'Yaa Asantewaa', email: null, phone: null } }),
+      makeBooking({ id: 'other', pickup: complete }),
+    ]);
+
+    const res = mockRes();
+    await controller.getPickupPlanner(mockReq({ query: { q: 'kwesi' } }), res, next);
+    expect(res.json.mock.calls[0][0].data.bookings.map((b) => b.id)).toEqual(['lead']);
+
+    const res2 = mockRes();
+    await controller.getPickupPlanner(mockReq({ query: { q: 'asantewaa' } }), res2, next);
+    expect(res2.json.mock.calls[0][0].data.bookings.map((b) => b.id)).toEqual(['guest']);
   });
 
   it('filters by pickupState and by picked-up', async () => {

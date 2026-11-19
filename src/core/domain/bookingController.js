@@ -1367,6 +1367,15 @@ exports.getPickupPlanner = catchAsync(async (req, res, next) => {
           photoURL: true
         }
       },
+      // A walk-in booked by the supplier has no customer account at all — the
+      // name the driver needs lives on the guest relation.
+      guest: {
+        select: {
+          name: true,
+          email: true,
+          phone: true
+        }
+      },
       tour: {
         select: {
           id: true,
@@ -1424,6 +1433,15 @@ exports.getPickupPlanner = catchAsync(async (req, res, next) => {
       b.customer?.name,
       b.customer?.phone,
       b.customer?.email,
+      // The person actually travelling — the name the driver looks for. It
+      // differs from the account holder on a gift or group booking, and it is
+      // the only name a supplier-created walk-in has.
+      b.leadTravelerName,
+      b.leadTravelerPhone,
+      b.leadTravelerEmail,
+      b.guest?.name,
+      b.guest?.phone,
+      b.guest?.email,
       b.bookingNumber,
       b.tour?.title,
       b.pickup?.address?.name,
