@@ -73,6 +73,7 @@ router.patch('/tours/:id/draft-review', requirePermission('tours.approve'), admi
 router.get('/bookings', requirePermission('bookings.view', 'dashboard.*'), africa.getBookings);
 router.get('/bookings/today', requirePermission('dashboard.bookings', 'dashboard.revenue'), africa.getTodayBookings);
 router.get('/bookings/:id', requirePermission('bookings.view', 'dashboard.*'), africa.getBookingById);
+router.get('/bookings/:id/proof-of-payment', requirePermission('bookings.view', 'dashboard.*'), africa.getBookingProofOfPayment);
 router.patch('/bookings/:id/confirm-payment', requirePermission('bookings.confirm-payment', 'dashboard.*'), africa.confirmPayment);
 router.post('/bookings/:id/charge-now', requirePermission('bookings.confirm-payment', 'dashboard.*'), adminController.chargePayLaterBooking);
 

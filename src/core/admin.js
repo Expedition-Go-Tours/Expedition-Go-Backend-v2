@@ -23,6 +23,9 @@ const { computeFunnel } = require('./services/funnelEngine');
 const { getActivityFeed } = require('./services/activityFeed');
 const { viewerCalendar } = require('./services/viewerCalendar');
 const { displayCancellationReason, getReason, humanizeReasonCode } = require('./services/cancellationReasons');
+const { renderProofOfPaymentPdf } = require('./services/proofOfPaymentPdf');
+const { getStripeSettlement } = require('./services/paymentSettlement');
+const { getBrandLogo } = require('./services/brandAssets');
 const { Prisma } = require('@prisma/client');
 
 function makeAdminController(brandKey) {
@@ -1630,6 +1633,80 @@ controller.getBookingById = catchAsync(async (req, res, next) => {
         : null,
     },
   });
+});
+
+/**
+ * GET /api/<brand>/admin/bookings/:id/proof-of-payment
+ *
+ * One-page, customer-safe PDF: amount received, what it was for, who paid, the
+ * Stripe account that settled it and the processor references. Generated on
+ * demand so the settlement facts come from Stripe, not a stale column.
+ *
+ * A Stripe outage degrades the document (no account block) instead of failing
+ * the download — an admin often needs this while reconciling by hand.
+ */
+controller.getBookingProofOfPayment = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+
+  const booking = await prisma.booking.findFirst({
+    where: brandBookingWhere({ id }),
+    include: {
+      customer: { select: { id: true, name: true, email: true, phone: true } },
+      guest: { select: { id: true, name: true, email: true, phone: true } },
+      tour: {
+        select: {
+          id: true,
+          title: true,
+          city: true,
+          country: true,
+          durationMinutes: true,
+          supplier: { select: { id: true, name: true } },
+        },
+      },
+      collections: {
+        select: {
+          id: true,
+          amount: true,
+          currency: true,
+          method: true,
+          status: true,
+          collectedAt: true,
+          externalRef: true,
+        },
+        orderBy: { collectedAt: 'asc' },
+      },
+    },
+  });
+
+  if (!booking) {
+    return next(new AppError(`${BRAND.brandName || 'Brand'} booking not found`, 404));
+  }
+
+  // Only ask Stripe about payments Stripe actually processed. Legacy rows can
+  // carry a leftover PaymentIntent id after moving to another processor.
+  const paymentIntentId =
+    String(booking.paymentProvider || 'STRIPE').toUpperCase() === 'STRIPE'
+      ? booking.stripePaymentIntentId
+      : null;
+
+  const [settlement, logo] = await Promise.all([
+    paymentIntentId ? getStripeSettlement({ paymentIntentId }) : Promise.resolve(null),
+    getBrandLogo(BRAND.key).catch(() => null),
+  ]);
+
+  const buffer = await renderProofOfPaymentPdf({
+    booking,
+    settlement,
+    logo,
+    brandKey: BRAND.key,
+  });
+
+  const safe = String(booking.bookingNumber || id).replace(/[^A-Za-z0-9._-]+/g, '_');
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="proof-of-payment-${safe}.pdf"`);
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Content-Length', buffer.length);
+  res.status(200).send(buffer);
 });
 
 /**

@@ -156,6 +156,10 @@ router.get('/bookings/:id',
   requirePermission('bookings.view', 'dashboard.*'),
   ghana.getBookingById,
 );
+router.get('/bookings/:id/proof-of-payment',
+  requirePermission('bookings.view', 'dashboard.*'),
+  ghana.getBookingProofOfPayment,
+);
 router.patch('/bookings/:id/confirm-payment',
   requirePermission('bookings.confirm-payment', 'dashboard.*'),
   ghana.confirmPayment,
