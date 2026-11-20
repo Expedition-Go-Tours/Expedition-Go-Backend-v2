@@ -1,9 +1,11 @@
 jest.mock('../../src/core/services/prismaClient', () => ({
-  user: { findMany: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
+  user: { findMany: jest.fn(), findUnique: jest.fn(), update: jest.fn(), create: jest.fn() },
   adminRole: { findUnique: jest.fn() },
   auditLog: { create: jest.fn(), findFirst: jest.fn() },
   $transaction: jest.fn(),
 }));
+
+jest.mock('bcrypt', () => ({ hash: jest.fn(() => Promise.resolve('hashed-password')) }));
 
 jest.mock('../../src/core/services/imageOptimizer', () => ({ cloudinaryUrl: jest.fn((url, size) => `https://cdn.example.com/${size}/${url}`) }));
 jest.mock('../../middleware/authMiddleware', () => ({ invalidateUserCache: jest.fn() }));
@@ -28,6 +30,7 @@ describe('adminUserController', () => {
     prisma.user.findMany.mockResolvedValue([mockAdmin]);
     prisma.user.findUnique.mockResolvedValue(mockUser);
     prisma.user.update.mockResolvedValue({ ...mockUser, adminRoleId: 'r1', roles: ['customer', 'admin'], adminRole: mockRole });
+    prisma.user.create.mockResolvedValue({ id: 'u3', name: 'New Admin', email: 'new@t.com', photoURL: '', active: true, roles: ['admin'], adminRoleId: 'r1', adminRole: mockRole });
     prisma.adminRole.findUnique.mockResolvedValue(mockRole);
     prisma.auditLog.create.mockResolvedValue({});
     prisma.auditLog.findFirst.mockResolvedValue(null);
@@ -94,6 +97,105 @@ describe('adminUserController', () => {
       );
       expect(prisma.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'admin.granted' }) }));
       expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('creates a new admin from an email and password', async () => {
+      req.body = { email: 'New.Admin@t.com', name: 'New Admin', password: 'secret123', adminRoleId: 'r1' };
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await controller.addAdmin(req, res, next);
+
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({ where: { email: 'new.admin@t.com' } });
+      expect(prisma.user.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            email: 'new.admin@t.com',
+            name: 'New Admin',
+            passwordHash: 'hashed-password',
+            roles: ['admin'],
+            adminRoleId: 'r1',
+            authProvider: 'local',
+            emailVerified: true,
+          }),
+        })
+      );
+      expect(prisma.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ action: 'admin.created' }) })
+      );
+      expect(res.status).toHaveBeenCalledWith(201);
+    });
+
+    it('derives a display name when none is supplied', async () => {
+      req.body = { email: 'marketing.team@t.com', password: 'secret123', adminRoleId: 'r1' };
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await controller.addAdmin(req, res, next);
+
+      expect(prisma.user.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ name: 'Marketing Team' }) })
+      );
+    });
+
+    it('requires a password for a new email address', async () => {
+      req.body = { email: 'new@t.com', adminRoleId: 'r1' };
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await controller.addAdmin(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects an invalid email address', async () => {
+      req.body = { email: 'not-an-email', password: 'secret123', adminRoleId: 'r1' };
+
+      await controller.addAdmin(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a password shorter than eight characters', async () => {
+      req.body = { email: 'new@t.com', password: 'short', adminRoleId: 'r1' };
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await controller.addAdmin(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+
+    it('promotes an existing user by email and replaces the password', async () => {
+      req.body = { email: 'u@t.com', password: 'secret123', adminRoleId: 'r1' };
+      prisma.user.findUnique.mockResolvedValue(mockUser);
+
+      await controller.addAdmin(req, res, next);
+
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'u2' },
+          data: expect.objectContaining({
+            passwordHash: 'hashed-password',
+            roles: { push: 'admin' },
+            adminRoleId: 'r1',
+          }),
+        })
+      );
+      expect(prisma.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ action: 'admin.granted' }) })
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('refuses to add an account that is already an admin', async () => {
+      req.body = { email: 'a@t.com', password: 'secret123', adminRoleId: 'r1' };
+      prisma.user.findUnique.mockResolvedValue(mockAdmin);
+
+      await controller.addAdmin(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.user.create).not.toHaveBeenCalled();
     });
   });
 

@@ -1,8 +1,33 @@
 const prisma = require('../services/prismaClient');
 const catchAsync = require('../services/catchAsync');
 const AppError = require('../services/appError');
+const bcrypt = require('bcrypt');
 const { logActivity } = require('../services/auditLogger');
 const { invalidateUserCache } = require('../../../middleware/authMiddleware');
+
+const ADMIN_USER_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  photoURL: true,
+  active: true,
+  roles: true,
+  adminRoleId: true,
+  adminRole: {
+    select: { id: true, name: true, description: true },
+  },
+};
+
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function nameFromEmail(email) {
+  return email
+    .split('@')[0]
+    .replace(/[._-]+/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
 
 exports.getAdminUsers = catchAsync(async (req, res, next) => {
   const admins = await prisma.user.findMany({
@@ -41,19 +66,13 @@ exports.getAdminUsers = catchAsync(async (req, res, next) => {
 });
 
 exports.addAdmin = catchAsync(async (req, res, next) => {
-  const { userId, adminRoleId } = req.body;
+  const { userId, email: rawEmail, password, name, adminRoleId } = req.body;
 
-  if (!userId || !adminRoleId) {
-    return next(new AppError('userId and adminRoleId are required', 400));
+  if (!adminRoleId) {
+    return next(new AppError('adminRoleId is required', 400));
   }
-
-  const user = await prisma.user.findUnique({ where: { id: userId } });
-  if (!user) {
-    return next(new AppError('User not found', 404));
-  }
-
-  if (user.roles.includes('admin')) {
-    return next(new AppError('User is already an admin', 400));
+  if (!userId && !rawEmail) {
+    return next(new AppError('Provide a userId or an email address', 400));
   }
 
   const role = await prisma.adminRole.findUnique({ where: { id: adminRoleId } });
@@ -61,40 +80,84 @@ exports.addAdmin = catchAsync(async (req, res, next) => {
     return next(new AppError('Admin role not found', 404));
   }
 
-  const updated = await prisma.user.update({
-    where: { id: userId },
-    data: {
-      roles: { push: 'admin' },
-      adminRoleId,
-    },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      photoURL: true,
-      active: true,
-      roles: true,
-      adminRoleId: true,
-      adminRole: {
-        select: { id: true, name: true, description: true },
+  const email = rawEmail ? normalizeEmail(rawEmail) : null;
+  if (!userId) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return next(new AppError('Enter a valid email address', 400));
+    }
+  }
+
+  let user = userId
+    ? await prisma.user.findUnique({ where: { id: userId } })
+    : await prisma.user.findUnique({ where: { email } });
+
+  if (userId && !user) {
+    return next(new AppError('User not found', 404));
+  }
+  if (user && user.roles.includes('admin')) {
+    return next(new AppError('This account is already an admin', 400));
+  }
+  if (!user && !password) {
+    return next(new AppError('A password is required for a new admin', 400));
+  }
+
+  let passwordHash;
+  if (password !== undefined && password !== null && password !== '') {
+    const value = String(password);
+    if (value.length < 8) {
+      return next(new AppError('Password must be at least 8 characters', 400));
+    }
+    if (Buffer.byteLength(value, 'utf8') > 72) {
+      return next(new AppError('Password must be 72 bytes or fewer', 400));
+    }
+    passwordHash = await bcrypt.hash(value, 10);
+  }
+
+  const created = !user;
+  const displayName = String(name || '').trim();
+
+  if (created) {
+    user = await prisma.user.create({
+      data: {
+        name: displayName || nameFromEmail(email),
+        email,
+        passwordHash,
+        roles: ['admin'],
+        adminRoleId,
+        authProvider: 'local',
+        active: true,
+        emailVerified: true,
+        emailVerifiedAt: new Date(),
       },
-    },
-  });
+      select: ADMIN_USER_SELECT,
+    });
+  } else {
+    user = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        ...(displayName ? { name: displayName } : {}),
+        ...(passwordHash ? { passwordHash } : {}),
+        roles: { push: 'admin' },
+        adminRoleId,
+      },
+      select: ADMIN_USER_SELECT,
+    });
+  }
 
   await logActivity({
     userId: req.user.id,
     userEmail: req.user.email,
-    action: 'admin.granted',
+    action: created ? 'admin.created' : 'admin.granted',
     resource: 'User',
-    resourceId: userId,
-    newValues: { adminRoleId, roleName: role.name },
+    resourceId: user.id,
+    newValues: { adminRoleId, roleName: role.name, email: user.email },
   });
 
-  invalidateUserCache(userId);
+  invalidateUserCache(user.id);
 
-  res.status(200).json({
+  res.status(created ? 201 : 200).json({
     status: 'success',
-    data: { ...updated, photoURL: updated.photoURL },
+    data: user,
   });
 });
 

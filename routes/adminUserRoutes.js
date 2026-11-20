@@ -88,11 +88,11 @@ router.get('/', requirePermission('roles.manage'), adminUserController.getAdminU
  * @swagger
  * /api/admin/users:
  *   post:
- *     summary: Grant admin privileges to a user
+ *     summary: Create an admin or grant admin privileges
  *     description: |
- *       Promotes an existing user to admin by assigning them an
- *       admin role. The user must not already be an admin.
- *       Super admin only. An audit log entry is recorded.
+ *       Creates a local admin account from an email and password, or promotes
+ *       an existing user by email or userId. The account must not already be an
+ *       admin. Super admin only. An audit log entry is recorded.
  *     tags: [Admin, Users]
  *     security:
  *       - bearerAuth: []
@@ -103,20 +103,33 @@ router.get('/', requirePermission('roles.manage'), adminUserController.getAdminU
  *           schema:
  *             type: object
  *             required:
- *               - userId
  *               - adminRoleId
  *             properties:
  *               userId:
  *                 type: string
- *                 description: ID of the user to promote
+ *                 description: ID of an existing user to promote (alternative to email)
  *                 example: user_abc123
+ *               email:
+ *                 type: string
+ *                 description: Email of the admin. Creates the account when it does not exist.
+ *                 example: marketing@example.com
+ *               password:
+ *                 type: string
+ *                 description: Required for a new email; replaces the password of an existing account.
+ *                 example: a-long-password
+ *               name:
+ *                 type: string
+ *                 description: Display name for a new account. Derived from the email when omitted.
+ *                 example: Ama Mensah
  *               adminRoleId:
  *                 type: string
  *                 description: ID of the admin role to assign
  *                 example: role_xyz789
  *     responses:
  *       200:
- *         description: Admin privileges granted successfully
+ *         description: Existing user promoted
+ *       201:
+ *         description: New admin account created
  *         content:
  *           application/json:
  *             schema:
@@ -155,7 +168,7 @@ router.get('/', requirePermission('roles.manage'), adminUserController.getAdminU
  *                         description:
  *                           type: string
  *       400:
- *         description: userId and adminRoleId required, or user is already an admin
+ *         description: adminRoleId and a userId or email are required, the email is invalid, the password is too short, or the account is already an admin
  *       404:
  *         description: User or admin role not found
  *       403:
