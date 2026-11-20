@@ -14,6 +14,8 @@ const {
   contactOf,
   statusOf,
   collectedTotals,
+  paymentTimingNote,
+  chargeLeadTime,
 } = require('../../src/core/services/proofOfPaymentPdf');
 
 const BASE_BOOKING = {
@@ -21,7 +23,7 @@ const BASE_BOOKING = {
   status: 'CONFIRMED',
   paymentStatus: 'SUCCEEDED',
   paymentProvider: 'STRIPE',
-  paymentTiming: 'now',
+  paymentTiming: 'later',
   currency: 'USD',
   subtotal: '540.00',
   taxes: '0.00',
@@ -218,6 +220,47 @@ describe('statusOf', () => {
 
   it('reports a failed charge as failed, not pending', () => {
     expect(statusOf(booking({ paymentStatus: 'FAILED' })).key).toBe('failed');
+  });
+});
+
+
+describe('paymentTimingNote', () => {
+  it('records the two stages of a reserve-now-pay-later booking', () => {
+    const note = paymentTimingNote(booking());
+    expect(note.label).toBe('Reserve now, pay later');
+    expect(note.detail).toContain('Charged 3 Nov 2026 · 00:19 UTC');
+    expect(note.detail).toContain('1 day before the activity');
+  });
+
+  it('says the card is on file when the sweep has not charged yet', () => {
+    const note = paymentTimingNote(
+      booking({ paymentTiming: 'later', paymentStatus: 'PENDING', paidAt: null }),
+    );
+    expect(note.label).toBe('Reserve now, pay later');
+    expect(note.detail).toMatch(/Card on file/);
+  });
+
+  it('describes a booking paid at checkout plainly', () => {
+    const note = paymentTimingNote(booking({ paymentTiming: 'now' }));
+    expect(note.label).toBe('Charged at booking');
+    expect(note.detail).toContain('3 Nov 2026');
+  });
+});
+
+describe('chargeLeadTime', () => {
+  it('counts whole days between the charge and the activity', () => {
+    expect(chargeLeadTime(booking())).toBe('1 day before the activity');
+  });
+
+  it('handles a same-day charge', () => {
+    expect(
+      chargeLeadTime(booking({ paidAt: new Date('2026-11-04T08:00:00Z') })),
+    ).toBe('on the day of the activity');
+  });
+
+  it('returns null when either timestamp is missing or the charge is after travel', () => {
+    expect(chargeLeadTime(booking({ paidAt: null }))).toBeNull();
+    expect(chargeLeadTime(booking({ paidAt: new Date('2026-11-09T00:00:00Z') }))).toBeNull();
   });
 });
 

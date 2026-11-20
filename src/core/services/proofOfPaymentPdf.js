@@ -161,6 +161,48 @@ function statusOf(booking) {
   return { key: 'pending', label: 'PENDING', color: AMBER, soft: '#FFFBEB', border: '#FDE68A', hero: 'AWAITING PAYMENT' };
 }
 
+
+/**
+ * How the money got here. "Reserve now, pay later" is a two-stage lifecycle,
+ * so the receipt states both stages: the booking was taken with a card on
+ * file, and the charge happened later, by the sweep. A document that only
+ * prints the paid date hides the thing the customer agreed to.
+ */
+function chargeLeadTime(booking) {
+  if (!booking.paidAt || !booking.travelDate) return null;
+  const paid = new Date(booking.paidAt);
+  const travel = new Date(booking.travelDate);
+  if (Number.isNaN(paid.getTime()) || Number.isNaN(travel.getTime())) return null;
+
+  // Whole calendar days in UTC: a 23-hour lead still reads "the day before",
+  // which is what the customer experienced, and what a 24-hour sweep means.
+  const utcDay = (d) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  const days = Math.round((utcDay(travel) - utcDay(paid)) / 86_400_000);
+  if (days < 0) return null;
+  if (days === 0) return 'on the day of the activity';
+  return `${days} day${days === 1 ? '' : 's'} before the activity`;
+}
+
+function paymentTimingNote(booking) {
+  const later = String(booking.paymentTiming || '').toLowerCase() === 'later';
+  if (!later) {
+    return {
+      label: 'Charged at booking',
+      detail: booking.paidAt ? `Paid ${formatDateTime(booking.paidAt)}` : null,
+    };
+  }
+  if (booking.paidAt) {
+    return {
+      label: 'Reserve now, pay later',
+      detail: [`Charged ${formatDateTime(booking.paidAt)}`, chargeLeadTime(booking)].filter(Boolean).join(' · '),
+    };
+  }
+  return {
+    label: 'Reserve now, pay later',
+    detail: 'Card on file — charged automatically before the activity date',
+  };
+}
+
 // ── Drawing helpers ──
 
 function rule(doc, y, color = LINE, width = 0.7) {
@@ -204,6 +246,7 @@ function sub(doc, text, x, y, opts = {}) {
       height: opts.height,
       ellipsis: Boolean(opts.height),
       lineGap: 0.6,
+      align: opts.align || 'left',
     });
 }
 
@@ -555,6 +598,19 @@ function drawTimeline(doc, { booking, top }) {
   return top + 40;
 }
 
+
+/**
+ * The pay-later lifecycle, stated on the document: what the customer chose and
+ * when the charge actually landed.
+ */
+function drawPaymentTiming(doc, { booking, top }) {
+  const note = paymentTimingNote(booking);
+  label(doc, 'Payment timing', M, top);
+  value(doc, note.label, M, top + 11, { size: 9.2, bold: false, width: 210 });
+  if (note.detail) sub(doc, note.detail, M, top + 12, { align: 'right' });
+  return top + 30;
+}
+
 function drawIdentifiers(doc, { booking, settlement, top }) {
   const rows = [];
   if (booking.stripePaymentIntentId) rows.push({ label: 'PaymentIntent', value: booking.stripePaymentIntentId });
@@ -699,7 +755,8 @@ function renderProofOfPaymentPdf({
       y = drawSettlement(doc, { booking, settlement, card, top: y }) + 16;
       y = drawBreakdown(doc, { booking, status, top: y }) + 20;
       y = drawTimeline(doc, { booking, top: y }) + 4;
-      y = drawIdentifiers(doc, { booking, settlement, top: y }) + 18;
+      y = drawPaymentTiming(doc, { booking, top: y }) + 4;
+      y = drawIdentifiers(doc, { booking, settlement, top: y }) + 14;
       drawServiceProvider(doc, { booking, top: y });
       drawFooter(doc, { booking, brandName, settlement, issuedAt });
 
@@ -713,6 +770,8 @@ function renderProofOfPaymentPdf({
 module.exports = {
   renderProofOfPaymentPdf,
   collectedTotals,
+  paymentTimingNote,
+  chargeLeadTime,
   // exported for tests and for callers that need the same formatting
   formatMoney,
   formatDate,
