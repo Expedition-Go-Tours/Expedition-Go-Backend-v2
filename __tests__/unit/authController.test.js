@@ -634,6 +634,8 @@ describe('resetPassword', () => {
     expect(prisma.user.update).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 'user-1' }, data: expect.objectContaining({ passwordHash: 'new-hashed' }) })
     );
+    // The reset sets a password; it must not rewrite how the account signed up.
+    expect(prisma.user.update.mock.calls[0][0].data).not.toHaveProperty('authProvider');
     expect(enqueueEvent).toHaveBeenCalledWith(expect.objectContaining({ name: 'user.password_reset' }));
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ status: 'success' }));
@@ -881,7 +883,7 @@ describe('googleCallback', () => {
     expect(next).toHaveBeenCalledWith(expect.objectContaining({ message: 'google error' }));
   });
 
-  it('returns 401 when no user returned', async () => {
+  it('redirects to the client callback when no user is returned', async () => {
     passport.authenticate.mockImplementation((strategy, options, cb) => {
       return (_req, _res, next) => {
         cb(null, null, { message: 'Google authentication failed' });
@@ -893,7 +895,10 @@ describe('googleCallback', () => {
 
     await controller.googleCallback(req, res, next);
 
-    expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 401 }));
+    expect(next).not.toHaveBeenCalled();
+    expect(res.redirect).toHaveBeenCalledWith(
+      expect.stringContaining('/auth/callback?error=Google%20authentication%20failed'),
+    );
   });
 
   it('redirects with tokens on success', (done) => {

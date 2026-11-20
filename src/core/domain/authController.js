@@ -2,6 +2,7 @@
 const prisma = require('../services/prismaClient');
 const catchAsync = require('../services/catchAsync');
 const AppError = require('../services/appError');
+const { resolveGoogleUser } = require('../services/googleAccount');
 const { signAccessToken, signRefreshToken, signPasswordResetToken, verifyPasswordResetToken, setAuthCookies, clearAuthCookies } = require('../../../config/jwt');
 const { invalidateUserCache } = require('../../../middleware/authMiddleware');
 const { storeRefreshToken, rotateRefreshToken, clearRefreshToken } = require('../services/refreshTokenHelper');
@@ -339,7 +340,6 @@ exports.resetPassword = catchAsync(async (req, res, next) => {
     where: { id: decoded.userId },
     data: {
       passwordHash,
-      authProvider: decoded.firebaseUid ? 'local' : undefined,
       // Completing the reset proves control of the inbox, exactly like the
       // verification link does.
       emailVerified: true,
@@ -562,7 +562,13 @@ exports.googleCallback = catchAsync(async (req, res, next) => {
   const brand = resolveBrand(req.hostname || req.headers.host);
   passport.authenticate(googleStrategyFor(brand), { session: false }, async (err, user, info) => {
     if (err) return next(err);
-    if (!user) return next(new AppError(info?.message || 'Google authentication failed', 401));
+    if (!user) {
+      // A refusal belongs on the login page, not as a bare JSON 401 in the
+      // browser. The client callback reads `error` and shows it.
+      const origin = resolveOAuthReturnOrigin(req);
+      const message = info?.message || 'Google authentication failed';
+      return res.redirect(`${origin}/auth/callback?error=${encodeURIComponent(message)}`);
+    }
 
     const accessToken = signAccessToken({ userId: user.id });
     const refreshToken = signRefreshToken({ userId: user.id });
@@ -631,37 +637,12 @@ exports.googleOneTap = catchAsync(async (req, res, next) => {
   const photoURL = payload.picture || '';
   const firebaseUid = payload.sub;
 
-  let user = await prisma.user.findUnique({ where: { email } });
-
-  if (user) {
-    user = await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        authProvider: 'google',
-        name: user.name || name,
-        photoURL: user.photoURL || photoURL,
-        firebaseUid: user.firebaseUid || firebaseUid,
-        // Google has already verified this address.
-        emailVerified: true,
-        emailVerifiedAt: user.emailVerifiedAt || new Date(),
-      },
-    });
-  } else {
-    user = await prisma.user.create({
-      data: {
-        email,
-        name,
-        photoURL,
-        authProvider: 'google',
-        firebaseUid,
-        roles: ['customer'],
-        emailVerified: true,
-        emailVerifiedAt: new Date(),
-      },
-    });
-  }
-
-  if (!user.active) return next(new AppError('Account has been deactivated', 403));
+  const user = await resolveGoogleUser({
+    email,
+    name,
+    photoURL,
+    googleId: firebaseUid,
+  });
 
   const accessToken = signAccessToken({ userId: user.id });
   const refreshToken = signRefreshToken({ userId: user.id });

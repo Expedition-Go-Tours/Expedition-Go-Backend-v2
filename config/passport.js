@@ -3,6 +3,7 @@ const LocalStrategy = require('passport-local').Strategy;
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const bcrypt = require('bcrypt');
 const prisma = require('../src/core/services/prismaClient');
+const { resolveGoogleUser } = require('../src/core/services/googleAccount');
 const { BRAND_GOOGLE_ENV, googleConfigFor } = require('./googleBrands');
 
 passport.use(
@@ -12,8 +13,13 @@ passport.use(
       try {
         const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
         if (!user) return done(null, false, { message: 'Invalid email or password' });
-        if (!user.passwordHash && user.authProvider !== 'local') return done(null, false, { message: 'This account uses social login. Please sign in with Google.' });
-        if (!user.passwordHash && user.authProvider === 'local') return done(null, false, { message: 'Password not set. Please use the forgot password option to create one.' });
+        // A password is the credential. The provider field records how the
+        // account was created and must not decide whether this login works.
+        if (!user.passwordHash) {
+          return done(null, false, {
+            message: 'This account has no password. Sign in with Google or use the forgot password option to create one.',
+          });
+        }
         if (!user.active) return done(null, false, { message: 'Account has been deactivated' });
 
         const isMatch = await bcrypt.compare(password, user.passwordHash);
@@ -33,41 +39,19 @@ passport.use(
  */
 async function verifyGoogleProfile(accessToken, refreshToken, profile, done) {
   try {
-    const email = profile.emails?.[0]?.value?.toLowerCase().trim();
-    if (!email) return done(null, false, { message: 'No email found from Google' });
-
-    let user = await prisma.user.findUnique({ where: { email } });
-
-    if (user) {
-      user = await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          authProvider: 'google',
-          name: user.name || profile.displayName,
-          photoURL: user.photoURL || profile.photos?.[0]?.value || '',
-          // Google has verified this address.
-          emailVerified: true,
-          emailVerifiedAt: user.emailVerifiedAt || new Date(),
-        },
-      });
-    } else {
-      user = await prisma.user.create({
-        data: {
-          email,
-          name: profile.displayName,
-          photoURL: profile.photos?.[0]?.value || '',
-          authProvider: 'google',
-          roles: ['customer'],
-          emailVerified: true,
-          emailVerifiedAt: new Date(),
-        },
-      });
-    }
-
-    if (!user.active) return done(null, false, { message: 'Account has been deactivated' });
-
+    const user = await resolveGoogleUser({
+      email: profile.emails?.[0]?.value,
+      name: profile.displayName,
+      photoURL: profile.photos?.[0]?.value,
+      googleId: profile.id,
+    });
     return done(null, user);
   } catch (err) {
+    // Operational refusals (deactivated account, unlinked admin) belong on the
+    // login page, not as a 500.
+    if (err && err.isOperational) {
+      return done(null, false, { message: err.message });
+    }
     return done(err);
   }
 }
