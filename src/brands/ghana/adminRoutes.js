@@ -490,6 +490,10 @@ router.patch('/admins/:userId/role',
   requirePermission('settings.access'),
   adminUserController.updateAdminRole,
 );
+router.patch('/admins/:userId/name',
+  requirePermission('settings.access'),
+  adminUserController.updateAdminName,
+);
 router.delete('/admins/:userId/revoke',
   requirePermission('settings.access'),
   adminUserController.revokeAdmin,

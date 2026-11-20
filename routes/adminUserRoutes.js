@@ -255,6 +255,7 @@ router.post('/', requireSuperAdmin, adminUserController.addAdmin);
  *       403:
  *         description: Super admin access required
  */
+router.patch('/:id/name', requireSuperAdmin, adminUserController.updateAdminName);
 router.patch('/:id/role', requireSuperAdmin, adminUserController.updateAdminRole);
 
 /**

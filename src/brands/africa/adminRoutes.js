@@ -169,6 +169,7 @@ router.delete('/roles/:id', requirePermission('settings.access'), adminRoleContr
 router.get('/admins', requirePermission('settings.access'), adminUserController.getAdminUsers);
 router.post('/admins', requirePermission('settings.access'), adminUserController.addAdmin);
 router.patch('/admins/:userId/role', requirePermission('settings.access'), adminUserController.updateAdminRole);
+router.patch('/admins/:userId/name', requirePermission('settings.access'), adminUserController.updateAdminName);
 router.delete('/admins/:userId/revoke', requirePermission('settings.access'), adminUserController.revokeAdmin);
 
 // FINANCE — shared platform endpoints (proxied)

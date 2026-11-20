@@ -200,6 +200,82 @@ describe('adminUserController', () => {
   });
 
   // ============================
+  // updateAdminName
+  // ============================
+  describe('updateAdminName', () => {
+    it('returns 400 when the name is empty', async () => {
+      req.params = { id: 'u1' };
+      req.body = { name: '   ' };
+
+      await controller.updateAdminName(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 when the name is longer than 100 characters', async () => {
+      req.params = { id: 'u1' };
+      req.body = { name: 'x'.repeat(101) };
+
+      await controller.updateAdminName(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+    });
+
+    it('returns 404 when the user does not exist', async () => {
+      req.params = { id: 'nonexistent' };
+      req.body = { name: 'New Name' };
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await controller.updateAdminName(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 404 }));
+    });
+
+    it('returns 400 when the account is not an admin', async () => {
+      req.params = { id: 'u2' };
+      req.body = { name: 'New Name' };
+      prisma.user.findUnique.mockResolvedValue(mockUser);
+
+      await controller.updateAdminName(req, res, next);
+
+      expect(next).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('renames the admin and records the old and new name', async () => {
+      req.params = { id: 'u1' };
+      req.body = { name: '  New Name  ' };
+      prisma.user.findUnique.mockResolvedValue(mockAdmin);
+      prisma.user.update.mockResolvedValue({ ...mockAdmin, name: 'New Name' });
+
+      await controller.updateAdminName(req, res, next);
+
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'u1' }, data: { name: 'New Name' } })
+      );
+      expect(prisma.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ action: 'admin.renamed' }) })
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('accepts the brand-route parameter name', async () => {
+      req.params = { userId: 'u1' };
+      req.body = { name: 'Brand Route Name' };
+      prisma.user.findUnique.mockResolvedValue(mockAdmin);
+      prisma.user.update.mockResolvedValue({ ...mockAdmin, name: 'Brand Route Name' });
+
+      await controller.updateAdminName(req, res, next);
+
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'u1' }, data: { name: 'Brand Route Name' } })
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+  });
+
+  // ============================
   // updateAdminRole
   // ============================
   describe('updateAdminRole', () => {

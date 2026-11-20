@@ -161,8 +161,51 @@ exports.addAdmin = catchAsync(async (req, res, next) => {
   });
 });
 
+exports.updateAdminName = catchAsync(async (req, res, next) => {
+  const id = req.params.id || req.params.userId;
+  const name = String(req.body?.name || '').trim();
+
+  if (!name) {
+    return next(new AppError('Name is required', 400));
+  }
+  if (name.length > 100) {
+    return next(new AppError('Name must be 100 characters or fewer', 400));
+  }
+
+  const user = await prisma.user.findUnique({ where: { id } });
+  if (!user) {
+    return next(new AppError('User not found', 404));
+  }
+  if (!user.roles.includes('admin')) {
+    return next(new AppError('This account is not an admin', 400));
+  }
+
+  const updated = await prisma.user.update({
+    where: { id },
+    data: { name },
+    select: ADMIN_USER_SELECT,
+  });
+
+  await logActivity({
+    userId: req.user.id,
+    userEmail: req.user.email,
+    action: 'admin.renamed',
+    resource: 'User',
+    resourceId: id,
+    oldValues: { name: user.name },
+    newValues: { name },
+  });
+
+  invalidateUserCache(id);
+
+  res.status(200).json({
+    status: 'success',
+    data: updated,
+  });
+});
+
 exports.updateAdminRole = catchAsync(async (req, res, next) => {
-  const { id } = req.params;
+  const id = req.params.id || req.params.userId;
   const { adminRoleId } = req.body;
 
   if (!adminRoleId) {
@@ -220,7 +263,7 @@ exports.updateAdminRole = catchAsync(async (req, res, next) => {
 });
 
 exports.revokeAdmin = catchAsync(async (req, res, next) => {
-  const { id } = req.params;
+  const id = req.params.id || req.params.userId;
 
   if (id === req.user.id) {
     return next(new AppError('You cannot revoke your own admin access', 400));
