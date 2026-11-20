@@ -481,6 +481,22 @@ describe('payoutMethodController', () => {
       );
     });
 
+    it('searches all suppliers by name, email or phone on the server', async () => {
+      req.query = { search: 'Ama' };
+
+      await controller.getAllSuppliersMethods(req, res, next);
+
+      const where = prisma.user.findMany.mock.calls[0][0].where;
+      expect(where.roles).toEqual({ has: 'supplier' });
+      expect(where.OR).toEqual([
+        { name: { contains: 'Ama', mode: 'insensitive' } },
+        { email: { contains: 'Ama', mode: 'insensitive' } },
+        { phone: { contains: 'Ama', mode: 'insensitive' } },
+      ]);
+      // The count must use the same filter as the page.
+      expect(prisma.user.count).toHaveBeenCalledWith({ where });
+    });
+
     it('resolves Firebase photoURL when missing', async () => {
       prisma.user.findMany.mockResolvedValue([{ ...mockSupplier, photoURL: '' }]);
 

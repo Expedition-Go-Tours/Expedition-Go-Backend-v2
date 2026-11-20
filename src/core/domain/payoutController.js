@@ -112,7 +112,10 @@ exports.getAllPayouts = catchAsync(async (req, res, next) => {
           OR: [
             { supplier: { name: { contains: term, mode: 'insensitive' } } },
             { supplier: { email: { contains: term, mode: 'insensitive' } } },
-            { booking: { bookingNumber: { contains: term, mode: 'insensitive' } } }
+            { booking: { bookingNumber: { contains: term, mode: 'insensitive' } } },
+            { booking: { tour: { title: { contains: term, mode: 'insensitive' } } } },
+            // The processor/bank transaction reference finance reconciles with.
+            { reference: { contains: term, mode: 'insensitive' } }
           ]
         }
       ];

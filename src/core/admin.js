@@ -584,6 +584,10 @@ controller.getTourPerformance = catchAsync(async (req, res, next) => {
     const term = search.trim();
     ghanaTourWhere.tour.OR = [
       { title: { contains: term, mode: 'insensitive' } },
+      { slug: { contains: term, mode: 'insensitive' } },
+      { referenceCode: { contains: term, mode: 'insensitive' } },
+      { city: { contains: term, mode: 'insensitive' } },
+      { country: { contains: term, mode: 'insensitive' } },
       { supplier: { name: { contains: term, mode: 'insensitive' } } },
     ];
   }
@@ -1213,10 +1217,15 @@ controller.getTourReviewQueue = catchAsync(async (req, res, next) => {
 
   const requestedStatus = typeof status === 'string' ? status.trim() : '';
   const validStatuses = ['PENDING_APPROVAL', 'REJECTED', 'ACTIVE', 'PENDING_EDITS'];
-  const searchOR = search && search.trim()
+  const searchTerm = typeof search === 'string' ? search.trim() : '';
+  const searchOR = searchTerm
     ? [
-        { title: { contains: search.trim(), mode: 'insensitive' } },
-        { supplier: { name: { contains: search.trim(), mode: 'insensitive' } } },
+        { title: { contains: searchTerm, mode: 'insensitive' } },
+        { slug: { contains: searchTerm, mode: 'insensitive' } },
+        { referenceCode: { contains: searchTerm, mode: 'insensitive' } },
+        { city: { contains: searchTerm, mode: 'insensitive' } },
+        { supplier: { name: { contains: searchTerm, mode: 'insensitive' } } },
+        { supplier: { email: { contains: searchTerm, mode: 'insensitive' } } },
       ]
     : null;
 
@@ -2255,7 +2264,7 @@ controller.getFailedTours = catchAsync(async (req, res, next) => {
  * Pending reviews on Ghana tours.
  */
 controller.getPendingReviews = catchAsync(async (req, res, next) => {
-  const { page = 1, limit = 20, status } = req.query;
+  const { page = 1, limit = 20, status, search } = req.query;
   const skip = (parseInt(page) - 1) * parseInt(limit);
   const take = Math.min(parseInt(limit), 100);
 
@@ -2269,9 +2278,28 @@ controller.getPendingReviews = catchAsync(async (req, res, next) => {
   // and sends the uppercase status. "ALL" (or no param) returns every review
   // on the brand's tours; otherwise filter to that status.
   const statusFilter = status && status !== 'ALL' ? status : undefined;
+
+  // Free-text search runs over the whole queue, not just the loaded page.
+  // Moderators search a customer, a tour or the words of the review itself.
+  const term = String(search || '').trim();
+  const searchWhere = term
+    ? {
+        OR: [
+          { title: { contains: term, mode: 'insensitive' } },
+          { comment: { contains: term, mode: 'insensitive' } },
+          { customer: { name: { contains: term, mode: 'insensitive' } } },
+          { customer: { email: { contains: term, mode: 'insensitive' } } },
+          { tour: { title: { contains: term, mode: 'insensitive' } } },
+          { tour: { supplier: { name: { contains: term, mode: 'insensitive' } } } },
+          { booking: { bookingNumber: { contains: term, mode: 'insensitive' } } },
+        ],
+      }
+    : {};
+
   const where = {
     tourId: { in: tourIds },
     ...(statusFilter ? { status: statusFilter } : {}),
+    ...searchWhere,
   };
 
   const [reviews, totalCount, counts] = await Promise.all([

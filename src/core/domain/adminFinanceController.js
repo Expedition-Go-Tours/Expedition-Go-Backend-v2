@@ -131,6 +131,9 @@ exports.getPayoutRequests = catchAsync(async (req, res) => {
       { requestNumber: { contains: term, mode: 'insensitive' } },
       { supplier: { name: { contains: term, mode: 'insensitive' } } },
       { supplier: { email: { contains: term, mode: 'insensitive' } } },
+      // Requests are paid per booking; a booking number must find its request.
+      { items: { some: { booking: { bookingNumber: { contains: term, mode: 'insensitive' } } } } },
+      { items: { some: { booking: { tour: { title: { contains: term, mode: 'insensitive' } } } } } },
     ];
   }
 
@@ -502,6 +505,9 @@ exports.getInvoices = catchAsync(async (req, res) => {
       { reference: { contains: term, mode: 'insensitive' } },
       { supplier: { name: { contains: term, mode: 'insensitive' } } },
       { supplier: { email: { contains: term, mode: 'insensitive' } } },
+      // An admin holding a booking reference needs the invoice it sits on.
+      { items: { some: { booking: { bookingNumber: { contains: term, mode: 'insensitive' } } } } },
+      { items: { some: { booking: { tour: { title: { contains: term, mode: 'insensitive' } } } } } },
     ];
   }
 

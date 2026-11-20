@@ -576,12 +576,27 @@ exports.getAdminArticle = catchAsync(async (req, res, next) => {
 });
 
 exports.getAdminArticles = catchAsync(async (req, res) => {
-  const { page = 1, limit = 20, status, locale, category } = req.query;
+  const { page = 1, limit = 20, status, locale, category, search } = req.query;
 
   const where = {};
   if (status) where.status = status;
   if (locale) where.locale = locale;
   if (category) where.category = { slug: category };
+
+  // The list is paginated, so the search must run here rather than over the
+  // page the dashboard has loaded. It was previously ignored entirely.
+  const term = String(search || '').trim();
+  if (term) {
+    where.OR = [
+      { title: { contains: term, mode: 'insensitive' } },
+      { slug: { contains: term, mode: 'insensitive' } },
+      { excerpt: { contains: term, mode: 'insensitive' } },
+      { metaTitle: { contains: term, mode: 'insensitive' } },
+      { category: { name: { contains: term, mode: 'insensitive' } } },
+      { author: { name: { contains: term, mode: 'insensitive' } } },
+      { tags: { some: { tag: { name: { contains: term, mode: 'insensitive' } } } } },
+    ];
+  }
 
   const skip = (parseInt(page) - 1) * Math.min(parseInt(limit), 100);
   const take = Math.min(parseInt(limit), 100);

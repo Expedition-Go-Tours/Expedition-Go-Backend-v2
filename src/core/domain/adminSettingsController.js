@@ -265,6 +265,17 @@ function buildAuditWhere(req) {
   if (req.query.email) where.userEmail = { contains: req.query.email, mode: 'insensitive' };
   if (req.query.userId) where.userId = req.query.userId;
   if (req.query.resourceId) where.resourceId = req.query.resourceId;
+  // Free-text box: one term against everything an admin can see on the row.
+  const searchTerm = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+  if (searchTerm) {
+    where.OR = [
+      { userEmail: { contains: searchTerm, mode: 'insensitive' } },
+      { action: { contains: searchTerm, mode: 'insensitive' } },
+      { resource: { contains: searchTerm, mode: 'insensitive' } },
+      { resourceId: { contains: searchTerm, mode: 'insensitive' } },
+      { userId: { contains: searchTerm, mode: 'insensitive' } },
+    ];
+  }
   if (req.query.startDate || req.query.endDate) {
     where.createdAt = {};
     if (req.query.startDate) where.createdAt.gte = new Date(req.query.startDate);

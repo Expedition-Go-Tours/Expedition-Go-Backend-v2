@@ -176,6 +176,49 @@ describe('getBookings — payment source filter', () => {
   });
 });
 
+describe('getPendingReviews — search', () => {
+  let req;
+  let res;
+  let next;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.travioGhanaTour.findMany.mockResolvedValue([{ tourId: 't1' }]);
+    prisma.review.findMany.mockResolvedValue([]);
+    prisma.review.count.mockResolvedValue(0);
+    req = { query: {}, params: {}, body: {}, user: { id: 'admin-1' } };
+    res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+    next = jest.fn();
+  });
+
+  it('searches review text, customer, tour, supplier and booking number', async () => {
+    req.query = { search: 'kakum' };
+
+    await ghanaAdmin.getPendingReviews(req, res, next);
+
+    const where = prisma.review.findMany.mock.calls[0][0].where;
+    expect(where.tourId).toEqual({ in: ['t1'] });
+    expect(where.OR).toEqual(expect.arrayContaining([
+      { title: { contains: 'kakum', mode: 'insensitive' } },
+      { comment: { contains: 'kakum', mode: 'insensitive' } },
+      { customer: { name: { contains: 'kakum', mode: 'insensitive' } } },
+      { tour: { title: { contains: 'kakum', mode: 'insensitive' } } },
+      { tour: { supplier: { name: { contains: 'kakum', mode: 'insensitive' } } } },
+      { booking: { bookingNumber: { contains: 'kakum', mode: 'insensitive' } } },
+    ]));
+    // The count must use the same filter, or pagination disagrees with rows.
+    expect(prisma.review.count).toHaveBeenCalledWith({ where });
+  });
+
+  it('keeps the brand scope when there is no search', async () => {
+    await ghanaAdmin.getPendingReviews(req, res, next);
+
+    const where = prisma.review.findMany.mock.calls[0][0].where;
+    expect(where.tourId).toEqual({ in: ['t1'] });
+    expect(where.OR).toBeUndefined();
+  });
+});
+
 describe('getBookings — search', () => {
   let req;
   let res;

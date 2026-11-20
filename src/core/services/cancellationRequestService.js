@@ -862,13 +862,18 @@ async function listAdminCancellationRequests({ status = 'PENDING_APPROVAL', page
       OR: [
         { bookingNumber: { contains: q, mode: 'insensitive' } },
         { customer: { name: { contains: q, mode: 'insensitive' } } },
+        { customer: { email: { contains: q, mode: 'insensitive' } } },
+        { customer: { phone: { contains: q, mode: 'insensitive' } } },
         // Guest checkouts have no customer row; the admin queue must still
         // find them by the traveller who booked.
         { leadTravelerName: { contains: q, mode: 'insensitive' } },
         { leadTravelerEmail: { contains: q, mode: 'insensitive' } },
+        { leadTravelerPhone: { contains: q, mode: 'insensitive' } },
         { guest: { name: { contains: q, mode: 'insensitive' } } },
         { guest: { email: { contains: q, mode: 'insensitive' } } },
+        { guest: { phone: { contains: q, mode: 'insensitive' } } },
         { tour: { title: { contains: q, mode: 'insensitive' } } },
+        { tour: { supplier: { name: { contains: q, mode: 'insensitive' } } } },
       ],
     });
   }

@@ -596,6 +596,16 @@ async function listAdminRefundRequests({ status = 'PENDING_APPROVAL', page = 1, 
     where.OR = [
       { requestNumber: { contains: term, mode: 'insensitive' } },
       { booking: { bookingNumber: { contains: term, mode: 'insensitive' } } },
+      // The supplier whose money is being refunded
+      { supplier: { name: { contains: term, mode: 'insensitive' } } },
+      { supplier: { email: { contains: term, mode: 'insensitive' } } },
+      // The booking behind the request — account holder, traveller, guest, tour
+      { booking: { customer: { name: { contains: term, mode: 'insensitive' } } } },
+      { booking: { customer: { email: { contains: term, mode: 'insensitive' } } } },
+      { booking: { leadTravelerName: { contains: term, mode: 'insensitive' } } },
+      { booking: { leadTravelerEmail: { contains: term, mode: 'insensitive' } } },
+      { booking: { guest: { name: { contains: term, mode: 'insensitive' } } } },
+      { booking: { tour: { title: { contains: term, mode: 'insensitive' } } } },
     ];
   }
 

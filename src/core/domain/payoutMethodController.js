@@ -404,7 +404,7 @@ exports.getSupplierMethods = catchAsync(async (req, res, next) => {
  * List all suppliers with their payout methods (admin / finance dashboard)
  */
 exports.getAllSuppliersMethods = catchAsync(async (req, res) => {
-  const { page = 1, limit = 20, hasMethod } = req.query;
+  const { page = 1, limit = 20, hasMethod, search } = req.query;
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
   // Build supplier filter
@@ -414,6 +414,16 @@ exports.getAllSuppliersMethods = catchAsync(async (req, res) => {
     supplierWhere.payoutMethods = { some: {} };
   } else if (hasMethod === 'false') {
     supplierWhere.payoutMethods = { none: {} };
+  }
+
+  // Search over the whole supplier list, not just the page the table loaded.
+  const term = String(search || '').trim();
+  if (term) {
+    supplierWhere.OR = [
+      { name: { contains: term, mode: 'insensitive' } },
+      { email: { contains: term, mode: 'insensitive' } },
+      { phone: { contains: term, mode: 'insensitive' } },
+    ];
   }
 
   const [suppliers, totalCount] = await Promise.all([

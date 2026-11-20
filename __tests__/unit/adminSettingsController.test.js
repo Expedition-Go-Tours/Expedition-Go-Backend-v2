@@ -317,6 +317,24 @@ describe('adminSettingsController', () => {
       expect(body.data.entries[0].userName).toBe('System');
     });
 
+    it('searches one term across email, action and resource', async () => {
+      req.query = { search: 'refund' };
+      prisma.auditLog.count.mockResolvedValue(0);
+      prisma.auditLog.findMany.mockResolvedValue([]);
+      prisma.user.findMany.mockResolvedValue([]);
+
+      await controller.getAuditLog(req, res, next);
+
+      const where = prisma.auditLog.findMany.mock.calls[0][0].where;
+      expect(where.OR).toEqual([
+        { userEmail: { contains: 'refund', mode: 'insensitive' } },
+        { action: { contains: 'refund', mode: 'insensitive' } },
+        { resource: { contains: 'refund', mode: 'insensitive' } },
+        { resourceId: { contains: 'refund', mode: 'insensitive' } },
+        { userId: { contains: 'refund', mode: 'insensitive' } },
+      ]);
+    });
+
     it('filters by action', async () => {
       req.query = { action: 'settings.updated' };
       prisma.auditLog.count.mockResolvedValue(0);
