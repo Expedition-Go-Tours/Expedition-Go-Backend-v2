@@ -176,6 +176,80 @@ describe('getBookings — payment source filter', () => {
   });
 });
 
+describe('getBookings — search', () => {
+  let req;
+  let res;
+  let next;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.booking.findMany.mockResolvedValue([]);
+    prisma.booking.count.mockResolvedValue(0);
+    prisma.booking.groupBy.mockResolvedValue([]);
+    req = { query: {}, params: {}, body: {}, user: { id: 'admin-1' } };
+    res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+    next = jest.fn();
+  });
+
+  async function capturedWhere() {
+    await ghanaAdmin.getBookings(req, res, next);
+    return prisma.booking.findMany.mock.calls[0][0].where;
+  }
+
+  it('keeps the Ghana scope ANDed with the search clause', async () => {
+    req.query = { search: 'TRG-86629225-2026-47' };
+    const where = await capturedWhere();
+
+    // The brand scope must survive: spreading the search OR over it used to
+    // replace it, so a search could return another brand's bookings.
+    expect(where.AND[0].OR).toEqual([
+      { source: 'GHANA' },
+      { tour: { supplier: { roles: { has: 'ghana' } } } },
+    ]);
+    expect(where.AND[1].OR).toEqual(expect.arrayContaining([
+      { bookingNumber: { contains: 'TRG-86629225-2026-47', mode: 'insensitive' } },
+    ]));
+  });
+
+  it('strips the "#" shown in front of a booking reference', async () => {
+    req.query = { search: ' #TRG-86629225-2026-47 ' };
+    const where = await capturedWhere();
+
+    expect(where.AND[1].OR[0].bookingNumber.contains).toBe('TRG-86629225-2026-47');
+  });
+
+  it('searches traveller, guest, payment and promo fields, not just four', async () => {
+    req.query = { search: 'Priscilla' };
+    const where = await capturedWhere();
+    const or = JSON.stringify(where.AND[1].OR);
+
+    for (const field of [
+      'customer',
+      'leadTravelerName',
+      'leadTravelerEmail',
+      'leadTravelerPhone',
+      'guest',
+      'optionTitle',
+      'specialRequests',
+      'offerPromoCode',
+      'stripePaymentIntentId',
+      'paypalCaptureId',
+    ]) {
+      expect(or).toContain(field);
+    }
+  });
+
+  it('leaves the scope flat when there is no search', async () => {
+    const where = await capturedWhere();
+
+    expect(where.OR).toEqual([
+      { source: 'GHANA' },
+      { tour: { supplier: { roles: { has: 'ghana' } } } },
+    ]);
+    expect(where.AND).toBeUndefined();
+  });
+});
+
 describe('active users — tile and list answer the same question', () => {
   let req;
   let res;

@@ -1336,4 +1336,65 @@ describe('adminController', () => {
       });
     });
   });
+
+  // ============================
+  // getBookings search
+  // ============================
+  //
+  // The admin bookings list searches server-side. A reference on page 2, a
+  // lead traveller's phone, a guest walk-in, a payment id or a promo code all
+  // have to reach the same query.
+  describe('getBookings search', () => {
+    async function searchFor(term) {
+      req.query = { search: term };
+      prisma.booking.findMany.mockResolvedValue([]);
+      prisma.booking.count.mockResolvedValue(0);
+      await controller.getBookings(req, res, next);
+      return prisma.booking.findMany.mock.calls[0][0].where;
+    }
+
+    it('matches a booking reference and trims surrounding space', async () => {
+      const where = await searchFor('  TRG-86629225-2026-47  ');
+
+      expect(where.OR).toEqual(expect.arrayContaining([
+        { bookingNumber: { contains: 'TRG-86629225-2026-47', mode: 'insensitive' } },
+      ]));
+      expect(where.OR[0].bookingNumber.contains).toBe('TRG-86629225-2026-47');
+    });
+
+    it('drops the "#" the list displays in front of the number', async () => {
+      const where = await searchFor('#TRG-86629225-2026-47');
+
+      expect(where.OR[0].bookingNumber.contains).toBe('TRG-86629225-2026-47');
+    });
+
+    it('searches the customer, lead traveller, guest and product fields', async () => {
+      const where = await searchFor('Ama');
+      const or = JSON.stringify(where.OR);
+
+      for (const field of [
+        'customer',
+        'leadTravelerName',
+        'leadTravelerEmail',
+        'leadTravelerPhone',
+        'guest',
+        'tour',
+        'optionTitle',
+        'specialRequests',
+        'offerPromoCode',
+        'stripePaymentIntentId',
+        'stripeCheckoutSessionId',
+        'paypalOrderId',
+        'paypalCaptureId',
+      ]) {
+        expect(or).toContain(field);
+      }
+    });
+
+    it('adds no OR clause for a blank search', async () => {
+      const where = await searchFor('   ');
+
+      expect(where.OR).toBeUndefined();
+    });
+  });
 });

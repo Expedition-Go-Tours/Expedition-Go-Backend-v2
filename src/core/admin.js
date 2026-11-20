@@ -38,15 +38,21 @@ function makeAdminController(brandKey) {
  * Matches bookings whose source is GHANA *or* whose tour's supplier has
  * the 'ghana' role.  This ensures bookings made through the Expedition
  * storefront by a Ghana-based supplier appear in the Ghana admin dashboard.
+ *
+ * A caller-supplied `OR` (search) is ANDed with the brand scope. Spreading it
+ * over the object — the previous behaviour — silently REPLACED the scope, so a
+ * search could return another brand's bookings.
  */
 function brandBookingWhere(extra = {}) {
-  return {
-    OR: [
-      { source: BRAND.source },
-      { tour: { supplier: { roles: { has: BRAND.role } } } },
-    ],
-    ...extra,
-  };
+  const { OR: extraOr, ...rest } = extra;
+  const brandOr = [
+    { source: BRAND.source },
+    { tour: { supplier: { roles: { has: BRAND.role } } } },
+  ];
+  if (extraOr) {
+    return { AND: [{ OR: brandOr }, { OR: extraOr }], ...rest };
+  }
+  return { OR: brandOr, ...rest };
 }
 
 /**
@@ -1463,13 +1469,37 @@ controller.getBookings = catchAsync(async (req, res, next) => {
     if (endDate) extra.createdAt.lte = new Date(endDate + 'T23:59:59.999Z');
   }
   if (search && search.trim()) {
-    const term = search.trim();
-    extra.OR = [
-      { bookingNumber: { contains: term, mode: 'insensitive' } },
-      { customer: { name: { contains: term, mode: 'insensitive' } } },
-      { customer: { email: { contains: term, mode: 'insensitive' } } },
-      { tour: { title: { contains: term, mode: 'insensitive' } } },
-    ];
+    // Strip the "#" the bookings table prints in front of a reference.
+    const term = search.trim().replace(/^#/, '');
+    if (term) {
+      extra.OR = [
+        { bookingNumber: { contains: term, mode: 'insensitive' } },
+        // Account holder
+        { customer: { name: { contains: term, mode: 'insensitive' } } },
+        { customer: { email: { contains: term, mode: 'insensitive' } } },
+        { customer: { phone: { contains: term, mode: 'insensitive' } } },
+        // The person travelling — the only identity on a guest checkout
+        { leadTravelerName: { contains: term, mode: 'insensitive' } },
+        { leadTravelerEmail: { contains: term, mode: 'insensitive' } },
+        { leadTravelerPhone: { contains: term, mode: 'insensitive' } },
+        { guest: { name: { contains: term, mode: 'insensitive' } } },
+        { guest: { email: { contains: term, mode: 'insensitive' } } },
+        { guest: { phone: { contains: term, mode: 'insensitive' } } },
+        // Product and supplier
+        { tour: { title: { contains: term, mode: 'insensitive' } } },
+        { tour: { supplier: { name: { contains: term, mode: 'insensitive' } } } },
+        { optionTitle: { contains: term, mode: 'insensitive' } },
+        // Money references an admin reconciles against a processor
+        { stripePaymentIntentId: { contains: term, mode: 'insensitive' } },
+        { stripeCheckoutSessionId: { contains: term, mode: 'insensitive' } },
+        { paypalOrderId: { contains: term, mode: 'insensitive' } },
+        { paypalCaptureId: { contains: term, mode: 'insensitive' } },
+        { offerName: { contains: term, mode: 'insensitive' } },
+        { offerPromoCode: { contains: term, mode: 'insensitive' } },
+        // Free text the customer typed at checkout
+        { specialRequests: { contains: term, mode: 'insensitive' } },
+      ];
+    }
   }
   const where = brandBookingWhere(extra);
 

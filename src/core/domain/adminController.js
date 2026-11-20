@@ -1431,13 +1431,41 @@ exports.getBookings = catchAsync(async (req, res) => {
   }
 
   if (search) {
-    const q = search.trim();
-    where.OR = [
-      { bookingNumber: { contains: q, mode: 'insensitive' } },
-      { customer: { name: { contains: q, mode: 'insensitive' } } },
-      { tour: { title: { contains: q, mode: 'insensitive' } } },
-      { tour: { supplier: { name: { contains: q, mode: 'insensitive' } } } },
-    ];
+    // A booking reference is what an admin usually has to hand, and it may be
+    // pasted with the "#" prefix the UI shows. Strip that rather than searching
+    // for it. Everything a booking page displays is searchable here — the list
+    // used to match four fields, so a reference on page 2, a lead traveller or
+    // a payment id found nothing.
+    const q = String(search).trim().replace(/^#/, '');
+    if (q) {
+      where.OR = [
+        { bookingNumber: { contains: q, mode: 'insensitive' } },
+        // The account that placed the booking
+        { customer: { name: { contains: q, mode: 'insensitive' } } },
+        { customer: { email: { contains: q, mode: 'insensitive' } } },
+        { customer: { phone: { contains: q, mode: 'insensitive' } } },
+        // The person travelling, and the only identity on a guest checkout
+        { leadTravelerName: { contains: q, mode: 'insensitive' } },
+        { leadTravelerEmail: { contains: q, mode: 'insensitive' } },
+        { leadTravelerPhone: { contains: q, mode: 'insensitive' } },
+        { guest: { name: { contains: q, mode: 'insensitive' } } },
+        { guest: { email: { contains: q, mode: 'insensitive' } } },
+        { guest: { phone: { contains: q, mode: 'insensitive' } } },
+        // The product and who sells it
+        { tour: { title: { contains: q, mode: 'insensitive' } } },
+        { tour: { supplier: { name: { contains: q, mode: 'insensitive' } } } },
+        { optionTitle: { contains: q, mode: 'insensitive' } },
+        // Money references an admin may be reconciling against a processor
+        { stripePaymentIntentId: { contains: q, mode: 'insensitive' } },
+        { stripeCheckoutSessionId: { contains: q, mode: 'insensitive' } },
+        { paypalOrderId: { contains: q, mode: 'insensitive' } },
+        { paypalCaptureId: { contains: q, mode: 'insensitive' } },
+        { offerName: { contains: q, mode: 'insensitive' } },
+        { offerPromoCode: { contains: q, mode: 'insensitive' } },
+        // Free text the customer typed at checkout
+        { specialRequests: { contains: q, mode: 'insensitive' } },
+      ];
+    }
   }
 
   if (supplierId) {
