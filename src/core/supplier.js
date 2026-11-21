@@ -604,7 +604,13 @@ controller.getNotifications = catchAsync(async (req, res) => {
   const skip = (parseInt(page) - 1) * Math.min(parseInt(limit), 50);
   const take = Math.min(parseInt(limit), 50);
 
-  const where = notificationScope(req);
+  // The page has an Unread tab and has always sent this flag; the endpoint
+  // ignored it, so the tab showed everything and looked broken.
+  const unreadOnly = req.query.unreadOnly === 'true' || req.query.unreadOnly === true;
+  const where = {
+    ...notificationScope(req),
+    ...(unreadOnly ? { read: false } : {}),
+  };
 
   const [notifications, unreadCount] = await Promise.all([
     prisma.notification.findMany({

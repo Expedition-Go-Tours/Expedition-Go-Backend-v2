@@ -7,7 +7,7 @@
  * unread total.
  */
 jest.mock('../../src/core/services/prismaClient', () => ({
-  notification: { count: jest.fn() },
+  notification: { count: jest.fn(), findMany: jest.fn() },
 }));
 
 const prisma = require('../../src/core/services/prismaClient');
@@ -31,6 +31,7 @@ describe('supplier getUnreadNotificationCount', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     prisma.notification.count.mockResolvedValue(4);
+    prisma.notification.findMany.mockResolvedValue([]);
   });
 
   it('counts only this user’s unread notifications', async () => {
@@ -61,5 +62,40 @@ describe('supplier getUnreadNotificationCount', () => {
     expect(where.type.in).toContain('BOOKING_CONFIRMED');
     // A member limited to bookings must not be told about payouts.
     expect(where.type.in).not.toContain('PAYOUT_PROCESSED');
+  });
+});
+
+describe('supplier getNotifications', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.notification.count.mockResolvedValue(0);
+    prisma.notification.findMany.mockResolvedValue([]);
+  });
+
+  it('honours the Unread tab the page has always asked for', async () => {
+    const response = res();
+
+    await controller.getNotifications(
+      req({ query: { unreadOnly: 'true' } }),
+      response,
+      jest.fn(),
+    );
+
+    const where = prisma.notification.findMany.mock.calls[0][0].where;
+    expect(where.read).toBe(false);
+    expect(where.userId).toBe('user-1');
+  });
+
+  it('leaves the list unfiltered when the tab is All', async () => {
+    const response = res();
+
+    await controller.getNotifications(
+      req({ query: { unreadOnly: 'false' } }),
+      response,
+      jest.fn(),
+    );
+
+    const where = prisma.notification.findMany.mock.calls[0][0].where;
+    expect(where.read).toBeUndefined();
   });
 });
