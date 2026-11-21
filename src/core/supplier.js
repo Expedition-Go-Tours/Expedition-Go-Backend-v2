@@ -576,16 +576,11 @@ controller.getPayouts = catchAsync(async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════
 
 /**
- * GET /api/travioghana/supplier/notifications
+ * The role decides which inbox categories the member may see. The owner holds
+ * every category. A requested subset is intersected with the allowed set, so a
+ * hand-crafted query cannot widen access.
  */
-controller.getNotifications = catchAsync(async (req, res) => {
-  const { page = 1, limit = 20 } = req.query;
-  const skip = (parseInt(page) - 1) * Math.min(parseInt(limit), 50);
-  const take = Math.min(parseInt(limit), 50);
-
-  // The role decides which inbox categories the member may see. The owner
-  // holds every category. A requested subset is intersected with the allowed
-  // set, so a hand-crafted query cannot widen access.
+function notificationScope(req) {
   const allowedCategories = req.teamContext?.notificationCategories?.length
     ? req.teamContext.notificationCategories
     : NOTIFICATION_CATEGORY_KEYS;
@@ -594,10 +589,22 @@ controller.getNotifications = catchAsync(async (req, res) => {
     : allowedCategories;
   const categories = requested.filter((category) => allowedCategories.includes(category));
   const types = notificationTypesForCategories(categories);
-  const where = {
+
+  return {
     userId: req.user.id,
     ...(types.length ? { type: { in: types } } : {}),
   };
+}
+
+/**
+ * GET /api/travioghana/supplier/notifications
+ */
+controller.getNotifications = catchAsync(async (req, res) => {
+  const { page = 1, limit = 20 } = req.query;
+  const skip = (parseInt(page) - 1) * Math.min(parseInt(limit), 50);
+  const take = Math.min(parseInt(limit), 50);
+
+  const where = notificationScope(req);
 
   const [notifications, unreadCount] = await Promise.all([
     prisma.notification.findMany({
@@ -615,6 +622,22 @@ controller.getNotifications = catchAsync(async (req, res) => {
     pagination: { currentPage: parseInt(page), limit: take },
   });
 });
+
+/**
+ * GET /api/travioghana/supplier/notifications/unread-count
+ *
+ * The header badge needs a number. Without this it pulled the whole feed every
+ * minute, in every open tab, to read one field off it.
+ */
+controller.getUnreadNotificationCount = catchAsync(async (req, res) => {
+  const where = notificationScope(req);
+  const unreadCount = await prisma.notification.count({
+    where: { ...where, readAt: null },
+  });
+
+  res.json({ status: 'success', data: { unreadCount } });
+});
+
 
 
   return controller;

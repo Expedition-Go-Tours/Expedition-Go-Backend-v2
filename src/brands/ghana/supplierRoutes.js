@@ -228,6 +228,7 @@ router.delete('/payout-methods/:id', resolveSupplier, requireTeamPermission('pay
 // who had notifications assigned to them, and the only visible answer was a
 // "Failed to load" in the header bell. `resolveSupplier` still runs (from the
 // `router.use` above) so the category filter keeps reading `req.teamContext`.
+router.get('/notifications/unread-count', ghanaSupplier.getUnreadNotificationCount);
 router.get('/notifications', ghanaSupplier.getNotifications);
 router.patch('/notifications/:id/read', notificationController.markAsRead);
 router.patch('/notifications/mark-all-read', notificationController.markAllAsRead);
