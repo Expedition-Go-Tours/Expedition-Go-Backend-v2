@@ -36,6 +36,12 @@ const { requirementsFor, SUPPLIER_CHOICES, SUPPLIER_CHOICE_IDS, documentationDea
 const admin = require('../../../config/firebaseAdmin');
 const logger = require('../services/logger');
 const { notifyDiscord } = require('../services/discordNotifier');
+const {
+  resolveAnalyticsPeriod,
+  makeBuckets,
+  accumulateBookings,
+  DAY_MS,
+} = require('../services/analyticsPeriod');
 
 // ================================
 // SUPPLIER APPLICATION
@@ -658,9 +664,12 @@ exports.getEarnings = catchAsync(async (req, res) => {
  * on the key it is gated by (`analytics.view`) and, as a bonus, ranks every
  * booking rather than the 50 most recent ones the page used to walk.
  */
-exports.getProductAnalytics = catchAsync(async (req, res) => {
+exports.getProductAnalytics = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
   const period = req.query.period ? resolveAnalyticsPeriod(req.query.period) : null;
+  if (req.query.period && !period) {
+    return next(new AppError('period must be 30d, 90d or 12m, or a month in the last 36 (YYYY-MM)', 400));
+  }
   const bucket = Math.floor(Date.now() / 60000); // 1-minute buckets, as the dashboard
   const cacheKey = `supplier:analytics:products:${supplierId}:${period ? period.key : 'all'}:${bucket}`;
 
@@ -853,111 +862,16 @@ function resolveGa4DateRange(from, to) {
   return { from: start, to: end };
 }
 
-// ── Performance page: one period model for every number ───────────────────
-//
-// The page used to mix an all-time payout total with a month-on-month delta and
-// a 90-day booking count on the same row. Every figure below resolves through
-// one [start, end) window plus the previous equal-length window, so a card, the
-// chart and the table cannot be describing different periods.
-
-const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const DAY_MS = 86_400_000;
-
-const ANALYTICS_PERIODS = Object.freeze({
-  '30d': { key: '30d', label: 'Last 30 days', days: 30, granularity: 'day' },
-  '90d': { key: '90d', label: 'Last 90 days', days: 90, granularity: 'week' },
-  '12m': { key: '12m', label: 'Last 12 months', months: 12, granularity: 'month' },
-});
-
 function round2(value) {
   return Math.round((Number(value) || 0) * 100) / 100;
 }
 
-function resolveAnalyticsPeriod(value) {
-  const key = ANALYTICS_PERIODS[value] ? value : '30d';
-  const config = ANALYTICS_PERIODS[key];
-  const end = new Date();
-
-  if (config.months) {
-    // Full calendar months: 12 buckets, and the 12 before them as comparison.
-    const start = new Date(end.getFullYear(), end.getMonth() - (config.months - 1), 1);
-    const previousStart = new Date(start.getFullYear(), start.getMonth() - config.months, 1);
-    return { ...config, start, end, previousStart, previousEnd: start };
-  }
-
-  // `days` buckets including today, so a "30 day" chart draws 30 bars.
-  const start = new Date(end.getFullYear(), end.getMonth(), end.getDate() - (config.days - 1));
-  const length = end.getTime() - start.getTime();
-  return {
-    ...config,
-    start,
-    end,
-    previousStart: new Date(start.getTime() - length),
-    previousEnd: start,
-  };
-}
-
-const dayLabel = (date) => `${date.getDate()} ${MONTH_SHORT[date.getMonth()]}`;
-const monthKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-
-function makeBuckets(start, end, granularity) {
-  const buckets = [];
-  if (granularity === 'month') {
-    let cursor = new Date(start.getFullYear(), start.getMonth(), 1);
-    while (cursor <= end) {
-      const next = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
-      buckets.push({
-        start: cursor,
-        end: next,
-        key: monthKey(cursor),
-        label: `${MONTH_SHORT[cursor.getMonth()]} ${String(cursor.getFullYear()).slice(-2)}`,
-        revenue: 0,
-        bookings: 0,
-      });
-      cursor = next;
-    }
-    return buckets;
-  }
-
-  const step = granularity === 'week' ? 7 * DAY_MS : DAY_MS;
-  const first = granularity === 'week'
-    ? new Date(start)
-    : new Date(start.getFullYear(), start.getMonth(), start.getDate());
-  for (let i = 0; ; i += 1) {
-    const from = new Date(first.getTime() + i * step);
-    if (from > end) break;
-    buckets.push({
-      start: from,
-      end: new Date(from.getTime() + step),
-      key: from.toISOString().slice(0, 10),
-      label: dayLabel(from),
-      revenue: 0,
-      bookings: 0,
-    });
-  }
-  return buckets;
-}
-
-function addToBuckets(buckets, at, field, amount) {
-  if (!at) return;
-  const time = new Date(at).getTime();
-  for (const bucket of buckets) {
-    if (time >= bucket.start.getTime() && time < bucket.end.getTime()) {
-      bucket[field] += amount;
-      return;
-    }
-  }
-}
-
-function accumulateBookings(buckets, bookings) {
-  for (const booking of bookings) {
-    if (booking.paymentStatus === 'SUCCEEDED' && booking.paidAt) {
-      addToBuckets(buckets, booking.paidAt, 'revenue', Number(booking.grossAmount) || 0);
-    }
-    addToBuckets(buckets, booking.createdAt, 'bookings', 1);
-  }
-}
-
+// ── Performance page: one period model for every number ───────────────────
+//
+// Presets (30d/90d/12m) and calendar months (YYYY-MM) both resolve to one
+// [start, end) window plus a previous window. See
+// services/analyticsPeriod.js for the boundary rules and why months compare
+// against the previous calendar month.
 /**
  * GET /suppliers/analytics/summary?period=30d|90d|12m
  *
@@ -966,9 +880,12 @@ function accumulateBookings(buckets, bookings) {
  * same length immediately before it, which is what every delta compares to.
  * Rating is the one all-time figure here and says so on the card.
  */
-exports.getAnalyticsSummary = catchAsync(async (req, res) => {
+exports.getAnalyticsSummary = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
   const period = resolveAnalyticsPeriod(req.query.period);
+  if (!period) {
+    return next(new AppError('period must be 30d, 90d or 12m, or a month in the last 36 (YYYY-MM)', 400));
+  }
 
   const [profile, paid, created, lowRatings, reviewCount] = await Promise.all([
     prisma.supplierProfile.findUnique({
@@ -1019,6 +936,7 @@ exports.getAnalyticsSummary = catchAsync(async (req, res) => {
       period: {
         key: period.key,
         label: period.label,
+        previousLabel: period.previousLabel,
         from: period.start.toISOString(),
         to: period.end.toISOString(),
       },
@@ -1055,9 +973,12 @@ exports.getAnalyticsSummary = catchAsync(async (req, res) => {
  * monthly bars is a single bar. The previous window is returned alongside on
  * the same index so the chart can draw a comparison without a second call.
  */
-exports.getAnalyticsTimeseries = catchAsync(async (req, res) => {
+exports.getAnalyticsTimeseries = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
   const period = resolveAnalyticsPeriod(req.query.period);
+  if (!period) {
+    return next(new AppError('period must be 30d, 90d or 12m, or a month in the last 36 (YYYY-MM)', 400));
+  }
 
   const bookings = await prisma.booking.findMany({
     where: {
@@ -1086,6 +1007,7 @@ exports.getAnalyticsTimeseries = catchAsync(async (req, res) => {
       period: {
         key: period.key,
         label: period.label,
+        previousLabel: period.previousLabel,
         from: period.start.toISOString(),
         to: period.end.toISOString(),
       },
@@ -1120,6 +1042,9 @@ exports.getProductPerformance = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId;
   const { tourId } = req.params;
   const period = resolveAnalyticsPeriod(req.query.period);
+  if (!period) {
+    return next(new AppError('period must be 30d, 90d or 12m, or a month in the last 36 (YYYY-MM)', 400));
+  }
 
   const tour = await prisma.tour.findFirst({
     where: { id: tourId, supplierId },
@@ -1213,6 +1138,7 @@ exports.getProductPerformance = catchAsync(async (req, res, next) => {
       period: {
         key: period.key,
         label: period.label,
+        previousLabel: period.previousLabel,
         from: period.start.toISOString(),
         to: period.end.toISOString(),
       },

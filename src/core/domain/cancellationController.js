@@ -2,6 +2,8 @@ const prisma = require('../services/prismaClient');
 const catchAsync = require('../services/catchAsync');
 const { enqueueNotification } = require('../services/queue');
 const { getReason, ORIGINS, displayCancellationReason } = require('../services/cancellationReasons');
+const AppError = require('../services/appError');
+const { resolveAnalyticsPeriod } = require('../services/analyticsPeriod');
 
 // Legacy heuristic — ONLY used for rows that predate the structured fields
 // (countsTowardRate IS NULL, i.e. before backfillCancellationFields.js ran).
@@ -146,10 +148,31 @@ exports.getCancellationSummary = catchAsync(async (req, res, next) => {
     });
   }
 
-  const { productId, days = 90 } = req.query;
-  const windowDays = Math.max(1, parseInt(days, 10) || 90);
-  const windowEnd = new Date();
-  const windowStart = new Date(windowEnd.getTime() - windowDays * 24 * 60 * 60 * 1000);
+  const { productId, days = 90, period } = req.query;
+
+  // A calendar month (YYYY-MM) from the Performance page. Without this the card
+  // would keep describing a rolling window while the chart above it describes
+  // the selected month — the exact incoherence the period model exists to stop.
+  let windowDays;
+  let windowStart;
+  let windowEnd;
+  let windowLabel = null;
+
+  if (period) {
+    const month = resolveAnalyticsPeriod(period);
+    if (!month || !month.isMonth) {
+      return next(new AppError('period must be a month in the last 36 (YYYY-MM)', 400));
+    }
+    windowStart = month.start;
+    // withinWindow() is inclusive at both ends and a month's end is exclusive.
+    windowEnd = new Date(month.end.getTime() - 1);
+    windowDays = month.days;
+    windowLabel = month.label;
+  } else {
+    windowDays = Math.max(1, parseInt(days, 10) || 90);
+    windowEnd = new Date();
+    windowStart = new Date(windowEnd.getTime() - windowDays * 24 * 60 * 60 * 1000);
+  }
 
   // The rate measures the last N days, so:
   //   * a booking that travelled in the window is at risk in this window;
@@ -251,7 +274,7 @@ exports.getCancellationSummary = catchAsync(async (req, res, next) => {
   const status = getStatus(cancellationRate, totalEligible);
 
   // Warn-only breach alert (never auto-delist) — only for a real request.
-  if (req.supplierId) {
+  if (req.supplierId && !windowLabel) {
     alertRateBreachIfDue(supplierId, status, roundedRate, windowDays);
   }
 
@@ -273,6 +296,7 @@ exports.getCancellationSummary = catchAsync(async (req, res, next) => {
       bookingValueLost: Math.round(bookingValueLost * 100) / 100,
       mostCommonReason,
       days: windowDays,
+      periodLabel: windowLabel,
       windowStart: windowStart.toISOString(),
       windowEnd: windowEnd.toISOString(),
     },
