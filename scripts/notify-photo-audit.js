@@ -59,7 +59,7 @@ async function main() {
   const bySupplier = new Map();
 
   for (const tour of tours) {
-    const audit = await auditTourPhotos(tour);
+    const audit = await auditTourPhotos(tour, { perTourLimit: 100 });
     if (audit.issues.length === 0) continue;
 
     const key = tour.supplierId;
@@ -125,6 +125,9 @@ async function main() {
 
     // In-app first: it is the durable channel. The email is the nudge; the bell
     // entry is what a supplier sees the next time they open the dashboard.
+    // Point at the worst listing rather than the product list: the product list
+    // has no photo warning on it, and the verdicts live on the photos.
+    const worst = [...affected].sort((a, b) => b.issueCount - a.issueCount)[0];
     try {
       await sendNotification({
         userId: supplier.id,
@@ -132,8 +135,8 @@ async function main() {
         title: 'Some tour photos need replacing',
         message: `${total} photos on ${affected.length} listing${
           affected.length === 1 ? '' : 's'
-        } are portrait or below 1280px, so they look soft on the storefront.`,
-        data: { path: '/products', linkLabel: 'Review photos' },
+        } are portrait or under 1280px. "${worst.title}" accounts for ${worst.issueCount} of them.`,
+        data: { path: `/products/${worst.tourId}`, linkLabel: 'Review photos' },
         dedupeKey: `photo-audit:${total}`,
       });
       notified += 1;
