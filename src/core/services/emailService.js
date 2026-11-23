@@ -2980,6 +2980,7 @@ async function sendTeamInviteRevokedEmail({ to, supplierName, roles, role, invit
 function generateEmailContent(template, data) {
   const templates = {
     'generic-notification': generateGenericNotificationEmail,
+    'supplier-photo-audit': generatePhotoAuditEmail,
     'payout-request-window-open': generatePayoutWindowOpenEmail,
     'notification-recipient-verify': generateNotificationRecipientVerifyEmail,
     'contact-form': generateContactFormEmail,
@@ -3157,6 +3158,81 @@ function generateGenericNotificationEmail(data) {
   };
 }
 
+/**
+ * The catalogue photo audit, mailed to a supplier.
+ *
+ * Sent once by `scripts/notify-photo-audit.js`, not by a request path. It names
+ * the tours and the exact problem, because "improve your photos" is not
+ * something a supplier can act on.
+ */
+function generatePhotoAuditEmail(data) {
+  const esc = (v) => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const tours = Array.isArray(data.tours) ? data.tours : [];
+  const total = Number(data.totalPhotos) || 0;
+
+  const problemsFor = (tour) => {
+    const parts = [];
+    if (tour.portrait) parts.push(`${tour.portrait} portrait`);
+    if (tour.tooSmall) parts.push(`${tour.tooSmall} under 1280px`);
+    if (tour.soft) parts.push(`${tour.soft} under 2048px`);
+    return parts.join(' &middot; ');
+  };
+
+  const rows = tours
+    .map(
+      (tour) => `<tr>
+        <td style="padding:10px 0;border-top:1px solid #E2E8F0;font-family:'Plus Jakarta Sans',Arial,sans-serif;font-size:14px;color:#0F172A;font-weight:600;vertical-align:top;">${esc(tour.title)}</td>
+        <td style="padding:10px 0 10px 12px;border-top:1px solid #E2E8F0;font-family:'Plus Jakarta Sans',Arial,sans-serif;font-size:13px;color:#64748B;text-align:right;vertical-align:top;white-space:nowrap;">${problemsFor(tour)}</td>
+      </tr>`
+    )
+    .join('');
+
+  const buttonHtml = data.buttonUrl
+    ? `<tr><td align="center" style="padding:26px 40px 8px 40px;"><a href="${esc(data.buttonUrl)}" style="display:inline-block;background-color:#0E9F6E;color:#ffffff;font-family:'Plus Jakarta Sans',Arial,sans-serif;font-size:15px;font-weight:700;text-decoration:none;border-radius:10px;padding:14px 34px;">Open your products</a></td></tr>`
+    : '';
+
+  const text = [
+    `Hello ${data.supplierName || ''},`,
+    '',
+    `${total} photo${total === 1 ? '' : 's'} on your listings are too small or portrait, so they are cropped and upscaled on the storefront and look soft next to everything else.`,
+    '',
+    'What to replace:',
+    ...tours.map((tour) => `  - ${tour.title}: ${problemsFor(tour).replace(/&middot;/g, '·').replace(/&nbsp;/g, ' ')}`),
+    '',
+    'Landscape photos at least 2048px wide look sharp everywhere. 1280px is the minimum we accept.',
+    data.buttonUrl ? `Open your products: ${data.buttonUrl}` : '',
+    '',
+    'Reply to this email if you need help with a specific listing.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  return {
+    html: `<div style="font-family:'Plus Jakarta Sans',Arial,sans-serif;background:#F8FAFC;padding:32px 16px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center">
+      <table role="presentation" width="100%" style="max-width:640px;background:#ffffff;border:1px solid #E2E8F0;border-radius:16px;" cellspacing="0" cellpadding="0" border="0">
+        <tr><td align="center" style="padding:36px 40px 4px 40px;"><h1 style="margin:0 0 4px;font-size:26px;font-weight:800;color:#001F3F;text-align:center;">Some photos need replacing</h1></td></tr>
+        <tr><td align="center" style="padding:0 40px 4px 40px;"><p style="margin:0;font-size:13px;color:#64748B;">${esc(data.supplierName || '')}</p></td></tr>
+        <tr><td style="padding:18px 40px 0 40px;"><p style="margin:0;font-size:15px;color:#334155;line-height:1.7;">Hello ${esc(data.supplierName || '')}, ${total} of your tour photos are portrait or smaller than 1280px wide. The storefront crops them into a landscape tile and scales them up, so they look soft next to the rest of the catalogue &mdash; and the main photo is the one travellers see on every search card.</p></td></tr>
+        <tr><td style="padding:20px 40px 0 40px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+            <tr>
+              <td style="padding:0 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#64748B;font-family:'Plus Jakarta Sans',Arial,sans-serif;">Tour</td>
+              <td style="padding:0 0 6px 12px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#64748B;text-align:right;font-family:'Plus Jakarta Sans',Arial,sans-serif;">What to replace</td>
+            </tr>
+            ${rows}
+          </table>
+        </td></tr>
+        <tr><td style="padding:18px 40px 0 40px;"><p style="margin:0;font-size:14px;color:#334155;line-height:1.7;">Landscape photos at least <strong>2048px</strong> wide look sharp everywhere; <strong>1280px</strong> is the minimum we accept. You can keep the same shots &mdash; just upload the originals from the camera instead of a resized copy.</p></td></tr>
+        ${buttonHtml}
+        <tr><td align="center" style="padding:16px 40px 0 40px;"><span style="font-size:13px;color:#64748B;">Need help? <a href="mailto:{{supportEmail}}" style="color:#0E9F6E;">Contact support</a></span></td></tr>
+      </table>
+      <p style="margin:24px 0 0;text-align:center;font-size:11px;color:#94A3B8;">&copy; {{year}} {{brandName}}. All rights reserved.</p>
+      </td></tr></table></div>`,
+    text,
+  };
+}
+
 function generateNotificationRecipientVerifyEmail(data) {
   const esc = (v) => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const types = Array.isArray(data.types) ? data.types : [];
@@ -3284,6 +3360,39 @@ function generatePrintableTicketHtml(data) {
 </body></html>`;
 }
 
+/**
+ * Catalogue photo audit, sent once to a supplier whose existing listings carry
+ * undersized or portrait photos.
+ *
+ * Only `scripts/notify-photo-audit.js` calls this. It is deliberately not a
+ * request-path email: the audit fans out to Cloudinary per photo, so it belongs
+ * in a batch, not in a page load.
+ */
+async function sendSupplierPhotoAuditEmail({ supplier, tours, brandKey = null }) {
+  if (!supplier?.email || !Array.isArray(tours) || tours.length === 0) return null;
+
+  const totalPhotos = tours.reduce((sum, tour) => sum + (Number(tour.issueCount) || 0), 0);
+  if (totalPhotos === 0) return null;
+
+  const plural = totalPhotos === 1 ? '' : 's';
+
+  return sendEmail({
+    to: supplier.email,
+    subject: `${totalPhotos} tour photo${plural} to replace`,
+    template: 'supplier-photo-audit',
+    opts: {
+      brandKey,
+      preheader: `${tours.length} listing${tours.length === 1 ? '' : 's'} have photos below 1280px or in portrait.`,
+    },
+    data: {
+      supplierName: supplier.name || 'there',
+      tours,
+      totalPhotos,
+      buttonUrl: emailUrls.supplierProductsForUser(supplier),
+    },
+  });
+}
+
 module.exports = {
   // core
   sendEmail,
@@ -3325,6 +3434,7 @@ module.exports = {
   sendCheckoutRecoveryEmail,
   sendWishlistPriceDropEmail,
   sendWaitlistOpenEmail,
+  sendSupplierPhotoAuditEmail,
   sendSupplierRefundRequestedEmail,
   sendSupplierRefundDecisionEmail,
   sendSupplierResponseEmail,
