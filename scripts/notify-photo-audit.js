@@ -14,12 +14,14 @@
 const prisma = require('../src/core/services/prismaClient');
 const { auditTourPhotos } = require('../src/core/services/photoAudit');
 const { sendSupplierPhotoAuditEmail } = require('../src/core/services/emailService');
+const { sendNotification } = require('../src/core/services/notificationService');
 
 function parseArgs(argv) {
-  const args = { send: false, supplier: null, limit: 0 };
+  const args = { send: false, inApp: false, supplier: null, limit: 0 };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--send') args.send = true;
+    else if (arg === '--in-app') args.inApp = true;
     else if (arg === '--supplier') args.supplier = argv[(i += 1)];
     else if (arg === '--limit') args.limit = parseInt(argv[(i += 1)], 10) || 0;
   }
@@ -110,17 +112,42 @@ async function main() {
   console.log(`--- ${bySupplier.size} suppliers, ${totals} photos ---\n`);
 
   if (!args.send) {
-    console.log('Dry run. Re-run with --send to email these suppliers.');
+    console.log('Dry run. Re-run with --send to email these suppliers, or --in-app to only notify in the dashboard.');
     await prisma.$disconnect();
     return;
   }
 
   let sent = 0;
+  let notified = 0;
   let skipped = 0;
   for (const [, entry] of bySupplier) {
-    if (!entry.supplier.email) {
-      console.log(`skipped ${entry.supplier.name}: no email address`);
+    const { supplier, tours: affected, total } = entry;
+
+    // In-app first: it is the durable channel. The email is the nudge; the bell
+    // entry is what a supplier sees the next time they open the dashboard.
+    try {
+      await sendNotification({
+        userId: supplier.id,
+        type: 'SYSTEM_ALERT',
+        title: 'Some tour photos need replacing',
+        message: `${total} photos on ${affected.length} listing${
+          affected.length === 1 ? '' : 's'
+        } are portrait or below 1280px, so they look soft on the storefront.`,
+        data: { path: '/products', linkLabel: 'Review photos' },
+        dedupeKey: `photo-audit:${total}`,
+      });
+      notified += 1;
+    } catch (error) {
+      console.error(`notification failed ${supplier.name}:`, error.message);
+    }
+
+    if (!supplier.email) {
+      console.log(`skipped email for ${supplier.name}: no address`);
       skipped += 1;
+      continue;
+    }
+    if (args.inApp) {
+      console.log(`in-app only for ${supplier.name}`);
       continue;
     }
     try {
@@ -141,7 +168,7 @@ async function main() {
     }
   }
 
-  console.log(`\ndone: ${sent} sent, ${skipped} skipped`);
+  console.log(`\ndone: ${sent} emails sent, ${notified} in-app notifications, ${skipped} skipped`);
   await prisma.$disconnect();
 }
 

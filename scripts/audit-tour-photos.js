@@ -16,13 +16,14 @@ const prisma = require('../src/core/services/prismaClient');
 const { auditTourPhotos, MIN_PHOTO_WIDTH } = require('../src/core/services/photoAudit');
 
 function parseArgs(argv) {
-  const args = { supplier: null, json: null, status: 'ACTIVE', limit: 0 };
+  const args = { supplier: null, json: null, status: 'ACTIVE', limit: 0, dry: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--supplier') args.supplier = argv[(i += 1)];
     else if (arg === '--json') args.json = argv[(i += 1)];
     else if (arg === '--status') args.status = argv[(i += 1)];
     else if (arg === '--limit') args.limit = parseInt(argv[(i += 1)], 10) || 0;
+    else if (arg === '--dry') args.dry = true;
   }
   return args;
 }
@@ -56,9 +57,23 @@ async function main() {
 
   const rows = [];
   const summary = new Map();
+  let persisted = 0;
 
   for (const tour of tours) {
     const audit = await auditTourPhotos(tour);
+
+    // Store the result so the supplier dashboard can read "N photos to replace"
+    // without calling Cloudinary on every page load. Never zero a tour whose
+    // measurement was skipped (Cloudinary unavailable) — that would hide a real
+    // problem behind a false pass.
+    if (!audit.unavailable && !args.dry) {
+      await prisma.tour.update({
+        where: { id: tour.id },
+        data: { photoIssueCount: audit.issues.length, photoAuditedAt: new Date() },
+      });
+      persisted += 1;
+    }
+
     for (const issue of audit.issues) {
       rows.push({
         supplier: tour.supplier?.name || tour.supplierId,
@@ -99,6 +114,7 @@ async function main() {
 
   console.log('\n--- summary ---');
   console.log('photos to replace:', rows.length);
+  console.log('tours measured:', persisted);
   console.log('tours affected:', new Set(rows.map((r) => r.slug)).size);
   console.log('by problem:', JSON.stringify(byProblem));
 

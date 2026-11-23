@@ -847,6 +847,12 @@ model Tour {
   referenceCode String?
   photos        String[]
   coverPhoto    String?
+
+  // Photo quality audit (scripts/audit-tour-photos.js). Stored so the supplier
+  // dashboard can show "N photos to replace" without calling Cloudinary on
+  // every page load — the measurement is a batch job, not a request path.
+  photoIssueCount Int       @default(0)
+  photoAuditedAt  DateTime?
   status        TourStatus @default(DRAFT)
 
   // Review / Moderation (submit-for-review workflow)

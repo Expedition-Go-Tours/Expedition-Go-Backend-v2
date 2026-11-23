@@ -162,11 +162,51 @@ const getSupplierReviews = catchAsync(async (req, res) => {
   });
 });
 
+/**
+ * Tours whose photos the audit flagged as too small or portrait.
+ *
+ * Reads the stored count from `scripts/audit-tour-photos.js` rather than
+ * measuring on request: the measurement is a Cloudinary call per asset.
+ */
+const getPhotoIssues = catchAsync(async (req, res) => {
+  const supplierId = req.supplierId || req.user.id;
+
+  const tours = await prisma.tour.findMany({
+    where: { supplierId, status: { not: 'ARCHIVED' }, photoIssueCount: { gt: 0 } },
+    select: { id: true, title: true, slug: true, photoIssueCount: true, photoAuditedAt: true },
+    orderBy: [{ photoIssueCount: 'desc' }, { updatedAt: 'desc' }],
+    take: 50,
+  });
+
+  const auditedAt = tours.reduce(
+    (latest, tour) => (tour.photoAuditedAt && (!latest || tour.photoAuditedAt > latest) ? tour.photoAuditedAt : latest),
+    null
+  );
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      tours: tours.map((tour) => ({
+        tourId: tour.id,
+        title: tour.title,
+        slug: tour.slug,
+        issueCount: tour.photoIssueCount,
+      })),
+      totals: {
+        tours: tours.length,
+        photos: tours.reduce((sum, tour) => sum + tour.photoIssueCount, 0),
+      },
+      auditedAt,
+    },
+  });
+});
+
 const ghana = makeSupplierController('ghana');
 
 module.exports = {
   ...ghana,
   getSupplierTours,
   getSupplierReviews,
+  getPhotoIssues,
 };
 module.exports.makeSupplierController = makeSupplierController;
