@@ -54,6 +54,11 @@ function buildImageUpload() {
       folder: 'user-photos',
       allowed_formats: IMAGE_FORMATS,
       resource_type: 'image',
+      // Cap the stored master at 2048 on the long edge. A 12MP phone photo
+      // otherwise enters the catalogue at full size and every surface has to
+      // downscale it, and any surface outside the transform chain (email,
+      // share cards, admin) serves the whole thing.
+      transformation: [{ width: 2048, height: 2048, crop: 'limit' }],
     },
   });
 

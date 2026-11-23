@@ -1536,7 +1536,15 @@ expect(prisma.booking.updateMany).toHaveBeenCalledWith(
       id: 'tour-1',
       title: 'Complete Tour',
       description: 'A fully fleshed-out tour description that is long enough.',
-      photos: ['https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/p.jpg'],
+      // The publish gate requires five photos; a "complete" fixture must have
+      // them or the submit is (correctly) refused before the update.
+      photos: [
+        'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/p1.jpg',
+        'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/p2.jpg',
+        'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/p3.jpg',
+        'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/p4.jpg',
+        'https://res.cloudinary.com/dfpagrtoy/image/upload/v12345/p5.jpg',
+      ],
       status: 'DRAFT',
       supplierId: 'supplier-1',
       categorization: { category: 'Adventure' },

@@ -16,6 +16,7 @@ const prisma = require('../services/prismaClient');
 const catchAsync = require('../services/catchAsync');
 const AppError = require('../services/appError');
 const { deleteCloudinaryImage, isValidCloudinaryUrl } = require('../services/cloudinaryHelper');
+const { assessUploadedPhoto } = require('../services/photoQuality');
 const { createSlug, validateTourData, normalizeProductPayload, validateStoredPricing, rebuildSchedulePrices, reconcileAvailability, durationToMinutes, cheapestRetailPrice } = require('../services/tourHelpers');
 const { cancelPaymentIntent } = require('../services/stripeHelpers');
 const { productToTour } = require('../services/productToTour');
@@ -1905,6 +1906,8 @@ exports.updateTour = catchAsync(async (req, res, next) => {
 function validateTourForReview(tour) {
   const errors = [];
 
+  const MIN_TOUR_PHOTOS = 5;
+
   if (!tour.title || !tour.title.trim()) {
     errors.push('A tour title is required');
   }
@@ -1912,8 +1915,13 @@ function validateTourForReview(tour) {
     errors.push('A tour description (at least 10 characters) is required');
   }
   const photos = Array.isArray(tour.photos) ? tour.photos.filter(Boolean) : [];
-  if (photos.length === 0) {
-    errors.push('Add at least one photo before submitting for review');
+  // The builder asks for five and the storefront's cards need a set to choose
+  // from; one photo was never enough for a listing that is supposed to look
+  // like GetYourGuide or Viator.
+  if (photos.length < MIN_TOUR_PHOTOS) {
+    errors.push(
+      `Add at least ${MIN_TOUR_PHOTOS} photos before submitting for review (you have ${photos.length})`
+    );
   }
 
   const cat = tour.categorization;
@@ -3177,16 +3185,42 @@ async function upsertSpecialOffer(prisma, supplierId, tourId, offer) {
  * Returns an array of Cloudinary URLs.
  */
 exports.uploadPhotos = catchAsync(async (req, res, next) => {
-  const uploadedPhotos = (req.files || []).map(f => f.path).filter(isValidCloudinaryUrl);
+  const files = (req.files || []).filter((f) => isValidCloudinaryUrl(f.path));
 
-  if (uploadedPhotos.length === 0) {
+  if (files.length === 0) {
     return next(new AppError('No valid images were uploaded', 400));
+  }
+
+  // Reject portrait and thumbnail-sized files before they can reach a tour.
+  // Anything refused is deleted from the media library so the supplier's
+  // account does not accumulate orphans.
+  const accepted = [];
+  const rejected = [];
+  for (const file of files) {
+    const verdict = await assessUploadedPhoto(file.path);
+    if (verdict.ok) {
+      accepted.push({ url: file.path, width: verdict.width, height: verdict.height });
+    } else {
+      rejected.push({ url: file.path, reason: verdict.reason, width: verdict.width, height: verdict.height });
+    }
+  }
+
+  if (accepted.length === 0) {
+    return res.status(422).json({
+      status: 'fail',
+      message: rejected[0]?.reason || 'No valid images were uploaded',
+      data: { photos: [], rejected },
+    });
   }
 
   res.status(200).json({
     status: 'success',
     data: {
-      photos: uploadedPhotos,
+      photos: accepted.map((photo) => photo.url),
+      // Dimensions let the builder label a 1280px photo as soft-on-desktop
+      // without re-reading the file.
+      photoMeta: accepted,
+      rejected,
     },
   });
 });

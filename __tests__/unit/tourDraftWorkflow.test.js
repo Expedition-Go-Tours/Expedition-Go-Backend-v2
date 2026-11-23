@@ -133,7 +133,15 @@ const liveRow = {
   slug: 'live-safari',
   description: 'A fully fleshed-out tour description that is long enough.',
   coverPhoto: null,
-  photos: ['https://res.cloudinary.com/x/image/upload/v1/a.jpg'],
+  // The publish gate requires five photos, so the "live" fixture carries a
+  // full set rather than one.
+  photos: [
+    'https://res.cloudinary.com/x/image/upload/v1/a.jpg',
+    'https://res.cloudinary.com/x/image/upload/v1/b.jpg',
+    'https://res.cloudinary.com/x/image/upload/v1/c.jpg',
+    'https://res.cloudinary.com/x/image/upload/v1/d.jpg',
+    'https://res.cloudinary.com/x/image/upload/v1/e.jpg',
+  ],
   tags: ['nature'],
   metaTitle: null,
   metaDescription: null,
