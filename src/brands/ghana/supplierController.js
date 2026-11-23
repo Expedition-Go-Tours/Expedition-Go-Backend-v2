@@ -1,5 +1,6 @@
 const prisma = require('../../core/services/prismaClient');
 const catchAsync = require('../../core/services/catchAsync');
+const AppError = require('../../core/services/appError');
 const makeSupplierController = require('../../core/supplier');
 
 
@@ -168,35 +169,31 @@ const getSupplierReviews = catchAsync(async (req, res) => {
  * Reads the stored count from `scripts/audit-tour-photos.js` rather than
  * measuring on request: the measurement is a Cloudinary call per asset.
  */
-const getPhotoIssues = catchAsync(async (req, res) => {
+/**
+ * The stored per-photo audit for one tour.
+ *
+ * The product page marks the exact gallery tile that is portrait or too small,
+ * and the explanation has to name that tile's real pixels. Reading it from the
+ * tour row keeps Cloudinary out of the request path; the measurement stays a
+ * batch job.
+ */
+const getTourPhotoIssues = catchAsync(async (req, res, next) => {
   const supplierId = req.supplierId || req.user.id;
 
-  const tours = await prisma.tour.findMany({
-    where: { supplierId, status: { not: 'ARCHIVED' }, photoIssueCount: { gt: 0 } },
-    select: { id: true, title: true, slug: true, photoIssueCount: true, photoAuditedAt: true },
-    orderBy: [{ photoIssueCount: 'desc' }, { updatedAt: 'desc' }],
-    take: 50,
+  const tour = await prisma.tour.findFirst({
+    where: { id: req.params.tourId, supplierId },
+    select: { id: true, photoIssues: true, photoIssueCount: true, photoAuditedAt: true },
   });
 
-  const auditedAt = tours.reduce(
-    (latest, tour) => (tour.photoAuditedAt && (!latest || tour.photoAuditedAt > latest) ? tour.photoAuditedAt : latest),
-    null
-  );
+  if (!tour) return next(new AppError('Tour not found', 404));
 
   res.status(200).json({
     status: 'success',
     data: {
-      tours: tours.map((tour) => ({
-        tourId: tour.id,
-        title: tour.title,
-        slug: tour.slug,
-        issueCount: tour.photoIssueCount,
-      })),
-      totals: {
-        tours: tours.length,
-        photos: tours.reduce((sum, tour) => sum + tour.photoIssueCount, 0),
-      },
-      auditedAt,
+      tourId: tour.id,
+      issues: Array.isArray(tour.photoIssues) ? tour.photoIssues : [],
+      total: tour.photoIssueCount || 0,
+      auditedAt: tour.photoAuditedAt || null,
     },
   });
 });
@@ -207,6 +204,6 @@ module.exports = {
   ...ghana,
   getSupplierTours,
   getSupplierReviews,
-  getPhotoIssues,
+  getTourPhotoIssues,
 };
 module.exports.makeSupplierController = makeSupplierController;

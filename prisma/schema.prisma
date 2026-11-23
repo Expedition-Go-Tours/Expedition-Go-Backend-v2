@@ -851,7 +851,11 @@ model Tour {
   // Photo quality audit (scripts/audit-tour-photos.js). Stored so the supplier
   // dashboard can show "N photos to replace" without calling Cloudinary on
   // every page load — the measurement is a batch job, not a request path.
+  // `photoIssues` is the per-URL detail ([{ url, width, height, problem }]) the
+  // product page needs to mark the specific image that is being complained
+  // about; the count alone cannot name it.
   photoIssueCount Int       @default(0)
+  photoIssues     Json?
   photoAuditedAt  DateTime?
   status        TourStatus @default(DRAFT)
 

@@ -99,7 +99,7 @@ router.get('/monthly-revenue', requireTeamPermission('dashboard.revenue.view', '
 
 // Tours
 router.get('/tours', requireTeamPermission('tours.view'), ghanaSupplier.getSupplierTours);
-router.get('/photo-issues', requireTeamPermission('tours.view'), ghanaSupplier.getPhotoIssues);
+router.get('/tours/:tourId/photo-issues', requireTeamPermission('tours.view'), ghanaSupplier.getTourPhotoIssues);
 
 // Reviews
 router.get('/reviews', requireTeamPermission('reviews.view'), ghanaSupplier.getSupplierReviews);

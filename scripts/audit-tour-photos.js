@@ -60,16 +60,28 @@ async function main() {
   let persisted = 0;
 
   for (const tour of tours) {
-    const audit = await auditTourPhotos(tour);
+    // A batch job, so measure the whole gallery rather than the first eight:
+    // the product page has to mark whichever tile is the problem, and a
+    // supplier scrolling to photo 12 must not find it unmeasured.
+    const audit = await auditTourPhotos(tour, { perTourLimit: 100 });
 
-    // Store the result so the supplier dashboard can read "N photos to replace"
-    // without calling Cloudinary on every page load. Never zero a tour whose
-    // measurement was skipped (Cloudinary unavailable) — that would hide a real
-    // problem behind a false pass.
+    // Store the per-URL verdict alongside the count. The count is what the
+    // list needs; the URLs are what the product page needs to mark the exact
+    // image. Never zero a tour whose measurement was skipped (Cloudinary
+    // unavailable) — that would hide a real problem behind a false pass.
     if (!audit.unavailable && !args.dry) {
       await prisma.tour.update({
         where: { id: tour.id },
-        data: { photoIssueCount: audit.issues.length, photoAuditedAt: new Date() },
+        data: {
+          photoIssueCount: audit.issues.length,
+          photoIssues: audit.issues.map(({ url, width, height, problem }) => ({
+            url,
+            width,
+            height,
+            problem,
+          })),
+          photoAuditedAt: new Date(),
+        },
       });
       persisted += 1;
     }

@@ -1049,13 +1049,24 @@ exports.getTour = catchAsync(async (req, res, next) => {
       });
     }
 
-    return {
+    // The audit detail is supplier-facing: it names photos to replace, which is
+    // noise (and slightly embarrassing) on a public tour payload. The cache key
+    // differs for owners, so this cannot leak across the two variants.
+    const payload = {
       ...tour,
       reviews,
       photos: tour.photos,
       specialOffers,
       coverPhoto: tour.coverPhoto || null,
     };
+
+    if (!isOwner) {
+      delete payload.photoIssues;
+      delete payload.photoIssueCount;
+      delete payload.photoAuditedAt;
+    }
+
+    return payload;
   }, isOwner ? 60 : 300);
 
   if (!result) {
