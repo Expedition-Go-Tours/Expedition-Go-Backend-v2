@@ -75,6 +75,8 @@ describe('sendSupplierPhotoAuditEmail', () => {
     expect(body).toContain('2 portrait');
     expect(body).toContain('1 under 1280px');
     expect(body).toContain('under 2048px');
+    // Shell vars must be substituted before it reaches anyone.
+    expect(body).not.toContain('{{');
   });
 
   it('links to the supplier dashboard, not the storefront', async () => {
