@@ -532,10 +532,48 @@ jobs:
         shell: bash
         run: ./deploy/scripts/verify-public-ingress.sh
 
+  # ── Image cleanup ──────────────────────────────────────────────────────────
+  # Runs only after public verification succeeds. The script removes only
+  # superseded image IDs/tags, keeps current + previous rollback images, and
+  # never touches Docker volumes or application data.
+  prune-images:
+    name: Prune superseded images
+    needs: [verify-public]
+    if: ${{ !cancelled() && needs.verify-public.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+
+      - name: Prepare SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.HETZNER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          if [ -n "${{ secrets.DEPLOY_HOST_KEY }}" ]; then
+            printf '%s\n' "${{ secrets.DEPLOY_HOST_KEY }}" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -H "${{ secrets.HETZNER_HOST }}" > ~/.ssh/known_hosts 2>/dev/null
+            [ -s ~/.ssh/known_hosts ] || { echo "::error::could not obtain the host key"; exit 1; }
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Remove superseded Docker images
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key \
+            "root@${{ secrets.HETZNER_HOST }}" \
+            "CONFIRM=1 bash -s" < deploy/scripts/prune-images.sh
+
   # ── Notification ───────────────────────────────────────────────────────────
   notify:
     name: Notify
-    needs: [changes, build, migrate, deploy-platform, deploy-stays, verify-public]
+    needs: [changes, build, migrate, deploy-platform, deploy-stays, verify-public, prune-images]
     # Nothing built means nothing to announce: workflow-only pushes used to post
     # a red "image build did not succeed" for a run that never needed an image.
     if: ${{ always() && (needs.changes.outputs.platform == 'true' || needs.changes.outputs.stays == 'true') }}
