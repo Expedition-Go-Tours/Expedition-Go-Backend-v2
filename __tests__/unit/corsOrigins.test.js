@@ -1,6 +1,7 @@
 const {
   DEV_ORIGINS,
   STAGING_ORIGIN,
+  STORE_STAGING_ORIGIN,
   httpOrigins,
   socketOrigins,
   isAllowedOrigin,
@@ -87,19 +88,23 @@ describe('socketOrigins (Socket.IO)', () => {
   });
 });
 
-describe('fixed staging host', () => {
-  it('is authorised regardless of ALLOWED_ORIGINS', () => {
+describe('fixed staging hosts', () => {
+  it('authorises both apps regardless of ALLOWED_ORIGINS', () => {
     delete process.env.ALLOWED_ORIGINS;
     expect(isAllowedOrigin(STAGING_ORIGIN, httpOrigins())).toBe(true);
+    expect(isAllowedOrigin(STORE_STAGING_ORIGIN, httpOrigins())).toBe(true);
 
     process.env.ALLOWED_ORIGINS = PRODUCTION;
     expect(isAllowedOrigin(STAGING_ORIGIN, httpOrigins())).toBe(true);
+    expect(isAllowedOrigin(STORE_STAGING_ORIGIN, httpOrigins())).toBe(true);
   });
 
   it('matches exactly — no subdomain or sibling host rides along', () => {
     expect(isTrustedPreviewOrigin('https://supplier-staging.travioghana.com.evil.example')).toBe(false);
+    expect(isTrustedPreviewOrigin('https://store-staging.travioghana.com.evil.example')).toBe(false);
     expect(isTrustedPreviewOrigin('https://staging.travioghana.com')).toBe(false);
     expect(isTrustedPreviewOrigin('http://supplier-staging.travioghana.com')).toBe(false);
+    expect(isTrustedPreviewOrigin('http://store-staging.travioghana.com')).toBe(false);
   });
 });
 
@@ -111,6 +116,9 @@ describe('per-branch Vercel previews', () => {
       'https://travio-ghana-supplier-git-fix-booking-filters-e5f6a7b8.vercel.app',
       'https://travio-ghana-supplier-git-feat-supplier-notification-recipients-1a2b3c4d.vercel.app',
       'https://Travio-Ghana-Supplier-Git-Staging-a1b2c3d4.vercel.app',
+      'https://travio-ghana-store-git-staging-a1b2c3d4.vercel.app',
+      'https://travio-ghana-store-git-feat-restaurants-e5f6a7b8.vercel.app',
+      'https://Travio-Ghana-Store-Git-Staging-a1b2c3d4.vercel.app',
     ];
     for (const origin of previews) {
       expect(isAllowedOrigin(origin, httpOrigins())).toBe(true);
@@ -129,11 +137,15 @@ describe('per-branch Vercel previews', () => {
     expect(isAllowedOrigin('https://travio-ghana-supplier-git-staging-a1b2c3d4.evil.example', httpOrigins())).toBe(false);
     expect(isAllowedOrigin('https://travio-ghana-supplier-git-staging-a1b2c3d4.vercel.app.evil.example', httpOrigins())).toBe(false);
     expect(isAllowedOrigin('https://travio-ghana-supplier-git-.vercel.app', httpOrigins())).toBe(false);
+    expect(isAllowedOrigin('https://travio-ghana-store-git-staging-a1b2c3d4.evil.example', httpOrigins())).toBe(false);
+    expect(isAllowedOrigin('https://travio-ghana-store-git-staging-a1b2c3d4.vercel.app.evil.example', httpOrigins())).toBe(false);
+    expect(isAllowedOrigin('https://travio-ghana-store-git-.vercel.app', httpOrigins())).toBe(false);
   });
 
   it('rejects anything that is not https', () => {
     process.env.ALLOWED_ORIGINS = PRODUCTION;
     expect(isAllowedOrigin('http://travio-ghana-supplier-git-staging-a1b2c3d4.vercel.app', httpOrigins())).toBe(false);
+    expect(isAllowedOrigin('http://travio-ghana-store-git-staging-a1b2c3d4.vercel.app', httpOrigins())).toBe(false);
     expect(isAllowedOrigin('file://travio-ghana-supplier-git-staging-a1b2c3d4.vercel.app', httpOrigins())).toBe(false);
   });
 

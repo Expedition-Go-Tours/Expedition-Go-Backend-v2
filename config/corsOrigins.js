@@ -7,17 +7,18 @@
  * sees a chat connection that simply never opens. One implementation, one place
  * to add an origin.
  *
- * Preview deployments are why this is a function rather than a list. The
- * supplier dashboard runs from two kinds of host:
+ * Preview deployments are why this is a function rather than a list. Both the
+ * supplier dashboard and the traveller storefront run from two kinds of host:
  *
  *   https://supplier-staging.travioghana.com              fixed staging host
- *   https://travio-ghana-supplier-git-<branch>-<hash>...  per-branch preview
+ *   https://store-staging.travioghana.com                 fixed staging host
+ *   https://travio-ghana-<app>-git-<branch>-<hash>...      per-branch preview
  *                                                        (Vercel)
  *
- * The second form embeds a per-deployment hash, so an exact allow-list is a
- * list we would be editing after every push. Match our own project's
- * git-preview namespace instead of the whole of `*.vercel.app`, which would
- * authorise every application anyone has deployed on the platform.
+ * The last form embeds a per-deployment hash, so an exact allow-list is a list
+ * we would be editing after every push. Match our own projects' git-preview
+ * namespaces instead of the whole of `*.vercel.app`, which would authorise
+ * every application anyone has deployed on the platform.
  */
 
 const DEV_ORIGINS = [
@@ -27,11 +28,15 @@ const DEV_ORIGINS = [
   'http://127.0.0.1:5174',
 ];
 
-/** Fixed staging host bound to the `staging` branch in Vercel. */
+/** Fixed staging hosts bound to the `staging` branch in Vercel. */
 const STAGING_ORIGIN = 'https://supplier-staging.travioghana.com';
+const STORE_STAGING_ORIGIN = 'https://store-staging.travioghana.com';
+const STAGING_ORIGINS = [STAGING_ORIGIN, STORE_STAGING_ORIGIN];
 
 /** Vercel renders branch previews as `<project>-git-<branch>-<suffix>.vercel.app`. */
 const PREVIEW_HOST_PREFIX = 'travio-ghana-supplier-git-';
+const STORE_PREVIEW_HOST_PREFIX = 'travio-ghana-store-git-';
+const PREVIEW_HOST_PREFIXES = [PREVIEW_HOST_PREFIX, STORE_PREVIEW_HOST_PREFIX];
 const VERCEL_HOST_SUFFIX = '.vercel.app';
 
 /**
@@ -89,11 +94,13 @@ function isProjectPreviewOrigin(origin) {
   // browser-supplied origin.
   if (url.pathname !== '/' || url.search || url.hash) return false;
   const host = url.host.toLowerCase();
-  if (!host.endsWith(VERCEL_HOST_SUFFIX) || !host.startsWith(PREVIEW_HOST_PREFIX)) return false;
-  // Require something between the prefix and the suffix, so the bare
-  // `travio-ghana-supplier-git-.vercel.app` is not accepted.
-  const branchPart = host.slice(PREVIEW_HOST_PREFIX.length, host.length - VERCEL_HOST_SUFFIX.length);
-  return branchPart.length > 0;
+  if (!host.endsWith(VERCEL_HOST_SUFFIX)) return false;
+  // Require something between a known prefix and the suffix, so a bare
+  // `travio-ghana-store-git-.vercel.app` is not accepted.
+  return PREVIEW_HOST_PREFIXES.some((prefix) =>
+    host.startsWith(prefix) &&
+    host.slice(prefix.length, host.length - VERCEL_HOST_SUFFIX.length).length > 0,
+  );
 }
 
 /**
@@ -103,7 +110,7 @@ function isProjectPreviewOrigin(origin) {
  * @returns {boolean}
  */
 function isTrustedPreviewOrigin(origin) {
-  return origin === STAGING_ORIGIN || isProjectPreviewOrigin(origin);
+  return STAGING_ORIGINS.includes(origin) || isProjectPreviewOrigin(origin);
 }
 
 /**
@@ -123,7 +130,10 @@ function isAllowedOrigin(origin, baseOrigins = []) {
 module.exports = {
   DEV_ORIGINS,
   STAGING_ORIGIN,
+  STORE_STAGING_ORIGIN,
+  STAGING_ORIGINS,
   PREVIEW_HOST_PREFIX,
+  STORE_PREVIEW_HOST_PREFIX,
   httpOrigins,
   socketOrigins,
   isAllowedOrigin,
