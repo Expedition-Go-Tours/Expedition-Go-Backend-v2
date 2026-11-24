@@ -91,8 +91,11 @@ for id in "${candidates[@]}"; do
   # An image with several tags cannot always be removed by ID. Remove each tag
   # explicitly, falling back to the ID for an untagged (<none>:<none>) image.
   for ref in ${tags_by_id[$id]-}; do
+    # Untagged images are reported as `repo:<none>` (or `<none>:<none>`), not
+    # as an addressable tag. Remove those by ID; named tags by reference.
+    tag="${ref##*:}"
     target="$id"
-    [ "$ref" = "<none>:<none>" ] || target="$ref"
+    [ "$tag" = "<none>" ] || target="$ref"
     if ! docker rmi "$target" >/dev/null 2>&1; then
       log "SKIP  $target (in use or cannot remove)"
       failed=$((failed + 1))
