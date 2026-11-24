@@ -60,7 +60,13 @@ const { evaluateBookingAvailability } = require('../../src/core/services/availab
 const { enqueueNotification } = require('../../src/core/services/queue');
 const { rescheduleBookingBySupplier } = require('../../src/core/services/bookingModify');
 
-const FUTURE = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+// Both dates are rolling and 15 days apart. The old version derived the
+// booking date from the clock but hardcoded the move target, so on the day the
+// two collided the "move" became a time-only change and the change list lost
+// its date entry. A rolling date must never meet a fixed one.
+const BASE_TRAVEL_DATE = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+const MOVE_DATE = new Date(Date.now() + 45 * 24 * 60 * 60 * 1000);
+const MOVE_DATE_ONLY = MOVE_DATE.toISOString().slice(0, 10);
 
 const baseBooking = (over = {}) => ({
   id: 'b-1',
@@ -69,7 +75,7 @@ const baseBooking = (over = {}) => ({
   payoutStatus: 'PENDING',
   paymentStatus: 'SUCCEEDED',
   paymentTiming: 'now',
-  travelDate: FUTURE,
+  travelDate: BASE_TRAVEL_DATE,
   selectedTime: '09:00',
   travelers: { adults: 2 },
   subtotal: 400,
@@ -91,7 +97,7 @@ beforeEach(() => {
   prisma.booking.findFirst.mockResolvedValue(baseBooking());
   // notifyModificationApplied re-reads the booking before it queues anything.
   prisma.booking.findUnique.mockResolvedValue(baseBooking());
-  prisma.booking.update.mockResolvedValue({ ...baseBooking(), travelDate: new Date(FUTURE.getTime() + 86400000) });
+  prisma.booking.update.mockResolvedValue({ ...baseBooking(), travelDate: MOVE_DATE });
   // Default pricing: identical to what the booking already holds → move allowed.
   calculateTourPrice.mockResolvedValue({ success: true, total: 400, subtotal: 400, discount: 0 });
   evaluateBookingAvailability.mockResolvedValue({ ok: true });
@@ -101,7 +107,7 @@ const move = (over = {}) =>
   rescheduleBookingBySupplier({
     bookingId: 'b-1',
     supplierId: 'supplier-1',
-    travelDate: '2026-12-24',
+    travelDate: MOVE_DATE_ONLY,
     selectedTime: '10:30',
     ...over,
   });
@@ -174,7 +180,7 @@ describe('the move itself', () => {
     await move();
 
     const data = prisma.booking.update.mock.calls[0][0].data;
-    expect(new Date(data.travelDate).toISOString().slice(0, 10)).toBe('2026-12-24');
+    expect(new Date(data.travelDate).toISOString().slice(0, 10)).toBe(MOVE_DATE_ONLY);
     expect(data.selectedTime).toBe('10:30');
     // The whole point: not a single money column moves on a supplier reschedule.
     expect(data.grossAmount).toBeUndefined();
@@ -206,7 +212,7 @@ describe('the move itself', () => {
   });
 
   it('rejects a "move" to the same date and time', async () => {
-    prisma.booking.findFirst.mockResolvedValue(baseBooking({ travelDate: new Date('2026-12-24T09:00:00.000Z'), selectedTime: '10:30' }));
+    prisma.booking.findFirst.mockResolvedValue(baseBooking({ travelDate: MOVE_DATE, selectedTime: '10:30' }));
 
     await expect(move()).rejects.toThrow(/no changes were requested/i);
     expect(prisma.booking.update).not.toHaveBeenCalled();

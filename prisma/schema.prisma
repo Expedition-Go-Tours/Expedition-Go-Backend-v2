@@ -352,6 +352,12 @@ enum ReviewStatus {
   APPROVED
   REJECTED
   FLAGGED
+  /// Author removed the review. Kept for the audit trail; it no longer counts
+  /// toward the rating and its visitKey has been released for resubmission.
+  ARCHIVED
+  /// Removed after an upheld FAKE report. Unlike ARCHIVED, this is a moderation
+  /// outcome and does not release the visit slot.
+  REMOVED
 }
 
 enum TourStatus {
@@ -540,6 +546,7 @@ model User {
   staySupplierCharges          StaySupplierCharge[]
   stayVerificationProfile      StayVerificationProfile?
   stayVerificationDocuments    StayVerificationDocument[]
+  restaurantVenueReviews       RestaurantVenueReview[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3713,3 +3720,290 @@ model StayVerificationDocument {
   @@index([propertyId])
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RESTAURANT VENUES
+//
+// A separate vertical from Tour on purpose. A restaurant has no schedule, no
+// availability, no per-person price and no booking, so it cannot live in Tour
+// without every storefront query filtering a discriminator. It also has a
+// different review shape (food/service/atmosphere/value, no booking required
+// for a community review).
+//
+// The review aggregate is denormalized onto the venue exactly the way
+// Tour.averageRating/reviewCount is: the write path adjusts a running sum, and
+// reads never call AVG(). `combinedRating`/`bayesRating` are the ranking keys
+// and are written only by recomputeVenueStats().
+// ═══════════════════════════════════════════════════════════════════════════
+
+enum RestaurantVenueStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  CLOSED
+}
+
+/// Where a review came from. Set server-side, never from the request body.
+enum RestaurantReviewSource {
+  TRAVIO_VERIFIED
+  TRAVIO_COMMUNITY
+  IMPORTED
+}
+
+/// What was actually proved. Null on a community review.
+enum RestaurantReviewProof {
+  BOOKING
+  QR_RECEIPT
+  EMAIL_INVITE
+}
+
+/// Tripadvisor's dispute split, adopted deliberately: a FAKE review has no
+/// first-hand experience or a biased author and is removable; a CONTESTED
+/// review is a real experience whose facts the business disputes and is not.
+/// Collapsing the two is how an owner grinds a rating down by reporting.
+enum RestaurantReviewReportClass {
+  FAKE
+  CONTESTED
+}
+
+enum RestaurantReviewReportStatus {
+  OPEN
+  UPHELD
+  DISMISSED
+}
+
+model RestaurantVenue {
+  id     String                @id @default(cuid())
+  slug   String                @unique
+  name   String
+  status RestaurantVenueStatus @default(DRAFT)
+
+  // ── identity ────────────────────────────────────────────────────────────
+  // Google's place id may be cached indefinitely; the rating/count snapshot
+  // may not, which is why googleSyncedAt exists and drives the refresh job.
+  googlePlaceId String? @unique
+  latitude      Float?
+  longitude     Float?
+  addressLine   String?
+  neighbourhood String?
+  city          String?
+  region        String?
+  country       String  @default("Ghana")
+
+  // ── browse facets (denormalized so filters stay index-only) ─────────────
+  cuisines  String[] @default([])
+  dietary   String[] @default([])
+  priceBand Int? // 1–4, TripAdvisor-style price bucket
+  amenities String[] @default([])
+
+  // ── presentation ────────────────────────────────────────────────────────
+  hours       Json?
+  timezone    String  @default("Africa/Accra")
+  phone       String?
+  website     String?
+  description String?
+  photos      String[] @default([])
+  coverPhoto  String?
+
+  // ── in-app review aggregate (maintained by the review write path) ───────
+  reviewCount         Int       @default(0)
+  ratingSum           Int       @default(0)
+  /// Honest lifetime mean. This is the only rating the API returns, and it is
+  /// never blended with an external source.
+  averageRating       Float?
+  verifiedReviewCount Int       @default(0)
+  distribution        Json? // { "5": n, "4": n, ... "1": n }
+  lastReviewAt        DateTime?
+
+  // ── recency signal (approved reviews in the last 12 months) ─────────────
+  // Tripadvisor weights recent reviews more heavily than old ones. Keeping
+  // this separate from averageRating lets the displayed score stay honest
+  // while the ranking leans recent.
+  recentRating      Float?
+  recentReviewCount Int   @default(0)
+
+  // ── external headline for cards (one source, shown with attribution) ────
+  // Never blended with the Travio rating. Detail returns every source.
+  externalSource      String? // source with the largest counted review total
+  externalRating      Float?
+  externalReviewCount Int     @default(0)
+
+  // ── internal ranking inputs (never returned as a rating) ────────────────
+  combinedRating      Float?
+  combinedReviewCount Int    @default(0)
+  /// Recency-blended Bayesian score. Orders lists; never displayed as stars.
+  rankingScore        Float?
+
+  // ── ordinal position within the city ────────────────────────────────────
+  // Tripadvisor shows "#8 of 143 in Osu", not a bare score. The ordinal is
+  // recomputed nightly because it moves when *other* venues get reviews.
+  rankInCity     Int?
+  cityVenueCount Int?
+  rankComputedAt DateTime?
+
+  googleSyncedAt DateTime?
+
+  /// Bridge for a venue that later becomes a bookable supplier product.
+  /// Deliberately not a relation yet — restaurant owners are not suppliers.
+  supplierId String?
+
+  reviews       RestaurantVenueReview[]
+  listings      RestaurantVenueListing[]
+  externalStats RestaurantVenueExternalStat[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, rankingScore(sort: Desc)])
+  @@index([status, combinedReviewCount(sort: Desc)])
+  @@index([city, status, rankingScore(sort: Desc)])
+  @@index([city, rankInCity])
+  @@index([latitude, longitude])
+  @@map("restaurant_venues")
+}
+
+model RestaurantVenueReview {
+  id      String         @id @default(cuid())
+  venueId String
+  venue   RestaurantVenue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  authorId String
+  author   User          @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  rating           Int
+  foodRating       Int?
+  serviceRating    Int?
+  atmosphereRating Int?
+  valueRating      Int?
+
+  title  String?
+  body   String?
+  photos String[] @default([])
+
+  // ── provenance ──────────────────────────────────────────────────────────
+  source      RestaurantReviewSource @default(TRAVIO_COMMUNITY)
+  proofMethod RestaurantReviewProof?
+  /// Id of the signed invite that proved the visit. Unique so a token cannot
+  /// be redeemed twice, including under concurrent requests.
+  proofRef    String? @unique
+  visitedAt   DateTime?
+  /// Month bucket of the visit ('YYYY-MM'). Tripadvisor allows one review per
+  /// business *per visit* — a 30-day gap for restaurants — not one per person
+  /// forever. This column makes that rule enforceable as a unique key.
+  visitKey    String
+
+  // ── moderation ──────────────────────────────────────────────────────────
+  status      ReviewStatus @default(PENDING)
+  moderatedBy String?
+  moderatedAt DateTime?
+  flagReason  String?
+
+  helpfulCount Int @default(0)
+  reportCount  Int @default(0)
+
+  // Abuse forensics. Hashed, with a retention window — never raw IPs.
+  ipHash        String?
+  userAgentHash String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  reports RestaurantVenueReviewReport[]
+
+  // One review per person per visit. A second visit months later is a new row;
+  // a correction within the same visit updates this one. The cooldown and the
+  // 12-month submission window are enforced by the write path, which is where
+  // they can produce a readable error instead of a raw constraint violation.
+  @@unique([venueId, authorId, visitKey])
+  @@index([venueId, authorId, createdAt(sort: Desc)])
+  @@index([venueId, status, createdAt(sort: Desc), id])
+  @@index([venueId, status, rating])
+  @@index([status, createdAt])
+  @@index([authorId, createdAt(sort: Desc)])
+  @@map("restaurant_venue_reviews")
+}
+
+/// Per-brand placement, mirroring TravioGhanaTour/ExpeditionTour. A venue can
+/// be listed on more than one storefront, with its own order and featured flag.
+model RestaurantVenueListing {
+  id      String          @id @default(cuid())
+  venueId String
+  venue   RestaurantVenue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  /// Brand registry key: 'ghana' | 'africa' | 'expedition'
+  brand String
+
+  isActive     Boolean @default(false)
+  isFeatured   Boolean @default(false)
+  displayOrder Int     @default(0)
+
+  publishedById String?
+  publishedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([brand, venueId])
+  @@index([brand, isActive, displayOrder])
+  @@index([brand, isActive, isFeatured])
+  @@map("restaurant_venue_listings")
+}
+
+/// External aggregate only — never a review body. Google's terms restrict
+/// long-term caching of review text but allow storing the place id and
+/// refreshing the aggregate, so this table is deliberately numbers-only.
+model RestaurantVenueExternalStat {
+  id      String          @id @default(cuid())
+  venueId String
+  venue   RestaurantVenue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  /// 'GOOGLE' | 'TRIPADVISOR' | ... String, not enum: adding a source must not
+  /// require a migration.
+  source      String
+  rating      Decimal? @db.Decimal(3, 2)
+  reviewCount Int      @default(0)
+  distribution Json?
+  productId    String?
+  productUrl   String?
+  syncedAt     DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([venueId, source])
+  @@index([venueId])
+  @@index([source])
+  @@map("restaurant_venue_external_stats")
+}
+
+/// A report against a review, classified before any action is taken.
+///
+/// The two classes drive different outcomes on purpose: FAKE can end in
+/// removal and a ranking penalty; CONTESTED never removes the review, because
+/// the reviewer had a real experience and the business simply disagrees with
+/// the account. Owners may only report — never decide.
+model RestaurantVenueReviewReport {
+  id       String               @id @default(cuid())
+  reviewId String
+  review   RestaurantVenueReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  /// Null for an anonymous community report.
+  reporterUserId String?
+  /// CUSTOMER | OWNER | ADMIN — recorded so an owner cannot report anonymously
+  /// and so repeated owner reports are visible in one place.
+  reporterRole String @default("CUSTOMER")
+
+  reason String
+  detail String?
+
+  status         RestaurantReviewReportStatus @default(OPEN)
+  classification RestaurantReviewReportClass?
+  reviewedBy     String?
+  reviewedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([reviewId, status])
+  @@index([status, createdAt])
+  @@map("restaurant_venue_review_reports")
+}

@@ -238,6 +238,25 @@ async function invalidateReviewCaches(tourId) {
   await invalidateKeys([TOUR_LIST_PREFIX, TOUR_FILTERS_KEY]);
 }
 
+/**
+ * A review or aggregate change moves a venue's rating, review list and city
+ * rank, so every storefront view of it goes stale at once. Brand is not in the
+ * key's first segment, hence the `*`; clearing only one brand would leave the
+ * other two showing yesterday's number.
+ */
+const RESTAURANT_LIST_PREFIX = 'rv:list:*';
+
+async function invalidateRestaurantVenueCaches(venueId, slug) {
+  const patterns = [RESTAURANT_LIST_PREFIX];
+  if (venueId) {
+    patterns.push(`rv:detail:*:${venueId}`, `rv:reviews:${venueId}:*`);
+  }
+  if (slug && slug !== venueId) {
+    patterns.push(`rv:detail:*:${slug}`);
+  }
+  await invalidateKeys(patterns);
+}
+
 function _clearMemory() {
   memClear();
 }
@@ -248,6 +267,8 @@ module.exports = {
   invalidateKey,
   invalidateTourCaches,
   invalidateReviewCaches,
+  invalidateRestaurantVenueCaches,
+  RESTAURANT_LIST_PREFIX,
   invalidateHomepageSections,
   memSet,
   TOUR_LIST_PREFIX,

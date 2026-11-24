@@ -89,6 +89,8 @@ const supplierSettingsRoutes = require('../../routes/supplierSettingsRoutes');
 const specialOfferRoutes = require('../../routes/specialOfferRoutes');
 const locationRoutes = require('../../routes/locationRoutes');
 const placeRoutes = require('../../routes/placeRoutes');
+const restaurantVenueRoutes = require('../../routes/restaurantVenueRoutes');
+const restaurantVenueAdminRoutes = require('../../routes/restaurantVenueAdminRoutes');
 const searchRoutes = require('../../routes/searchRoutes');
 const keywordRoutes = require('../../routes/keywordRoutes');
 const expeditionRoutes = require('../../src/brands/expedition/routes');
@@ -278,6 +280,9 @@ function mountPrefixRoutes(app, prefix, limiters) {
   // protect(). The token is minted by POST /admin/email-previews/link, which
   // carries its own admin auth.
   app.use(`${prefix}/admin/email-previews`, adminEmailPreviewRoutes);
+  // Restaurant review moderation. Ahead of the general admin router so its
+  // own auth/permission stack is the one that guards these paths.
+  app.use(`${prefix}/admin/restaurant-venues`, restaurantVenueAdminRoutes);
   app.use(`${prefix}/admin`, adminRoutes);
   app.use(`${prefix}/admin/settings`, adminSettingsRoutes);
   app.use(`${prefix}/admin/system`, adminSystemRoutes);
@@ -295,6 +300,7 @@ function mountPrefixRoutes(app, prefix, limiters) {
   app.use(`${prefix}/suppliers/special-offers`, specialOfferRoutes);
   app.use(`${prefix}/locations`, locationRoutes);
   app.use(`${prefix}/places`, placeRoutes);
+  app.use(`${prefix}/restaurant-venues`, restaurantVenueRoutes);
   app.use(`${prefix}/search`, searchRoutes);
   app.use(`${prefix}/keywords`, keywordRoutes);
   app.use(`${prefix}/expedition`, expeditionRoutes);
