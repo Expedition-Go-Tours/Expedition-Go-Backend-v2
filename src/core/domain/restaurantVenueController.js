@@ -24,6 +24,15 @@ exports.listVenues = catchAsync(async (req, res) => {
 });
 
 /**
+ * GET /api/restaurant-venues/suggest
+ * Restaurant + place typeahead for the storefront search bar.
+ */
+exports.suggestVenues = catchAsync(async (req, res) => {
+  const data = await service.suggestVenues(req.query);
+  res.status(200).json({ status: 'success', data });
+});
+
+/**
  * GET /api/restaurant-venues/:slugOrId
  * One venue, accepted by slug or id so a renamed slug never breaks an old link.
  */

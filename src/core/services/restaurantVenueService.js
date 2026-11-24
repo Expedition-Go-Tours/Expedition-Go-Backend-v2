@@ -18,6 +18,7 @@ const crypto = require('crypto');
 const prisma = require('./prismaClient');
 const cache = require('./cacheHelper');
 const AppError = require('./appError');
+const locationService = require('./locationService');
 const { roundOne } = require('./restaurantVenueStats');
 
 const LIST_TTL_SECONDS = 60;
@@ -234,6 +235,9 @@ function listCacheKey(params) {
     featured: Boolean(params.featured),
     minRating: params.minRating ?? null,
     minReviews: params.minReviews ?? null,
+    lat: params.lat ?? null,
+    lng: params.lng ?? null,
+    radiusKm: params.radiusKm ?? null,
     sort: params.sort,
     limit: params.limit,
     cursor: params.cursor || null,
@@ -242,7 +246,25 @@ function listCacheKey(params) {
   return `rv:list:${params.brand}:${hash}`;
 }
 
-function baseWhere({ brand, q, city, cuisine, dietary, priceBand, featured, minRating, minReviews }) {
+/**
+ * Approximate radius filter for map-server place searches.
+ *
+ * A true haversine sort would need raw SQL and would make keyset pagination
+ * expensive. A latitude/longitude bounding box is enough for a 1–50 km
+ * discovery radius, uses the existing lat/lng index, and never returns a
+ * venue without coordinates.
+ */
+function nearFilter(lat, lng, radiusKm) {
+  const radius = radiusKm || 10;
+  const latDelta = radius / 111;
+  const lngDelta = radius / (111 * Math.max(Math.cos((lat * Math.PI) / 180), 0.01));
+  return {
+    latitude: { gte: lat - latDelta, lte: lat + latDelta },
+    longitude: { gte: lng - lngDelta, lte: lng + lngDelta },
+  };
+}
+
+function baseWhere({ brand, q, city, cuisine, dietary, priceBand, featured, minRating, minReviews, lat, lng, radiusKm }) {
   const where = {
     status: 'ACTIVE',
     listings: { some: listingFilter(brand, featured) },
@@ -254,9 +276,14 @@ function baseWhere({ brand, q, city, cuisine, dietary, priceBand, featured, minR
       OR: [
         { name: { contains: q, mode: 'insensitive' } },
         { city: { contains: q, mode: 'insensitive' } },
+        { region: { contains: q, mode: 'insensitive' } },
         { neighbourhood: { contains: q, mode: 'insensitive' } },
+        { cuisines: { has: q.toLowerCase() } },
       ],
     });
+  }
+  if (lat != null && lng != null) {
+    and.push(nearFilter(lat, lng, radiusKm));
   }
   if (city) where.city = { equals: city, mode: 'insensitive' };
   if (cuisine) where.cuisines = { has: cuisine };
@@ -325,6 +352,137 @@ async function listVenues(params) {
       };
     },
     LIST_TTL_SECONDS,
+  );
+}
+
+function mapPlaceLabel(row, needle) {
+  const parts = String(row.formatted || '')
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => part && !/^ghana$/i.test(part));
+  const query = String(needle || '').toLowerCase().trim();
+  // Prefer the exact segment the reader typed: "La, Osu, Accra" + "Osu" must
+  // read as "Osu", not as the first segment or the containing city.
+  const matched = parts.find((part) => part.toLowerCase().includes(query));
+  if (query && matched) return matched;
+  const city = String(row.city || '').trim();
+  if (city && parts[0] && parts[0].toLowerCase() === city.toLowerCase()) return city;
+  if (parts.length > 1) return parts.slice(0, 2).join(', ');
+  return city || parts[0] || String(row.formatted || '').trim();
+}
+
+/**
+ * Typeahead for the restaurant search bar.
+ *
+ * Restaurants answer name/cuisine queries. Places answer "where" queries:
+ * directory cities come from our own listings, and the map server fills in
+ * neighbourhoods and towns. A map place is only returned when at least one
+ * restaurant falls inside its 10 km box, so selecting "Osu" cannot land on an
+ * empty namesake in another region.
+ */
+async function suggestVenues({ brand = 'ghana', q, limit = 6 }) {
+  if (!BRANDS.includes(brand)) {
+    throw new AppError('Unknown brand', 400, { code: 'INVALID_BRAND' });
+  }
+  const needle = String(q || '').trim();
+  const max = Math.min(Math.max(Number(limit) || 6, 1), 8);
+  if (needle.length < 2) return { restaurants: [], places: [] };
+
+  const key = `rv:suggest:${brand}:${crypto
+    .createHash('md5')
+    .update(`${needle.toLowerCase()}:${max}`)
+    .digest('hex')}`;
+
+  return cache.getOrSet(
+    key,
+    async () => {
+      const restaurantRows = await prisma.restaurantVenue.findMany({
+        where: baseWhere({ brand, q: needle }),
+        orderBy: orderFor('rating'),
+        take: max,
+        include: {
+          listings: {
+            where: { brand },
+            select: { isFeatured: true, displayOrder: true },
+          },
+        },
+      });
+
+      const cityRows = await prisma.restaurantVenue
+        .groupBy({
+          by: ['city', 'region'],
+          where: {
+            status: 'ACTIVE',
+            city: { contains: needle, mode: 'insensitive' },
+            listings: { some: listingFilter(brand) },
+          },
+          _count: { _all: true },
+        })
+        .catch(() => []);
+
+      const places = cityRows
+        .filter((row) => row.city)
+        .map((row) => ({
+          name: row.city,
+          subtitle: [row.region, 'Ghana'].filter(Boolean).join(', '),
+          region: row.region || null,
+          latitude: null,
+          longitude: null,
+          restaurantCount: row._count?._all || 0,
+          radiusKm: null,
+          source: 'directory',
+        }));
+
+      const mapRows = await locationService.autocomplete(needle, 8).catch(() => []);
+      const ghanaMapRows = mapRows.filter((row) => {
+        const code = String(row.countryCode || '').toLowerCase();
+        const country = String(row.country || '').toLowerCase();
+        return code === 'gh' || country === 'ghana';
+      });
+
+      await Promise.all(
+        ghanaMapRows.map(async (row) => {
+          if (row.latitude == null || row.longitude == null) return;
+          const count = await prisma.restaurantVenue
+            .count({
+              where: {
+                ...baseWhere({ brand }),
+                ...nearFilter(row.latitude, row.longitude, 10),
+              },
+            })
+            .catch(() => 0);
+          if (count <= 0) return;
+          places.push({
+            name: mapPlaceLabel(row, needle),
+            subtitle: [row.region, 'Ghana'].filter(Boolean).join(', '),
+            region: row.region || null,
+            latitude: row.latitude,
+            longitude: row.longitude,
+            restaurantCount: count,
+            radiusKm: 10,
+            source: 'map',
+          });
+        }),
+      );
+
+      const deduped = [];
+      const seen = new Set();
+      for (const place of places.sort((a, b) => b.restaurantCount - a.restaurantCount)) {
+        const keyName = String(place.name || '').toLowerCase().replace(/\s+/g, ' ').trim();
+        const keyPoint =
+          place.latitude == null ? 'directory' : `${place.latitude.toFixed(3)}:${place.longitude.toFixed(3)}`;
+        const dedupeKey = `${keyName}:${keyPoint}`;
+        if (!keyName || seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+        deduped.push(place);
+      }
+
+      return {
+        restaurants: restaurantRows.map((venue) => toPublicVenue(venue)),
+        places: deduped.slice(0, max),
+      };
+    },
+    60,
   );
 }
 
@@ -475,6 +633,7 @@ module.exports = {
   decodeListCursor,
   decodeReviewCursor,
   listVenues,
+  suggestVenues,
   getVenue,
   resolveVenueId,
   listReviews,

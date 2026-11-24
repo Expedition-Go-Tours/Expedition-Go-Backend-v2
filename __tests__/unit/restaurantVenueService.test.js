@@ -1,5 +1,10 @@
 jest.mock('../../src/core/services/prismaClient', () => ({
-  restaurantVenue: { findMany: jest.fn(), findFirst: jest.fn() },
+  restaurantVenue: {
+    findMany: jest.fn(),
+    findFirst: jest.fn(),
+    groupBy: jest.fn(),
+    count: jest.fn(),
+  },
   restaurantVenueReview: { findMany: jest.fn() },
 }));
 
@@ -7,7 +12,12 @@ jest.mock('../../src/core/services/cacheHelper', () => ({
   getOrSet: jest.fn((key, fn) => fn()),
 }));
 
+jest.mock('../../src/core/services/locationService', () => ({
+  autocomplete: jest.fn(),
+}));
+
 const prisma = require('../../src/core/services/prismaClient');
+const locationService = require('../../src/core/services/locationService');
 const service = require('../../src/core/services/restaurantVenueService');
 
 function venueRow(overrides = {}) {
@@ -61,7 +71,10 @@ describe('restaurantVenueService', () => {
     jest.clearAllMocks();
     prisma.restaurantVenue.findMany.mockResolvedValue([]);
     prisma.restaurantVenue.findFirst.mockResolvedValue(null);
+    prisma.restaurantVenue.groupBy.mockResolvedValue([]);
+    prisma.restaurantVenue.count.mockResolvedValue(0);
     prisma.restaurantVenueReview.findMany.mockResolvedValue([]);
+    locationService.autocomplete.mockResolvedValue([]);
   });
 
   describe('listVenues', () => {
@@ -112,11 +125,31 @@ describe('restaurantVenueService', () => {
             OR: [
               { name: { contains: 'buka', mode: 'insensitive' } },
               { city: { contains: 'buka', mode: 'insensitive' } },
+              { region: { contains: 'buka', mode: 'insensitive' } },
               { neighbourhood: { contains: 'buka', mode: 'insensitive' } },
+              { cuisines: { has: 'buka' } },
             ],
           },
         ],
       });
+    });
+
+    it('filters to a map-server place using a coordinate bounding box', async () => {
+      await service.listVenues({
+        brand: 'ghana',
+        lat: 5.56,
+        lng: -0.19,
+        radiusKm: 5,
+        sort: 'rating',
+        limit: 20,
+      });
+
+      const query = prisma.restaurantVenue.findMany.mock.calls[0][0];
+      const near = query.where.AND[0];
+      expect(near.latitude.gte).toBeCloseTo(5.514954954954955, 6);
+      expect(near.latitude.lte).toBeCloseTo(5.605045045045045, 6);
+      expect(near.longitude.gte).toBeCloseTo(-0.2352579709832196, 6);
+      expect(near.longitude.lte).toBeCloseTo(-0.1447420290167804, 6);
     });
 
     it('returns a cursor built from the last row and the active sort', async () => {
@@ -198,6 +231,50 @@ describe('restaurantVenueService', () => {
         /Unknown brand/,
       );
       expect(prisma.restaurantVenue.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('suggestVenues', () => {
+    it('returns directory and map places only when restaurants are nearby', async () => {
+      prisma.restaurantVenue.findMany.mockResolvedValue([venueRow()]);
+      prisma.restaurantVenue.groupBy.mockResolvedValue([
+        { city: 'Accra', region: 'Greater Accra', _count: { _all: 2 } },
+      ]);
+      prisma.restaurantVenue.count
+        .mockResolvedValueOnce(1)
+        .mockResolvedValueOnce(0);
+      locationService.autocomplete.mockResolvedValue([
+        {
+          formatted: 'La, Osu, Accra, Ghana',
+          city: 'Accra',
+          region: 'Greater Accra Region',
+          countryCode: 'gh',
+          latitude: 5.5605929,
+          longitude: -0.1824391,
+        },
+        {
+          formatted: 'Osu, Upper Manya Krobo District, Ghana',
+          city: 'Osu',
+          region: 'Eastern Region',
+          countryCode: 'gh',
+          latitude: 6.5115749,
+          longitude: -0.1095039,
+        },
+      ]);
+
+      const result = await service.suggestVenues({ brand: 'ghana', q: 'Osu', limit: 6 });
+
+      expect(result.restaurants).toHaveLength(1);
+      expect(result.places).toEqual([
+        expect.objectContaining({ name: 'Accra', restaurantCount: 2 }),
+        expect.objectContaining({
+          name: 'Osu',
+          restaurantCount: 1,
+          latitude: 5.5605929,
+          source: 'map',
+        }),
+      ]);
+      expect(prisma.restaurantVenue.count).toHaveBeenCalledTimes(2);
     });
   });
 

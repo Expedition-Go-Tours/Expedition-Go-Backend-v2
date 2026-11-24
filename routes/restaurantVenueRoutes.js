@@ -16,6 +16,7 @@ const { protect } = require('../middleware/authMiddleware');
 const controller = require('../src/core/domain/restaurantVenueController');
 const {
   listQuerySchema,
+  suggestQuerySchema,
   venueSchema,
   reviewsQuerySchema,
   createReviewSchema,
@@ -68,6 +69,10 @@ const claimLimiter = createUserLimiter({
  *       - { name: featured, in: query, schema: { type: boolean } }
  *       - { name: minRating, in: query, schema: { type: number } }
  *       - { name: minReviews, in: query, schema: { type: integer } }
+ *       - { name: lat, in: query, schema: { type: number, minimum: -90, maximum: 90 } }
+ *       - { name: lng, in: query, schema: { type: number, minimum: -180, maximum: 180 } }
+ *       - { name: radiusKm, in: query, schema: { type: number, minimum: 0.1, maximum: 50 } }
+ *       - { name: place, in: query, schema: { type: string } }
  *       - { name: sort, in: query, schema: { type: string, enum: [rating, reviews, newest] } }
  *       - { name: limit, in: query, schema: { type: integer, maximum: 50 } }
  *       - { name: cursor, in: query, schema: { type: string } }
@@ -75,6 +80,21 @@ const claimLimiter = createUserLimiter({
  *       200: { description: Venues retrieved successfully }
  */
 router.get('/', validate(listQuerySchema), controller.listVenues);
+
+/**
+ * @swagger
+ * /restaurant-venues/suggest:
+ *   get:
+ *     summary: Restaurant and place typeahead
+ *     tags: [Restaurant Venues]
+ *     parameters:
+ *       - { name: brand, in: query, schema: { type: string, enum: [ghana, africa, expedition] } }
+ *       - { name: q, in: query, required: true, schema: { type: string } }
+ *       - { name: limit, in: query, schema: { type: integer, maximum: 8 } }
+ *     responses:
+ *       200: { description: Suggestions retrieved successfully }
+ */
+router.get('/suggest', validate(suggestQuerySchema), controller.suggestVenues);
 
 /**
  * @swagger

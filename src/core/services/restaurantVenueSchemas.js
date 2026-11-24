@@ -44,9 +44,27 @@ const listQuerySchema = z.object({
       featured: booleanString.optional(),
       minRating: z.coerce.number().min(0).max(5).optional(),
       minReviews: z.coerce.number().int().min(0).max(1000000).optional(),
+      // Map-server place search: a selected place supplies a point and a
+      // radius. Browsing by city still works without coordinates.
+      lat: z.coerce.number().min(-90).max(90).optional(),
+      lng: z.coerce.number().min(-180).max(180).optional(),
+      radiusKm: z.coerce.number().min(0.1).max(50).optional(),
+      place: z.string().trim().min(1).max(160).optional(),
       sort: z.enum(['rating', 'reviews', 'newest']).default('rating'),
       limit: z.coerce.number().int().min(1).max(50).default(20),
       cursor: z.string().max(500).optional(),
+    })
+    .passthrough(),
+  params: z.object({}).optional(),
+});
+
+const suggestQuerySchema = z.object({
+  body: emptyBody,
+  query: z
+    .object({
+      brand,
+      q: z.string().trim().min(2).max(80),
+      limit: z.coerce.number().int().min(1).max(8).default(6),
     })
     .passthrough(),
   params: z.object({}).optional(),
@@ -275,6 +293,7 @@ const updateOwnVenueSchema = z.object({
 
 module.exports = {
   listQuerySchema,
+  suggestQuerySchema,
   venueSchema,
   reviewsQuerySchema,
   createReviewSchema,
