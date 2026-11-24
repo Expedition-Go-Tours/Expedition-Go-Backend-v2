@@ -9,8 +9,10 @@
 
 const catchAsync = require('../services/catchAsync');
 const AppError = require('../services/appError');
+const { isValidCloudinaryUrl } = require('../services/cloudinaryHelper');
 const service = require('../services/restaurantVenueService');
 const writeService = require('../services/restaurantVenueWriteService');
+const claimService = require('../services/restaurantVenueClaimService');
 
 /**
  * GET /api/restaurant-venues
@@ -57,6 +59,25 @@ exports.listReviews = catchAsync(async (req, res, next) => {
 /* ── review writes ──────────────────────────────────────────────────────── */
 
 /**
+ * POST /api/restaurant-venues/:slugOrId/review-photos
+ * Upload images before submitting a review. The review contract accepts only
+ * Cloudinary URLs, so the browser never invents a photo reference.
+ */
+exports.uploadReviewPhotos = catchAsync(async (req, res) => {
+  const venueId = await service.resolveVenueId(req.params.slugOrId, req.query.brand);
+  if (!venueId) throw new AppError('Venue not found', 404, { code: 'VENUE_NOT_FOUND' });
+
+  const photos = (req.files || [])
+    .map((file) => file.path || file.secure_url || file.url)
+    .filter(isValidCloudinaryUrl);
+  if (!photos.length) {
+    throw new AppError('Upload at least one photo', 400, { code: 'NO_PHOTOS_UPLOADED' });
+  }
+
+  res.status(201).json({ status: 'success', data: { photos } });
+});
+
+/**
  * POST /api/restaurant-venues/:slugOrId/reviews
  * A signed invite yields an approved, verified review; without one the review
  * waits in the moderation queue.
@@ -71,6 +92,36 @@ exports.createReview = catchAsync(async (req, res) => {
   });
 
   res.status(201).json({ status: 'success', data: { review } });
+});
+
+/**
+ * GET /api/restaurant-venues/:slugOrId/reviews/:reviewId
+ * The signed-in author's own review, for the correction form.
+ */
+exports.getOwnReview = catchAsync(async (req, res) => {
+  const review = await writeService.getOwnReview({
+    slugOrId: req.params.slugOrId,
+    brand: req.query.brand,
+    reviewId: req.params.reviewId,
+    author: req.user,
+  });
+  res.status(200).json({ status: 'success', data: { review } });
+});
+
+/**
+ * PATCH /api/restaurant-venues/:slugOrId/reviews/:reviewId
+ * Archive the old review and create a pending replacement in one transaction.
+ */
+exports.replaceOwnReview = catchAsync(async (req, res) => {
+  const review = await writeService.replaceOwnReview({
+    slugOrId: req.params.slugOrId,
+    brand: req.query.brand,
+    reviewId: req.params.reviewId,
+    author: req.user,
+    input: req.body,
+    req,
+  });
+  res.status(200).json({ status: 'success', data: { review } });
 });
 
 /**
@@ -146,4 +197,58 @@ exports.createInvite = catchAsync(async (req, res) => {
   });
 
   res.status(201).json({ status: 'success', data: { invite } });
+});
+
+/* ── claims and owner surface ────────────────────────────────────────────── */
+
+exports.submitClaim = catchAsync(async (req, res) => {
+  const claim = await claimService.submitClaim({
+    slugOrId: req.params.slugOrId,
+    brand: req.query.brand,
+    claimant: req.user,
+    input: req.body,
+    req,
+  });
+  res.status(201).json({ status: 'success', data: { claim } });
+});
+
+exports.getMyClaim = catchAsync(async (req, res) => {
+  const data = await claimService.getMyClaim({
+    slugOrId: req.params.slugOrId,
+    brand: req.query.brand,
+    claimant: req.user,
+  });
+  res.status(200).json({ status: 'success', data });
+});
+
+exports.listMyVenues = catchAsync(async (req, res) => {
+  const data = await claimService.listMyVenues({ claimant: req.user });
+  res.status(200).json({ status: 'success', data });
+});
+
+exports.updateOwnVenue = catchAsync(async (req, res) => {
+  const data = await claimService.updateOwnVenue({
+    slugOrId: req.params.slugOrId,
+    brand: req.query.brand,
+    editor: req.user,
+    input: req.body,
+    req,
+  });
+  res.status(200).json({ status: 'success', data });
+});
+
+exports.listPendingClaims = catchAsync(async (req, res) => {
+  const data = await claimService.listPendingClaims(req.query);
+  res.status(200).json({ status: 'success', data });
+});
+
+exports.resolveClaim = catchAsync(async (req, res) => {
+  const claim = await claimService.resolveClaim({
+    claimId: req.params.claimId,
+    adminId: req.user.id,
+    action: req.body.action,
+    note: req.body.note,
+    req,
+  });
+  res.status(200).json({ status: 'success', data: { claim } });
 });

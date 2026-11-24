@@ -109,6 +109,33 @@ const createReviewSchema = z.object({
   params: venueParams,
 });
 
+/**
+ * An author correction replaces their review. Provenance, visit date and
+ * moderation state stay server-owned; the client may only change the content.
+ */
+const updateReviewSchema = z.object({
+  body: z
+    .object({
+      rating: z.coerce.number().int().min(1).max(5),
+      foodRating: z.coerce.number().int().min(1).max(5).optional(),
+      serviceRating: z.coerce.number().int().min(1).max(5).optional(),
+      atmosphereRating: z.coerce.number().int().min(1).max(5).optional(),
+      valueRating: z.coerce.number().int().min(1).max(5).optional(),
+      title: z.string().trim().min(3).max(120).optional(),
+      body: z.string().trim().min(20).max(3000),
+      photos: z.array(z.string().max(500)).max(5).optional(),
+    })
+    .strict(),
+  query: z.object({ brand }).passthrough(),
+  params: venueParams.extend({ reviewId: z.string().trim().min(1).max(120) }),
+});
+
+const authorReviewQuerySchema = z.object({
+  body: emptyBody,
+  query: z.object({ brand }).passthrough(),
+  params: venueParams.extend({ reviewId: z.string().trim().min(1).max(120) }),
+});
+
 const deleteReviewSchema = z.object({
   body: emptyBody,
   query: z.object({ brand }).passthrough(),
@@ -174,15 +201,94 @@ const createInviteSchema = z.object({
   params: venueParams,
 });
 
+const httpUrl = z
+  .string()
+  .trim()
+  .max(500)
+  .url()
+  .refine((value) => /^https?:\/\//i.test(value), { message: 'Must be an http(s) URL' });
+
+/* ── claims and owner surface ────────────────────────────────────────────── */
+
+/** Provenance is evidence for a human reviewer, never a self-granted role. */
+const submitClaimSchema = z.object({
+  body: z
+    .object({
+      businessName: z.string().trim().min(2).max(160).optional(),
+      role: z.string().trim().min(2).max(80).optional(),
+      contactEmail: z.string().trim().email().max(200).optional(),
+      phone: z.string().trim().min(7).max(40).optional(),
+      message: z.string().trim().min(10).max(2000),
+      evidenceUrl: httpUrl.optional(),
+    })
+    .strict(),
+  query: z.object({ brand }).passthrough(),
+  params: venueParams,
+});
+
+const myClaimSchema = z.object({
+  body: emptyBody,
+  query: z.object({ brand }).passthrough(),
+  params: venueParams,
+});
+
+const pendingClaimsQuerySchema = z.object({
+  body: emptyBody,
+  query: z
+    .object({
+      limit: z.coerce.number().int().min(1).max(50).default(20),
+      cursor: z.string().max(500).optional(),
+    })
+    .passthrough(),
+  params: z.object({}).optional(),
+});
+
+const resolveClaimSchema = z.object({
+  body: z
+    .object({
+      action: z.enum(['approve', 'reject']),
+      note: z.string().trim().max(500).optional(),
+    })
+    .strict(),
+  query: z.object({}).passthrough(),
+  params: z.object({ claimId: z.string().trim().min(1).max(120) }),
+});
+
+/** Owners can correct presentation fields, never ratings or external stats. */
+const updateOwnVenueSchema = z.object({
+  body: z
+    .object({
+      description: z.string().trim().max(3000).optional(),
+      phone: z.string().trim().min(7).max(40).optional(),
+      website: httpUrl.optional(),
+      cuisines: z.array(z.string().trim().min(1).max(40)).max(30).optional(),
+      dietary: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
+      amenities: z.array(z.string().trim().min(1).max(60)).max(30).optional(),
+      hours: z.record(z.string(), z.any()).optional(),
+      photos: z.array(z.string().max(500)).max(20).optional(),
+      coverPhoto: z.string().max(500).nullable().optional(),
+    })
+    .strict(),
+  query: z.object({ brand }).passthrough(),
+  params: venueParams,
+});
+
 module.exports = {
   listQuerySchema,
   venueSchema,
   reviewsQuerySchema,
   createReviewSchema,
+  updateReviewSchema,
+  authorReviewQuerySchema,
   deleteReviewSchema,
   moderateReviewSchema,
   pendingReviewsQuerySchema,
   submitReportSchema,
   resolveReportSchema,
   createInviteSchema,
+  submitClaimSchema,
+  myClaimSchema,
+  pendingClaimsQuerySchema,
+  resolveClaimSchema,
+  updateOwnVenueSchema,
 };

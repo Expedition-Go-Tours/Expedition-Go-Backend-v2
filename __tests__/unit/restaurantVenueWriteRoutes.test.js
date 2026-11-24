@@ -31,6 +31,23 @@ jest.mock('../../src/core/services/cacheHelper', () => ({
   invalidateHomepageSections: jest.fn(() => Promise.resolve()),
 }));
 
+// Uploads go to Cloudinary in production. This contract only cares that the
+// route authenticates, resolves the venue and returns the uploaded URLs.
+jest.mock('../../middleware/uploadMiddleware', () => {
+  const passthrough = (req, res, next) => next();
+  return new Proxy(
+    {
+      uploadReviewPhotos: (req, res, next) => {
+        req.files = [
+          { path: 'https://res.cloudinary.com/demo/image/upload/v1/review-photo.jpg' },
+        ];
+        next();
+      },
+    },
+    { get: (target, key) => target[key] ?? passthrough },
+  );
+});
+
 jest.mock('../../src/core/services/restaurantVenueWriteService', () => ({
   createReview: jest.fn(),
   deleteOwnReview: jest.fn(),
@@ -91,6 +108,23 @@ describe('/api/restaurant-venues write routes', () => {
 
     expect(res.status).toBe(401);
     expect(write.createReview).not.toHaveBeenCalled();
+  });
+
+  it('returns Cloudinary URLs from the signed-in review photo endpoint', async () => {
+    prisma.restaurantVenue.findFirst.mockResolvedValue({ id: 'v1' });
+
+    const legacy = await request(app)
+      .post('/api/restaurant-venues/buka/review-photos')
+      .set('Authorization', user('user-token'));
+    const canonical = await request(app)
+      .post('/api/v1/restaurant-venues/buka/review-photos')
+      .set('Authorization', user('user-token'));
+
+    expect(legacy.status).toBe(201);
+    expect(canonical.status).toBe(201);
+    expect(legacy.body.data.photos).toEqual([
+      'https://res.cloudinary.com/demo/image/upload/v1/review-photo.jpg',
+    ]);
   });
 
   it('submits a review on both API prefixes with the author taken from the token', async () => {

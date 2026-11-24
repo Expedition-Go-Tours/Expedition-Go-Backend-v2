@@ -326,6 +326,76 @@ describe('restaurantVenueWriteService', () => {
     });
   });
 
+  describe('replaceOwnReview', () => {
+    const approved = {
+      id: 'r1',
+      venueId: 'v1',
+      authorId: 'u1',
+      status: 'APPROVED',
+      rating: 5,
+      source: 'TRAVIO_VERIFIED',
+      proofMethod: 'QR_RECEIPT',
+      proofRef: 'proof-1',
+      visitKey: '2026-11',
+      visitedAt: new Date('2026-11-02T00:00:00.000Z'),
+      photos: [],
+    };
+
+    it('archives the old row, releases its proof and sends the replacement to moderation', async () => {
+      prisma.restaurantVenueReview.findFirst.mockResolvedValue(approved);
+
+      const result = await write.replaceOwnReview({
+        slugOrId: 'buka-accra',
+        brand: 'ghana',
+        reviewId: 'r1',
+        author: AUTHOR,
+        input: reviewInput({ rating: 4 }),
+        req: REQ,
+      });
+
+      expect(ratings.removeApprovedRating).toHaveBeenCalledWith(prisma, 'v1', {
+        rating: 5,
+        verified: true,
+      });
+      expect(prisma.restaurantVenueReview.update).toHaveBeenCalledWith({
+        where: { id: 'r1' },
+        data: expect.objectContaining({
+          status: 'ARCHIVED',
+          visitKey: '2026-11:u:r1',
+          proofRef: 'proof-1:u:r1',
+          flagReason: 'author_updated',
+        }),
+      });
+
+      const data = prisma.restaurantVenueReview.create.mock.calls[0][0].data;
+      expect(data).toMatchObject({
+        source: 'TRAVIO_VERIFIED',
+        proofMethod: 'QR_RECEIPT',
+        proofRef: null,
+        status: 'PENDING',
+        visitKey: '2026-11',
+        rating: 4,
+      });
+      expect(result).toMatchObject({ status: 'PENDING', verified: true, rating: 4 });
+    });
+
+    it('does not let one author replace another author’s review', async () => {
+      prisma.restaurantVenueReview.findFirst.mockResolvedValue(null);
+
+      await expect(
+        write.replaceOwnReview({
+          slugOrId: 'buka-accra',
+          brand: 'ghana',
+          reviewId: 'r1',
+          author: AUTHOR,
+          input: reviewInput(),
+          req: REQ,
+        }),
+      ).rejects.toMatchObject({ errorCode: 'REVIEW_NOT_FOUND', statusCode: 404 });
+      expect(prisma.restaurantVenueReview.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('moderateReview', () => {
     const baseReview = {
       id: 'r1',

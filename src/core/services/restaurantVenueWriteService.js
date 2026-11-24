@@ -166,6 +166,10 @@ function toAuthorReview(review) {
     venueId: review.venueId,
     status: review.status,
     rating: review.rating,
+    foodRating: review.foodRating ?? null,
+    serviceRating: review.serviceRating ?? null,
+    atmosphereRating: review.atmosphereRating ?? null,
+    valueRating: review.valueRating ?? null,
     title: review.title,
     body: review.body,
     photos: review.photos || [],
@@ -173,6 +177,7 @@ function toAuthorReview(review) {
     source: review.source,
     proofMethod: review.proofMethod,
     verified: review.source === 'TRAVIO_VERIFIED',
+    helpfulCount: review.helpfulCount || 0,
     createdAt: review.createdAt,
   };
 }
@@ -351,6 +356,115 @@ async function deleteOwnReview({ slugOrId, brand, reviewId, author, req }) {
   });
 
   return { id: review.id, status: 'ARCHIVED' };
+}
+
+/** Load one of the signed-in author's own reviews for the correction form. */
+async function getOwnReview({ slugOrId, brand, reviewId, author }) {
+  const venue = await resolveVenue(slugOrId, brand);
+  if (!venue) throw new AppError('Venue not found', 404, { code: 'VENUE_NOT_FOUND' });
+
+  const review = await prisma.restaurantVenueReview.findFirst({
+    where: { id: reviewId, venueId: venue.id, authorId: author.id, status: { in: LIVE_STATUSES } },
+  });
+  if (!review) throw new AppError('Review not found', 404, { code: 'REVIEW_NOT_FOUND' });
+  return toAuthorReview(review);
+}
+
+/**
+ * Replace an author's review in one transaction.
+ *
+ * This is deliberately an archive + create, not a silent edit: the audit trail
+ * keeps the original, the unique visit slot is released, and the replacement
+ * goes back to moderation. The visit and its original provenance survive so a
+ * verified diner does not have to prove the same meal twice.
+ */
+async function replaceOwnReview({ slugOrId, brand, reviewId, author, input, req }) {
+  const venue = await resolveVenue(slugOrId, brand);
+  if (!venue) throw new AppError('Venue not found', 404, { code: 'VENUE_NOT_FOUND' });
+
+  const review = await prisma.restaurantVenueReview.findFirst({
+    where: { id: reviewId, venueId: venue.id, authorId: author.id, status: { in: LIVE_STATUSES } },
+  });
+  if (!review) throw new AppError('Review not found', 404, { code: 'REVIEW_NOT_FOUND' });
+
+  const rating = Number(input.rating);
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+    throw new AppError('Rating must be between 1 and 5', 400, { code: 'INVALID_RATING' });
+  }
+  const photos = cleanPhotos(input.photos);
+  const fingerprints = requestFingerprints(req);
+  const wasApproved = review.status === 'APPROVED';
+
+  const created = await prisma.$transaction(async (tx) => {
+    if (wasApproved) {
+      await removeApprovedRating(tx, venue.id, {
+        rating: review.rating,
+        verified: review.source === 'TRAVIO_VERIFIED',
+      });
+    }
+
+    await tx.restaurantVenueReview.update({
+      where: { id: review.id },
+      data: {
+        status: 'ARCHIVED',
+        visitKey: `${review.visitKey}:u:${review.id}`,
+        ...(review.proofRef ? { proofRef: `${review.proofRef}:u:${review.id}` } : {}),
+        flagReason: 'author_updated',
+      },
+    });
+
+    return tx.restaurantVenueReview.create({
+      data: {
+        venueId: venue.id,
+        authorId: author.id,
+        rating,
+        foodRating: input.foodRating ?? null,
+        serviceRating: input.serviceRating ?? null,
+        atmosphereRating: input.atmosphereRating ?? null,
+        valueRating: input.valueRating ?? null,
+        title: input.title ? String(input.title).trim() : null,
+        body: input.body ? String(input.body).trim() : null,
+        photos,
+        source: review.source,
+        proofMethod: review.proofMethod,
+        // The signed invite was consumed on the first submission. We keep its
+        // method and source, but never reuse the one-time credential itself.
+        proofRef: null,
+        visitedAt: review.visitedAt,
+        visitKey: review.visitKey,
+        status: 'PENDING',
+        ...fingerprints,
+      },
+      include: { author: { select: { name: true, photoURL: true } } },
+    });
+  });
+
+  invalidate(venue);
+  queueRankRefresh(venue);
+
+  await logActivity({
+    userId: author.id,
+    action: 'restaurantReview.replaced',
+    resource: 'RestaurantVenueReview',
+    resourceId: created.id,
+    metadata: { venueId: venue.id, previousReviewId: review.id, rating },
+  });
+  enqueueEvent({
+    name: 'restaurant_review.replaced',
+    userId: author.id,
+    req,
+    resource: 'RestaurantVenueReview',
+    resourceId: created.id,
+    properties: { venueId: venue.id, rating, previousReviewId: review.id },
+  });
+  notifyAdmin({
+    type: 'RESTAURANT_REVIEW_NEEDS_MODERATION',
+    title: 'Updated restaurant review needs moderation',
+    message: `A ${rating}-star review of ${venue.name} was updated and is waiting for approval.`,
+    data: { reviewId: created.id, venueId: venue.id },
+  }).catch((err) => logger.warn('[admin] review notification failed:', err?.message));
+
+  return toAuthorReview(created);
 }
 
 /** Admin approve / reject / flag. Aggregate moves only on an APPROVED crossing. */
@@ -692,6 +806,8 @@ module.exports = {
   SUBMISSION_WINDOW_DAYS,
   MAX_PHOTOS,
   createReview,
+  getOwnReview,
+  replaceOwnReview,
   deleteOwnReview,
   moderateReview,
   listPendingReviews,

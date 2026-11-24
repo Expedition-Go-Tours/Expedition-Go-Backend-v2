@@ -10,6 +10,7 @@
 
 const express = require('express');
 const validate = require('../middleware/validate');
+const { uploadReviewPhotos } = require('../middleware/uploadMiddleware');
 const { createUserLimiter } = require('../middleware/dynamicRateLimiter');
 const { protect } = require('../middleware/authMiddleware');
 const controller = require('../src/core/domain/restaurantVenueController');
@@ -18,8 +19,13 @@ const {
   venueSchema,
   reviewsQuerySchema,
   createReviewSchema,
+  updateReviewSchema,
+  authorReviewQuerySchema,
   deleteReviewSchema,
   submitReportSchema,
+  submitClaimSchema,
+  myClaimSchema,
+  updateOwnVenueSchema,
 } = require('../src/core/services/restaurantVenueSchemas');
 
 const router = express.Router();
@@ -33,6 +39,16 @@ const reviewWriteLimiter = createUserLimiter({
   message: {
     status: 'fail',
     message: 'Too many reviews submitted, please slow down.',
+  },
+});
+
+const claimLimiter = createUserLimiter({
+  name: 'restaurant-claims',
+  defaultMax: 10,
+  defaultWindowMs: 60 * 60 * 1000,
+  message: {
+    status: 'fail',
+    message: 'Too many restaurant claims submitted, please slow down.',
   },
 });
 
@@ -81,7 +97,28 @@ router.get('/:slugOrId/reviews', validate(reviewsQuerySchema), controller.listRe
  *       200: { description: Venue retrieved successfully }
  *       404: { description: Venue not found }
  */
+// Keep literal paths above `/:slugOrId`: otherwise "my-venues" is read as a slug.
+router.get('/my-venues', protect, controller.listMyVenues);
+
 router.get('/:slugOrId', validate(venueSchema), controller.getVenue);
+
+/**
+ * @swagger
+ * /restaurant-venues/{slugOrId}/review-photos:
+ *   post:
+ *     summary: Upload photos for a restaurant review
+ *     tags: [Restaurant Venues]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post(
+  '/:slugOrId/review-photos',
+  protect,
+  reviewWriteLimiter,
+  uploadReviewPhotos,
+  validate(venueSchema),
+  controller.uploadReviewPhotos,
+);
 
 /**
  * @swagger
@@ -103,6 +140,40 @@ router.post(
   reviewWriteLimiter,
   validate(createReviewSchema),
   controller.createReview,
+);
+
+/**
+ * @swagger
+ * /restaurant-venues/{slugOrId}/reviews/{reviewId}:
+ *   get:
+ *     summary: Load your own review for correction
+ *     tags: [Restaurant Venues]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.get(
+  '/:slugOrId/reviews/:reviewId',
+  protect,
+  validate(authorReviewQuerySchema),
+  controller.getOwnReview,
+);
+
+/**
+ * @swagger
+ * /restaurant-venues/{slugOrId}/reviews/{reviewId}:
+ *   patch:
+ *     summary: Replace your own review
+ *     tags: [Restaurant Venues]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Archives the old review and sends the replacement to moderation.
+ */
+router.patch(
+  '/:slugOrId/reviews/:reviewId',
+  protect,
+  reviewWriteLimiter,
+  validate(updateReviewSchema),
+  controller.replaceOwnReview,
 );
 
 /**
@@ -139,6 +210,54 @@ router.post(
   reviewWriteLimiter,
   validate(submitReportSchema),
   controller.submitReport,
+);
+
+/**
+ * @swagger
+ * /restaurant-venues/{slugOrId}/claim:
+ *   get:
+ *     summary: Current user's claim and membership for one venue
+ *     tags: [Restaurant Venues]
+ *     security:
+ *       - bearerAuth: []
+ *   post:
+ *     summary: Ask to manage a restaurant listing
+ *     tags: [Restaurant Venues]
+ *     security:
+ *       - bearerAuth: []
+ *     description: A claim is reviewed by an admin. It never grants access on submit.
+ */
+router.get(
+  '/:slugOrId/claim',
+  protect,
+  validate(myClaimSchema),
+  controller.getMyClaim,
+);
+
+router.post(
+  '/:slugOrId/claims',
+  protect,
+  claimLimiter,
+  validate(submitClaimSchema),
+  controller.submitClaim,
+);
+
+/**
+ * @swagger
+ * /restaurant-venues/{slugOrId}:
+ *   patch:
+ *     summary: Update presentation details on a venue you manage
+ *     tags: [Restaurant Venues]
+ *     security:
+ *       - bearerAuth: []
+ *     description: Owners cannot change ratings, ranking inputs or external stats.
+ */
+router.patch(
+  '/:slugOrId',
+  protect,
+  reviewWriteLimiter,
+  validate(updateOwnVenueSchema),
+  controller.updateOwnVenue,
 );
 
 module.exports = router;

@@ -547,6 +547,8 @@ model User {
   stayVerificationProfile      StayVerificationProfile?
   stayVerificationDocuments    StayVerificationDocument[]
   restaurantVenueReviews       RestaurantVenueReview[]
+  restaurantVenueClaims        RestaurantVenueClaim[]
+  restaurantVenueMemberships    RestaurantVenueMember[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3772,6 +3774,19 @@ enum RestaurantReviewReportStatus {
   DISMISSED
 }
 
+/// A request to manage a restaurant listing. Claims are reviewed by an admin;
+/// the claimant never gains access simply by submitting the form.
+enum RestaurantVenueClaimStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum RestaurantVenueMemberRole {
+  OWNER
+  MANAGER
+}
+
 model RestaurantVenue {
   id     String                @id @default(cuid())
   slug   String                @unique
@@ -3850,6 +3865,8 @@ model RestaurantVenue {
   reviews       RestaurantVenueReview[]
   listings      RestaurantVenueListing[]
   externalStats RestaurantVenueExternalStat[]
+  claims        RestaurantVenueClaim[]
+  members       RestaurantVenueMember[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4006,4 +4023,59 @@ model RestaurantVenueReviewReport {
   @@index([reviewId, status])
   @@index([status, createdAt])
   @@map("restaurant_venue_review_reports")
+}
+
+/// A signed-in person asks to manage a real venue. Evidence is stored so an
+/// admin can decide; approval, not submission, creates the membership below.
+model RestaurantVenueClaim {
+  id      String          @id @default(cuid())
+  venueId String
+  venue   RestaurantVenue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  userId  String
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  brand String
+
+  /// What the claimant says they can prove. Kept as text so the admin can read
+  /// it without following an external link.
+  businessName String?
+  role         String?
+  contactEmail String
+  phone        String?
+  message      String?
+  evidenceUrl  String?
+
+  status    RestaurantVenueClaimStatus @default(PENDING)
+  reviewedBy String?
+  reviewedAt DateTime?
+  reviewNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([venueId, userId, status])
+  @@index([venueId, status, createdAt])
+  @@index([status, createdAt])
+  @@map("restaurant_venue_claims")
+}
+
+/// Lightweight owner surface. Deliberately separate from Supplier/Tour ownership:
+/// a restaurant owner is not a tour supplier.
+model RestaurantVenueMember {
+  id      String          @id @default(cuid())
+  venueId String
+  venue   RestaurantVenue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  userId  String
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  role   RestaurantVenueMemberRole @default(OWNER)
+  status String                   @default("ACTIVE")
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([venueId, userId])
+  @@index([userId, status])
+  @@map("restaurant_venue_members")
 }

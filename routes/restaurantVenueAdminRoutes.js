@@ -22,6 +22,8 @@ const {
   pendingReviewsQuerySchema,
   resolveReportSchema,
   createInviteSchema,
+  pendingClaimsQuerySchema,
+  resolveClaimSchema,
 } = require('../src/core/services/restaurantVenueSchemas');
 
 const router = express.Router();
@@ -67,6 +69,20 @@ router.post(
   requirePermission('reviews.moderate'),
   validate(createInviteSchema),
   controller.createInvite,
+);
+
+router.get(
+  '/claims/pending',
+  requirePermission('reviews.view'),
+  validate(pendingClaimsQuerySchema),
+  controller.listPendingClaims,
+);
+
+router.patch(
+  '/claims/:claimId',
+  requirePermission('reviews.moderate'),
+  validate(resolveClaimSchema),
+  controller.resolveClaim,
 );
 
 module.exports = router;
