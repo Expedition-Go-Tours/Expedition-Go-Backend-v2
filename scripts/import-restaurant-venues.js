@@ -60,6 +60,7 @@ const {
   recomputeVenueStats,
   recomputeRecentStats,
   recomputeCityRanks,
+  recomputeCityDemand,
 } = require('../src/core/services/restaurantVenueStats');
 
 const BRANDS = ['ghana', 'africa', 'expedition'];
@@ -265,10 +266,11 @@ async function main() {
     await recomputeRecentStats(ids);
     await recomputeVenueStats(ids);
     for (const city of cities) {
+      await recomputeCityDemand(city);
       await recomputeCityRanks(city);
     }
     console.log(
-      `\nRecomputed ${ids.length} venue aggregate(s); ranked ${cities.length} city/cities.`,
+      `\nRecomputed ${ids.length} venue aggregate(s); demand and ranks for ${cities.length} city/cities.`,
     );
   }
 

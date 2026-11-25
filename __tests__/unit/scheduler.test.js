@@ -52,7 +52,7 @@ describe('SCHEDULES', () => {
     const ids = names.map((n) => `sched:${n}`);
     expect(queue.SCHEDULES.length).toBeGreaterThanOrEqual(19);
     expect(new Set(ids).size).toBe(ids.length);
-    for (const n of ['auto-complete-bookings', 'charge-pay-later-bookings', 'cleanup-stale-bookings', 'reconcile-ghana', 'reconcile-travioafrica', 'aggregate-daily-views']) {
+    for (const n of ['auto-complete-bookings', 'charge-pay-later-bookings', 'cleanup-stale-bookings', 'reconcile-ghana', 'reconcile-travioafrica', 'aggregate-daily-views', 'recompute-restaurant-rankings']) {
       expect(names).toContain(n);
     }
   });

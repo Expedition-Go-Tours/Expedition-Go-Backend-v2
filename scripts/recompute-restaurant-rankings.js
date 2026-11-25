@@ -14,12 +14,13 @@
  *   - Tripadvisor recalculates its ranking daily, which is the right cadence
  *     for something travellers read as a league table.
  *
- * Order matters: recency first, then the combined/ranking score, then the
- * ordinal — the rank sorts on the score the previous step just wrote.
+ * Order matters: recency first, then the combined/ranking score (which also
+ * stores the raw demand score), then the per-city demand flag and the ordinal —
+ * both city-wide passes read the scores the previous step just wrote.
  *
- * Every write goes through recomputeVenueStats()/recomputeCityRanks(), the
- * only writers of those columns. This script adds no aggregation logic of its
- * own, so a manual run and a scheduled run cannot disagree.
+ * Every write goes through the stats service, the only writer of those
+ * columns. This script adds no aggregation logic of its own, so a manual run
+ * and a scheduled run cannot disagree.
  */
 
 const prisma = require('../src/core/services/prismaClient');
@@ -27,7 +28,8 @@ const {
   recomputeRecentStats,
   recomputeVenueStats,
   recomputeCityRanks,
-  recomputeAllCityRanks,
+  recomputeCityDemand,
+  recomputeAllRestaurantRankings,
 } = require('../src/core/services/restaurantVenueStats');
 
 function parseArgs(argv) {
@@ -67,14 +69,21 @@ async function main() {
     return;
   }
 
+  if (!args.city) {
+    const result = await recomputeAllRestaurantRankings();
+    console.log(
+      `Recomputed ${result.recency} recency window(s), ${result.aggregates} aggregate(s), demand for ${result.demandCities} city/cities, ranked ${result.rankCities} city/cities.`,
+    );
+    return;
+  }
+
   const recent = await recomputeRecentStats(ids);
   const aggregates = await recomputeVenueStats(ids);
-  const cities = args.city
-    ? await recomputeCityRanks(args.city).then(() => 1)
-    : await recomputeAllCityRanks();
+  const demandCities = await recomputeCityDemand(args.city).then(() => 1);
+  const cities = await recomputeCityRanks(args.city).then(() => 1);
 
   console.log(
-    `Recomputed ${recent} recency window(s), ${aggregates} aggregate(s), ranked ${cities} city/cities.`,
+    `Recomputed ${recent} recency window(s), ${aggregates} aggregate(s), demand for ${demandCities} city/cities, ranked ${cities} city/cities.`,
   );
 }
 

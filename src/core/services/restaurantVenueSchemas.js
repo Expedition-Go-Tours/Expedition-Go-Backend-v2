@@ -47,6 +47,8 @@ const listQuerySchema = z.object({
         ),
       priceBand: z.coerce.number().int().min(1).max(4).optional(),
       featured: booleanString.optional(),
+      highDemand: booleanString.optional(),
+      hasOffer: booleanString.optional(),
       minRating: z.coerce.number().min(0).max(5).optional(),
       minReviews: z.coerce.number().int().min(0).max(1000000).optional(),
       // Map-server place search: a selected place supplies a point and a
@@ -55,7 +57,7 @@ const listQuerySchema = z.object({
       lng: z.coerce.number().min(-180).max(180).optional(),
       radiusKm: z.coerce.number().min(0.1).max(50).optional(),
       place: z.string().trim().min(1).max(160).optional(),
-      sort: z.enum(['rating', 'reviews', 'newest']).default('rating'),
+      sort: z.enum(['rating', 'reviews', 'newest', 'demand']).default('rating'),
       limit: z.coerce.number().int().min(1).max(50).default(20),
       cursor: z.string().max(500).optional(),
     })
@@ -97,6 +99,106 @@ const reviewsQuerySchema = z.object({
     })
     .passthrough(),
   params: venueParams,
+});
+
+/** Cross-venue review feed ("What Diners Are Saying"). No venue params. */
+const reviewFeedQuerySchema = z.object({
+  body: emptyBody,
+  query: z
+    .object({
+      brand,
+      limit: z.coerce.number().int().min(1).max(50).default(10),
+      cursor: z.string().max(500).optional(),
+    })
+    .passthrough(),
+  params: z.object({}).optional(),
+});
+
+/* ── admin offer contracts ───────────────────────────────────────────────── */
+
+const offerDate = z
+  .string()
+  .trim()
+  .max(40)
+  .refine((value) => !Number.isNaN(Date.parse(value)), {
+    message: 'Must be an ISO date-time',
+  });
+
+/**
+ * Body is strict: an admin cannot set venueId or id through the body. Brand
+ * travels in the query and is stamped by the service; a client may echo it,
+ * but it is optional and must match the route. Never default it here — a
+ * `ghana` default used to reject every non-Ghana create that omitted it. The
+ * date order is checked here and again in the service for direct callers.
+ */
+// Defaults live on the create schema only. Applying them to the partial
+// update schema would silently re-enable an offer on every unrelated PATCH.
+const offerBodyFields = z
+  .object({
+    brand: z.enum(['ghana', 'africa', 'expedition']).optional(),
+    title: z.string().trim().min(2).max(120),
+    discountType: z.enum(['PERCENTAGE', 'FIXED']),
+    discountValue: z.coerce.number().positive().max(1000000),
+    promoCode: z.string().trim().min(2).max(40).nullable().optional(),
+    startsAt: offerDate.nullable().optional(),
+    endsAt: offerDate.nullable().optional(),
+    isActive: z.boolean(),
+    terms: z.string().trim().max(1000).nullable().optional(),
+  })
+  .strict();
+
+function checkOfferWindow(data, ctx) {
+  if (!data.startsAt || !data.endsAt) return;
+  const start = new Date(data.startsAt);
+  const end = new Date(data.endsAt);
+  if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime()) && end <= start) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['endsAt'],
+      message: 'endsAt must be after startsAt',
+    });
+  }
+}
+
+const createOfferBodySchema = offerBodyFields
+  .extend({ isActive: z.boolean().default(true) })
+  .superRefine(checkOfferWindow);
+
+const updateOfferBodySchema = offerBodyFields.partial().superRefine((data, ctx) => {
+  if (Object.keys(data).length === 0) {
+    ctx.addIssue({ code: 'custom', message: 'At least one field is required' });
+  }
+  checkOfferWindow(data, ctx);
+});
+
+const offerVenueParams = z.object({ venueId: z.string().trim().min(1).max(120) });
+const offerParams = offerVenueParams.extend({
+  offerId: z.string().trim().min(1).max(120),
+});
+const offerQuery = z.object({ brand }).passthrough();
+
+const listVenueOffersSchema = z.object({
+  body: emptyBody,
+  query: offerQuery,
+  params: offerVenueParams,
+});
+
+const createVenueOfferSchema = z.object({
+  body: createOfferBodySchema,
+  query: offerQuery,
+  params: offerVenueParams,
+});
+
+const updateVenueOfferSchema = z.object({
+  body: updateOfferBodySchema,
+  query: offerQuery,
+  params: offerParams,
+});
+
+const deleteVenueOfferSchema = z.object({
+  body: emptyBody,
+  query: offerQuery,
+  params: offerParams,
 });
 
 /* ── write contracts ─────────────────────────────────────────────────────── */
@@ -305,6 +407,11 @@ module.exports = {
   suggestQuerySchema,
   venueSchema,
   reviewsQuerySchema,
+  reviewFeedQuerySchema,
+  listVenueOffersSchema,
+  createVenueOfferSchema,
+  updateVenueOfferSchema,
+  deleteVenueOfferSchema,
   createReviewSchema,
   updateReviewSchema,
   authorReviewQuerySchema,

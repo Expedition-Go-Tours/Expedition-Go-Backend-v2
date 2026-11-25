@@ -11,10 +11,15 @@ const {
   blendedOwnRating,
   combineVenueStats,
   bayesianRating,
+  computeDemandScore,
+  selectHighDemandVenueIds,
   recomputeVenueStats,
   recomputeRecentStats,
   recomputeCityRanks,
   recomputeAllCityRanks,
+  recomputeCityDemand,
+  recomputeAllCityDemand,
+  recomputeAllRestaurantRankings,
 } = require('../../src/core/services/restaurantVenueStats');
 
 describe('restaurantVenueStats', () => {
@@ -155,8 +160,65 @@ describe('restaurantVenueStats', () => {
     });
   });
 
+  describe('computeDemandScore', () => {
+    it('weights recent reviews most and stays internal', () => {
+      // 1.5*sqrt(10) + 0.5*sqrt(5) + 0.25*sqrt(100) + 4.5833
+      expect(
+        computeDemandScore({
+          recentReviewCount: 10,
+          verifiedReviewCount: 5,
+          combinedReviewCount: 100,
+          rankingScore: 4.5833,
+        }),
+      ).toBe(12.9448);
+    });
+
+    it('damps review volume with a square root', () => {
+      // 100x the reviews produce 10x the recent-review term, not 100x.
+      expect(computeDemandScore({ recentReviewCount: 4 })).toBe(3);
+      expect(computeDemandScore({ recentReviewCount: 400 })).toBe(30);
+    });
+
+    it('is zero for a venue with no signal', () => {
+      expect(computeDemandScore({})).toBe(0);
+      expect(computeDemandScore({ rankingScore: null, recentReviewCount: null })).toBe(0);
+    });
+  });
+
+  describe('selectHighDemandVenueIds', () => {
+    const rows = [
+      { id: 'hot', demandScore: 12, recentReviewCount: 9 },
+      { id: 'warm', demandScore: 8, recentReviewCount: 6 },
+      { id: 'quiet', demandScore: 6, recentReviewCount: 4 },
+      { id: 'outlier', demandScore: 20, recentReviewCount: 1 },
+    ];
+
+    it('flags only the top quartile of the city', () => {
+      expect(selectHighDemandVenueIds(rows)).toEqual(new Set(['hot']));
+    });
+
+    it('never flags a single recent-review outlier', () => {
+      expect(
+        selectHighDemandVenueIds([
+          { id: 'outlier', demandScore: 20, recentReviewCount: 1 },
+          { id: 'quiet', demandScore: 1, recentReviewCount: 0 },
+        ]),
+      ).toEqual(new Set());
+    });
+
+    it('breaks score ties deterministically', () => {
+      const tied = [
+        { id: 'b', demandScore: 9, recentReviewCount: 5 },
+        { id: 'a', demandScore: 9, recentReviewCount: 5 },
+        { id: 'c', demandScore: 2, recentReviewCount: 3 },
+        { id: 'd', demandScore: 1, recentReviewCount: 3 },
+      ];
+      expect(selectHighDemandVenueIds(tied)).toEqual(new Set(['a']));
+    });
+  });
+
   describe('recomputeVenueStats', () => {
-    it('writes the external headline and the internal ranking score', async () => {
+    it('writes the external headline, ranking score and raw demand score', async () => {
       prisma.restaurantVenue.findMany.mockResolvedValue([
         {
           id: 'v1',
@@ -164,6 +226,7 @@ describe('restaurantVenueStats', () => {
           reviewCount: 10,
           recentRating: 4.0,
           recentReviewCount: 10,
+          verifiedReviewCount: 5,
         },
       ]);
       prisma.restaurantVenueExternalStat.findMany.mockResolvedValue([
@@ -181,6 +244,7 @@ describe('restaurantVenueStats', () => {
           reviewCount: true,
           recentRating: true,
           recentReviewCount: true,
+          verifiedReviewCount: true,
         },
       });
       expect(prisma.restaurantVenue.update).toHaveBeenCalledWith({
@@ -194,6 +258,8 @@ describe('restaurantVenueStats', () => {
           externalReviewCount: 90,
           // (20 * 3.9 + 4.72 * 100) / 120 = 4.5833…
           rankingScore: 4.5833,
+          // Derived from the stored review counts and the score above.
+          demandScore: 12.9448,
         },
       });
     });
@@ -221,6 +287,7 @@ describe('restaurantVenueStats', () => {
           externalRating: null,
           externalReviewCount: 0,
           rankingScore: null,
+          demandScore: 0,
         },
       });
     });
@@ -313,6 +380,77 @@ describe('restaurantVenueStats', () => {
 
       expect(cities).toBe(1);
       expect(prisma.restaurantVenue.findMany).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('recomputeCityDemand', () => {
+    it('persists the boolean flag, clearing stale flags at the same time', async () => {
+      prisma.restaurantVenue.findMany.mockResolvedValue([
+        { id: 'v1', demandScore: 12, recentReviewCount: 9 },
+        { id: 'v2', demandScore: 8, recentReviewCount: 6 },
+        { id: 'v3', demandScore: 6, recentReviewCount: 4 },
+        { id: 'v4', demandScore: 20, recentReviewCount: 1 },
+      ]);
+
+      const written = await recomputeCityDemand('Accra');
+
+      expect(written).toBe(4);
+      expect(prisma.restaurantVenue.findMany).toHaveBeenCalledWith({
+        where: { status: 'ACTIVE', city: { equals: 'Accra', mode: 'insensitive' } },
+        select: { id: true, demandScore: true, recentReviewCount: true },
+      });
+      expect(prisma.restaurantVenue.update).toHaveBeenNthCalledWith(1, {
+        where: { id: 'v1' },
+        data: { highDemand: true },
+      });
+      expect(prisma.restaurantVenue.update).toHaveBeenNthCalledWith(4, {
+        where: { id: 'v4' },
+        data: { highDemand: false },
+      });
+    });
+
+    it('does nothing without a city', async () => {
+      expect(await recomputeCityDemand(null)).toBe(0);
+      expect(prisma.restaurantVenue.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('recomputeAllCityDemand', () => {
+    it('runs the demand pass for every city with active venues', async () => {
+      prisma.restaurantVenue.groupBy.mockResolvedValue([
+        { city: 'Accra', _count: { _all: 4 } },
+        { city: 'Kumasi', _count: { _all: 2 } },
+        { city: null, _count: { _all: 1 } },
+      ]);
+      prisma.restaurantVenue.findMany.mockResolvedValue([]);
+
+      expect(await recomputeAllCityDemand()).toBe(2);
+      expect(prisma.restaurantVenue.findMany).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('recomputeAllRestaurantRankings', () => {
+    it('runs scores, demand flags and ranks in one batch pass', async () => {
+      prisma.restaurantVenue.findMany.mockResolvedValue([{ id: 'v1' }]);
+      prisma.restaurantVenue.groupBy.mockResolvedValue([{ city: 'Accra', _count: { _all: 1 } }]);
+
+      const result = await recomputeAllRestaurantRankings();
+
+      expect(result).toEqual({
+        venues: 1,
+        recency: 1,
+        aggregates: 1,
+        demandCities: 1,
+        rankCities: 1,
+      });
+      expect(prisma.restaurantVenue.update).toHaveBeenCalledWith({
+        where: { id: 'v1' },
+        data: { recentRating: null, recentReviewCount: 0 },
+      });
+      expect(prisma.restaurantVenue.update).toHaveBeenCalledWith({
+        where: { id: 'v1' },
+        data: { highDemand: false },
+      });
     });
   });
 });

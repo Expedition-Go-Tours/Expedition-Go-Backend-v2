@@ -6,9 +6,11 @@
  *
  *   1. A venue is only visible through an ACTIVE per-brand listing, exactly the
  *      way a Tour is only visible through TravioGhanaTour/ExpeditionTour.
- *   2. Ordering happens on stored columns (rankingScore, combinedReviewCount,
- *      createdAt). Never on a computed aggregate — a value computed at request
- *      time cannot order a paginated list consistently.
+ *   2. Ordering happens on stored columns (rankingScore, demandScore,
+ *      combinedReviewCount, createdAt). Never on a computed aggregate — a
+ *      value computed at request time cannot order a paginated list.
+ *   3. Offers and high demand are stored facts. A request may filter on them,
+ *      but never derives them from review rows.
  *
  * Pagination is keyset, not offset: the cursor carries the sort value and the
  * row id, so page 500 costs the same as page 1.
@@ -26,7 +28,9 @@ const DETAIL_TTL_SECONDS = 300;
 const REVIEWS_TTL_SECONDS = 120;
 
 const BRANDS = ['ghana', 'africa', 'expedition'];
-const SORTS = ['rating', 'reviews', 'newest'];
+const SORTS = ['rating', 'reviews', 'newest', 'demand'];
+
+const REVIEW_FEED_TTL_SECONDS = 120;
 
 /* ── cursor helpers ─────────────────────────────────────────────────────── */
 
@@ -81,6 +85,100 @@ function listingFilter(brand, featured) {
   };
 }
 
+/**
+ * An offer is only public when it belongs to the requested brand, its switch
+ * is on and "now" is inside its window. Null bounds are open-ended.
+ * `offerWindowFilter` is the Prisma predicate used by the `hasOffer` facet;
+ * `isPublicOffer` is the DTO guard. The relation is loaded without a time
+ * filter so a cached row can be re-checked against the clock on every read.
+ */
+function offerWindowFilter(brand, now = new Date()) {
+  return {
+    brand,
+    isActive: true,
+    AND: [
+      { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
+      { OR: [{ endsAt: null }, { endsAt: { gte: now } }] },
+    ],
+  };
+}
+
+function isPublicOffer(offer, brand, now) {
+  if (!offer || offer.isActive === false || offer.brand !== brand) return false;
+  if (offer.startsAt && new Date(offer.startsAt) > now) return false;
+  if (offer.endsAt && new Date(offer.endsAt) < now) return false;
+  return true;
+}
+
+/**
+ * Load every switch-on offer for the brand, including ones whose window has
+ * not opened yet. The DTO applies the clock; the cached payload records the
+ * next boundary so a cache hit never outlives an offer start or expiry.
+ */
+function offerInclude(brand) {
+  return {
+    where: { brand, isActive: true },
+    select: {
+      id: true,
+      brand: true,
+      title: true,
+      discountType: true,
+      discountValue: true,
+      promoCode: true,
+      startsAt: true,
+      endsAt: true,
+      isActive: true,
+    },
+  };
+}
+
+function collectOffers(value, out = []) {
+  if (Array.isArray(value)) {
+    for (const item of value) collectOffers(item, out);
+    return out;
+  }
+  if (value && typeof value === 'object') {
+    if ('startsAt' in value && 'endsAt' in value) out.push(value);
+    for (const nested of [
+      value.offers,
+      value.venue,
+      value.venues,
+      value.restaurants,
+      value.rows,
+    ]) {
+      collectOffers(nested, out);
+    }
+  }
+  return out;
+}
+
+/** Earliest future start/end that can change a public offers[] payload. */
+function offerValidUntil(payload, brand, now = new Date()) {
+  const nowMs = now.getTime();
+  let deadline = null;
+  for (const offer of collectOffers(payload)) {
+    if (offer.isActive === false || (offer.brand && offer.brand !== brand)) continue;
+    for (const raw of [offer.startsAt, offer.endsAt]) {
+      if (!raw) continue;
+      const at = new Date(raw).getTime();
+      if (Number.isNaN(at) || at <= nowMs) continue;
+      if (deadline === null || at < deadline) deadline = at;
+    }
+  }
+  return deadline;
+}
+
+/** Cache freshness guard passed to cacheHelper.getOrSet. */
+function isOfferPayloadFresh(payload) {
+  return !payload || !payload.offerValidUntil || payload.offerValidUntil > Date.now();
+}
+
+function isoOrNull(value) {
+  if (!value) return null;
+  const at = new Date(value);
+  return Number.isNaN(at.getTime()) ? null : at.toISOString();
+}
+
 function cursorFilter(sort, cursor) {
   if (!cursor) return null;
 
@@ -107,6 +205,20 @@ function cursorFilter(sort, cursor) {
     };
   }
 
+  if (sort === 'demand') {
+    // Same shape as `rating`: an unrated venue has no demand score and sorts
+    // last, with a null cursor continuing inside that tail by id.
+    if (cursor.v === null) {
+      return { AND: [{ demandScore: null }, { id: { lt: cursor.id } }] };
+    }
+    return {
+      OR: [
+        { demandScore: { lt: cursor.v } },
+        { AND: [{ demandScore: cursor.v }, { id: { lt: cursor.id } }] },
+      ],
+    };
+  }
+
   const at = new Date(cursor.v);
   if (Number.isNaN(at.getTime())) {
     throw new AppError('Invalid cursor', 400, { code: 'INVALID_CURSOR' });
@@ -126,12 +238,15 @@ function orderFor(sort) {
   if (sort === 'newest') {
     return [{ createdAt: 'desc' }, { id: 'desc' }];
   }
+  if (sort === 'demand') {
+    return [{ demandScore: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }];
+  }
   return [{ rankingScore: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }];
 }
 
 /* ── DTOs ───────────────────────────────────────────────────────────────── */
 
-function toPublicVenue(venue, { detail = false } = {}) {
+function toPublicVenue(venue, { detail = false, brand = 'ghana', now = new Date() } = {}) {
   const dto = {
     id: venue.id,
     slug: venue.slug,
@@ -160,6 +275,8 @@ function toPublicVenue(venue, { detail = false } = {}) {
     reviewCount: venue.reviewCount || 0,
     recentRating: venue.recentRating == null ? null : roundOne(venue.recentRating),
     recentReviewCount: venue.recentReviewCount || 0,
+    // Stored batch flag only. The score itself is an internal ranking input.
+    highDemand: Boolean(venue.highDemand),
     external: venue.externalSource
       ? {
           source: venue.externalSource,
@@ -176,6 +293,16 @@ function toPublicVenue(venue, { detail = false } = {}) {
     featured: Boolean(venue.listings && venue.listings[0] && venue.listings[0].isFeatured),
     displayOrder:
       venue.listings && venue.listings[0] ? venue.listings[0].displayOrder : 0,
+    offers: (venue.offers || [])
+      .filter((offer) => isPublicOffer(offer, brand, now))
+      .map((offer) => ({
+        id: offer.id,
+        title: offer.title,
+        discountType: offer.discountType,
+        discountValue: offer.discountValue == null ? 0 : Number(offer.discountValue),
+        promoCode: offer.promoCode || null,
+        endsAt: isoOrNull(offer.endsAt),
+      })),
   };
 
   if (detail) {
@@ -225,6 +352,30 @@ function toPublicReview(review) {
   };
 }
 
+/**
+ * Cross-venue feed DTO. Field by field, like toPublicReview: the review row
+ * also carries proofRef/ipHash/userAgentHash, and none of them may leave. Only
+ * the venue identity a storefront card needs is added.
+ */
+function toFeedReview(review) {
+  return {
+    id: review.id,
+    venueId: review.venueId,
+    venueName: review.venue ? review.venue.name : null,
+    venueSlug: review.venue ? review.venue.slug : null,
+    venueCity: review.venue ? review.venue.city : null,
+    rating: review.rating,
+    title: review.title,
+    body: review.body,
+    createdAt: review.createdAt,
+    author: {
+      name: review.author ? review.author.name : null,
+      photoURL: review.author ? review.author.photoURL : null,
+    },
+    verified: review.source === 'TRAVIO_VERIFIED',
+  };
+}
+
 /* ── queries ────────────────────────────────────────────────────────────── */
 
 function listCacheKey(params) {
@@ -236,6 +387,8 @@ function listCacheKey(params) {
     dietary: params.dietary || null,
     priceBand: params.priceBand || null,
     featured: Boolean(params.featured),
+    highDemand: Boolean(params.highDemand),
+    hasOffer: Boolean(params.hasOffer),
     minRating: params.minRating ?? null,
     minReviews: params.minReviews ?? null,
     lat: params.lat ?? null,
@@ -267,12 +420,33 @@ function nearFilter(lat, lng, radiusKm) {
   };
 }
 
-function baseWhere({ brand, q, city, cuisine, dietary, priceBand, featured, minRating, minReviews, lat, lng, radiusKm }) {
+function baseWhere({
+  brand,
+  q,
+  city,
+  cuisine,
+  dietary,
+  priceBand,
+  featured,
+  highDemand,
+  hasOffer,
+  minRating,
+  minReviews,
+  lat,
+  lng,
+  radiusKm,
+  now = new Date(),
+}) {
   const where = {
     status: 'ACTIVE',
     listings: { some: listingFilter(brand, featured) },
   };
   const and = [];
+
+  // Both filters are ANDed with the active-listing brand scope above: an
+  // inactive listing or a different brand's offer can never satisfy them.
+  if (highDemand === true) where.highDemand = true;
+  if (hasOffer === true) where.offers = { some: offerWindowFilter(brand, now) };
 
   if (q) {
     and.push({
@@ -311,11 +485,14 @@ async function listVenues(params) {
 
   const key = listCacheKey({ ...params, brand, sort, limit });
 
-  return cache.getOrSet(
+  // Cache raw rows, not DTOs: offers[] is rebuilt with the current clock on
+  // every return, so an expired discount can never be served from a hit.
+  const cached = await cache.getOrSet(
     key,
     async () => {
       const decoded = cursor ? decodeListCursor(cursor, sort) : null;
-      const where = baseWhere({ ...params, brand });
+      const now = new Date();
+      const where = baseWhere({ ...params, brand, now });
       const cursorWhere = cursorFilter(sort, decoded);
       if (cursorWhere) {
         where.AND = [...(where.AND || []), cursorWhere];
@@ -331,6 +508,7 @@ async function listVenues(params) {
             where: { brand },
             select: { isFeatured: true, displayOrder: true },
           },
+          offers: offerInclude(brand),
         },
       });
 
@@ -345,17 +523,26 @@ async function listVenues(params) {
             ? last.rankingScore
             : sort === 'reviews'
               ? last.combinedReviewCount
-              : last.createdAt.toISOString();
+              : sort === 'demand'
+                ? last.demandScore
+                : last.createdAt.toISOString();
         nextCursor = encodeCursor({ s: sort, v, id: last.id });
       }
 
       return {
-        venues: page.map((venue) => toPublicVenue(venue)),
+        rows: page,
         pagination: { limit, hasMore, nextCursor },
+        offerValidUntil: offerValidUntil(page, brand, now),
       };
     },
     LIST_TTL_SECONDS,
+    { isValid: isOfferPayloadFresh },
   );
+
+  return {
+    venues: cached.rows.map((venue) => toPublicVenue(venue, { brand, now: new Date() })),
+    pagination: cached.pagination,
+  };
 }
 
 function mapPlaceLabel(row, needle) {
@@ -396,11 +583,12 @@ async function suggestVenues({ brand = 'ghana', q, limit = 6 }) {
     .update(`${needle.toLowerCase()}:${max}`)
     .digest('hex')}`;
 
-  return cache.getOrSet(
+  const cached = await cache.getOrSet(
     key,
     async () => {
+      const now = new Date();
       const restaurantRows = await prisma.restaurantVenue.findMany({
-        where: baseWhere({ brand, q: needle }),
+        where: baseWhere({ brand, q: needle, now }),
         orderBy: orderFor('rating'),
         take: max,
         include: {
@@ -408,6 +596,7 @@ async function suggestVenues({ brand = 'ghana', q, limit = 6 }) {
             where: { brand },
             select: { isFeatured: true, displayOrder: true },
           },
+          offers: offerInclude(brand),
         },
       });
 
@@ -481,12 +670,21 @@ async function suggestVenues({ brand = 'ghana', q, limit = 6 }) {
       }
 
       return {
-        restaurants: restaurantRows.map((venue) => toPublicVenue(venue)),
+        restaurants: restaurantRows,
         places: deduped.slice(0, max),
+        offerValidUntil: offerValidUntil(restaurantRows, brand, now),
       };
     },
     60,
+    { isValid: isOfferPayloadFresh },
   );
+
+  return {
+    restaurants: cached.restaurants.map((venue) =>
+      toPublicVenue(venue, { brand, now: new Date() }),
+    ),
+    places: cached.places,
+  };
 }
 
 async function getVenue(slugOrId, brand) {
@@ -500,9 +698,10 @@ async function getVenue(slugOrId, brand) {
 
   const key = `rv:detail:${brand}:${needle}`;
 
-  return cache.getOrSet(
+  const cached = await cache.getOrSet(
     key,
     async () => {
+      const now = new Date();
       const venue = await prisma.restaurantVenue.findFirst({
         where: {
           status: 'ACTIVE',
@@ -514,6 +713,7 @@ async function getVenue(slugOrId, brand) {
             where: { brand },
             select: { isFeatured: true, displayOrder: true },
           },
+          offers: offerInclude(brand),
           externalStats: {
             orderBy: { source: 'asc' },
             select: {
@@ -529,10 +729,17 @@ async function getVenue(slugOrId, brand) {
       });
 
       if (!venue) return null;
-      return toPublicVenue(venue, { detail: true });
+      return {
+        venue,
+        offerValidUntil: offerValidUntil(venue, brand, now),
+      };
     },
     DETAIL_TTL_SECONDS,
+    { isValid: isOfferPayloadFresh },
   );
+
+  if (!cached || !cached.venue) return null;
+  return toPublicVenue(cached.venue, { detail: true, brand, now: new Date() });
 }
 
 /**
@@ -630,6 +837,80 @@ async function listReviews(venueId, { limit = 10, cursor, rating, verified } = {
   );
 }
 
+/**
+ * Cross-venue "What Diners Are Saying" feed.
+ *
+ * Approved reviews only, from ACTIVE venues with an ACTIVE listing for the
+ * requested brand — the same visibility rule as the catalogue, not a looser
+ * one. Ordering and cursor are identical to the per-venue list so a feed page
+ * can be resumed without a second sort key.
+ */
+async function listReviewFeed({ brand, limit = 10, cursor } = {}) {
+  if (!BRANDS.includes(brand)) {
+    throw new AppError('Unknown brand', 400, { code: 'INVALID_BRAND' });
+  }
+
+  const key = `rv:feed:${brand}:${crypto
+    .createHash('md5')
+    .update(JSON.stringify({ limit, cursor: cursor || null }))
+    .digest('hex')}`;
+
+  return cache.getOrSet(
+    key,
+    async () => {
+      const where = {
+        status: 'APPROVED',
+        venue: {
+          status: 'ACTIVE',
+          listings: { some: listingFilter(brand) },
+        },
+      };
+
+      const decoded = cursor ? decodeReviewCursor(cursor) : null;
+      if (decoded) {
+        where.OR = [
+          { createdAt: { lt: decoded.at } },
+          { AND: [{ createdAt: decoded.at }, { id: { lt: decoded.id } }] },
+        ];
+      }
+
+      const rows = await prisma.restaurantVenueReview.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: limit + 1,
+        select: {
+          id: true,
+          venueId: true,
+          rating: true,
+          title: true,
+          body: true,
+          source: true,
+          createdAt: true,
+          venue: { select: { id: true, name: true, slug: true, city: true } },
+          author: { select: { name: true, photoURL: true } },
+        },
+      });
+
+      const hasMore = rows.length > limit;
+      const page = hasMore ? rows.slice(0, limit) : rows;
+      const last = page[page.length - 1];
+
+      return {
+        reviews: page.map(toFeedReview),
+        pagination: {
+          limit,
+          hasMore,
+          nextCursor:
+            hasMore && last
+              ? encodeCursor({ c: last.createdAt.toISOString(), id: last.id })
+              : null,
+        },
+      };
+    },
+    REVIEW_FEED_TTL_SECONDS,
+  );
+}
+
 module.exports = {
   BRANDS,
   SORTS,
@@ -641,6 +922,10 @@ module.exports = {
   getVenue,
   resolveVenueId,
   listReviews,
+  listReviewFeed,
   toPublicVenue,
   toPublicReview,
+  toFeedReview,
+  offerWindowFilter,
+  isPublicOffer,
 };

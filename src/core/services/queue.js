@@ -146,6 +146,9 @@ const SCHEDULES = [
   { jobName: 'refresh-popularity',          queue: 'aggregation', everyMs: 3600 * 1000 },
   { jobName: 'cleanup-events',              queue: 'aggregation', everyMs: 24 * 3600 * 1000 },
   { jobName: 'aggregate-daily-views',       queue: 'aggregation', everyMs: 24 * 3600 * 1000 },
+  // Restaurant demand depends on every venue in a city, so it is a batch
+  // concern. Runs after reviews land, never on a request path.
+  { jobName: 'recompute-restaurant-rankings', queue: 'aggregation', everyMs: 24 * 3600 * 1000 },
 ];
 
 // Per-schedule execution health, tracked as jobs complete/fail.
@@ -1201,6 +1204,16 @@ function registerWorkers() {
             },
           });
         }
+        break;
+      }
+      case 'recompute-restaurant-rankings': {
+        const { recomputeAllRestaurantRankings } = require('./restaurantVenueStats');
+        await recomputeAllRestaurantRankings();
+        const restaurantCache = require('./cacheHelper');
+        await restaurantCache.invalidateKeys([
+          restaurantCache.RESTAURANT_LIST_PREFIX,
+          restaurantCache.RESTAURANT_REVIEW_FEED_PREFIX,
+        ]);
         break;
       }
       default:
