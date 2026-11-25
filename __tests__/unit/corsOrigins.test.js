@@ -2,6 +2,7 @@ const {
   DEV_ORIGINS,
   STAGING_ORIGIN,
   STORE_STAGING_ORIGIN,
+  STAYS_ORIGIN,
   httpOrigins,
   socketOrigins,
   isAllowedOrigin,
@@ -105,6 +106,23 @@ describe('fixed staging hosts', () => {
     expect(isTrustedPreviewOrigin('https://staging.travioghana.com')).toBe(false);
     expect(isTrustedPreviewOrigin('http://supplier-staging.travioghana.com')).toBe(false);
     expect(isTrustedPreviewOrigin('http://store-staging.travioghana.com')).toBe(false);
+  });
+});
+
+describe('fixed Stays dashboard host', () => {
+  it('authorises stays.travioghana.com regardless of ALLOWED_ORIGINS', () => {
+    delete process.env.ALLOWED_ORIGINS;
+    expect(isAllowedOrigin(STAYS_ORIGIN, httpOrigins())).toBe(true);
+
+    process.env.ALLOWED_ORIGINS = PRODUCTION;
+    expect(isAllowedOrigin(STAYS_ORIGIN, httpOrigins())).toBe(true);
+  });
+
+  it('matches exactly — no look-alike, path or http variant rides along', () => {
+    expect(isTrustedPreviewOrigin('https://stays.travioghana.com')).toBe(true);
+    expect(isTrustedPreviewOrigin('https://stays.travioghana.com.evil.example')).toBe(false);
+    expect(isTrustedPreviewOrigin('https://stays.travioghana.com/')).toBe(false);
+    expect(isTrustedPreviewOrigin('http://stays.travioghana.com')).toBe(false);
   });
 });
 

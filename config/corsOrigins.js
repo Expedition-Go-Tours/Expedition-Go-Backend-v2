@@ -33,6 +33,15 @@ const STAGING_ORIGIN = 'https://supplier-staging.travioghana.com';
 const STORE_STAGING_ORIGIN = 'https://store-staging.travioghana.com';
 const STAGING_ORIGINS = [STAGING_ORIGIN, STORE_STAGING_ORIGIN];
 
+/**
+ * Fixed first-party Stays dashboard host. It is served from the same Vercel
+ * project as the staging supplier host but uses its own public domain; the
+ * API has to authorise it independently of ALLOWED_ORIGINS, exactly like the
+ * staging hosts above.
+ */
+const STAYS_ORIGIN = 'https://stays.travioghana.com';
+const FIXED_ORIGINS = [...STAGING_ORIGINS, STAYS_ORIGIN];
+
 /** Vercel renders branch previews as `<project>-git-<branch>-<suffix>.vercel.app`. */
 const PREVIEW_HOST_PREFIX = 'travio-ghana-supplier-git-';
 const STORE_PREVIEW_HOST_PREFIX = 'travio-ghana-store-git-';
@@ -110,7 +119,7 @@ function isProjectPreviewOrigin(origin) {
  * @returns {boolean}
  */
 function isTrustedPreviewOrigin(origin) {
-  return STAGING_ORIGINS.includes(origin) || isProjectPreviewOrigin(origin);
+  return FIXED_ORIGINS.includes(origin) || isProjectPreviewOrigin(origin);
 }
 
 /**
@@ -132,6 +141,8 @@ module.exports = {
   STAGING_ORIGIN,
   STORE_STAGING_ORIGIN,
   STAGING_ORIGINS,
+  STAYS_ORIGIN,
+  FIXED_ORIGINS,
   PREVIEW_HOST_PREFIX,
   STORE_PREVIEW_HOST_PREFIX,
   httpOrigins,
