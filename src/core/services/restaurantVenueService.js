@@ -358,12 +358,18 @@ function toPublicReview(review) {
  * the venue identity a storefront card needs is added.
  */
 function toFeedReview(review) {
+  const venue = review.venue;
+  const venuePhotos = (venue && venue.photos) || [];
+
   return {
     id: review.id,
     venueId: review.venueId,
-    venueName: review.venue ? review.venue.name : null,
-    venueSlug: review.venue ? review.venue.slug : null,
-    venueCity: review.venue ? review.venue.city : null,
+    venueName: venue ? venue.name : null,
+    venueSlug: venue ? venue.slug : null,
+    venueCity: venue ? venue.city : null,
+    // The card artwork is the venue's cover photo, falling back to its first
+    // gallery image. No internal venue fields are exposed here.
+    venueCoverPhoto: venue ? venue.coverPhoto || venuePhotos[0] || null : null,
     rating: review.rating,
     title: review.title,
     body: review.body,
@@ -843,7 +849,8 @@ async function listReviews(venueId, { limit = 10, cursor, rating, verified } = {
  * Approved reviews only, from ACTIVE venues with an ACTIVE listing for the
  * requested brand — the same visibility rule as the catalogue, not a looser
  * one. Ordering and cursor are identical to the per-venue list so a feed page
- * can be resumed without a second sort key.
+ * can be resumed without a second sort key. The stats block always describes
+ * the full visible feed, never the current cursor page.
  */
 async function listReviewFeed({ brand, limit = 10, cursor } = {}) {
   if (!BRANDS.includes(brand)) {
@@ -858,13 +865,15 @@ async function listReviewFeed({ brand, limit = 10, cursor } = {}) {
   return cache.getOrSet(
     key,
     async () => {
-      const where = {
+      // Stats describe the whole visible feed, not the current cursor page.
+      const statsWhere = {
         status: 'APPROVED',
         venue: {
           status: 'ACTIVE',
           listings: { some: listingFilter(brand) },
         },
       };
+      const where = { ...statsWhere };
 
       const decoded = cursor ? decodeReviewCursor(cursor) : null;
       if (decoded) {
@@ -874,29 +883,51 @@ async function listReviewFeed({ brand, limit = 10, cursor } = {}) {
         ];
       }
 
-      const rows = await prisma.restaurantVenueReview.findMany({
-        where,
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        take: limit + 1,
-        select: {
-          id: true,
-          venueId: true,
-          rating: true,
-          title: true,
-          body: true,
-          source: true,
-          createdAt: true,
-          venue: { select: { id: true, name: true, slug: true, city: true } },
-          author: { select: { name: true, photoURL: true } },
-        },
-      });
+      const [rows, stats] = await Promise.all([
+        prisma.restaurantVenueReview.findMany({
+          where,
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          take: limit + 1,
+          select: {
+            id: true,
+            venueId: true,
+            rating: true,
+            title: true,
+            body: true,
+            source: true,
+            createdAt: true,
+            venue: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                city: true,
+                coverPhoto: true,
+                photos: true,
+              },
+            },
+            author: { select: { name: true, photoURL: true } },
+          },
+        }),
+        prisma.restaurantVenueReview.aggregate({
+          where: statsWhere,
+          _avg: { rating: true },
+          _count: { _all: true },
+        }),
+      ]);
 
       const hasMore = rows.length > limit;
       const page = hasMore ? rows.slice(0, limit) : rows;
       const last = page[page.length - 1];
+      const average = stats && stats._avg ? stats._avg.rating : null;
+      const total = stats && stats._count ? stats._count._all : 0;
 
       return {
         reviews: page.map(toFeedReview),
+        stats: {
+          averageRating: average == null ? null : Math.round(average * 10) / 10,
+          totalReviews: total || 0,
+        },
         pagination: {
           limit,
           hasMore,

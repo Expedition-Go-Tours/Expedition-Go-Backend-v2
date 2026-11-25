@@ -9,7 +9,7 @@
 
 jest.mock('../../src/core/services/prismaClient', () => ({
   restaurantVenue: { findMany: jest.fn(), findFirst: jest.fn() },
-  restaurantVenueReview: { findMany: jest.fn() },
+  restaurantVenueReview: { findMany: jest.fn(), aggregate: jest.fn() },
 }));
 
 jest.mock('../../src/core/services/cacheHelper', () => ({
@@ -39,6 +39,11 @@ describe('/api/restaurant-venues', () => {
     jest.clearAllMocks();
     prisma.restaurantVenue.findMany.mockResolvedValue([]);
     prisma.restaurantVenue.findFirst.mockResolvedValue(null);
+    prisma.restaurantVenueReview.findMany.mockResolvedValue([]);
+    prisma.restaurantVenueReview.aggregate.mockResolvedValue({
+      _avg: { rating: null },
+      _count: { _all: 0 },
+    });
   });
 
   it('lists venues for the legacy prefix', async () => {
@@ -99,6 +104,7 @@ describe('/api/restaurant-venues', () => {
     expect(res.body.status).toBe('success');
     expect(res.body.data).toEqual({
       reviews: [],
+      stats: { averageRating: null, totalReviews: 0 },
       pagination: { limit: 5, hasMore: false, nextCursor: null },
     });
     expect(prisma.restaurantVenue.findFirst).not.toHaveBeenCalled();

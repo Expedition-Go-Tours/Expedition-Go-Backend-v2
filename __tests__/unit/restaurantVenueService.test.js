@@ -5,7 +5,7 @@ jest.mock('../../src/core/services/prismaClient', () => ({
     groupBy: jest.fn(),
     count: jest.fn(),
   },
-  restaurantVenueReview: { findMany: jest.fn() },
+  restaurantVenueReview: { findMany: jest.fn(), aggregate: jest.fn() },
 }));
 
 jest.mock('../../src/core/services/cacheHelper', () => ({
@@ -79,6 +79,10 @@ describe('restaurantVenueService', () => {
     prisma.restaurantVenue.groupBy.mockResolvedValue([]);
     prisma.restaurantVenue.count.mockResolvedValue(0);
     prisma.restaurantVenueReview.findMany.mockResolvedValue([]);
+    prisma.restaurantVenueReview.aggregate.mockResolvedValue({
+      _avg: { rating: null },
+      _count: { _all: 0 },
+    });
     locationService.autocomplete.mockResolvedValue([]);
   });
 
@@ -593,7 +597,14 @@ describe('restaurantVenueService', () => {
       body: 'Booked on a Friday and the queue was moving before we sat down.',
       source: 'TRAVIO_VERIFIED',
       createdAt: new Date('2026-11-24T00:00:00.000Z'),
-      venue: { id: 'v1', name: 'Buka Restaurant', slug: 'buka', city: 'Accra' },
+      venue: {
+        id: 'v1',
+        name: 'Buka Restaurant',
+        slug: 'buka',
+        city: 'Accra',
+        coverPhoto: 'https://res.cloudinary.com/buka.jpg',
+        photos: ['https://res.cloudinary.com/buka-2.jpg'],
+      },
       author: { name: 'Ama', photoURL: 'https://example.com/ama.jpg' },
       proofRef: 'secret',
       ipHash: 'hash',
@@ -601,6 +612,10 @@ describe('restaurantVenueService', () => {
 
     beforeEach(() => {
       prisma.restaurantVenueReview.findMany.mockResolvedValue([feedRow]);
+      prisma.restaurantVenueReview.aggregate.mockResolvedValue({
+        _avg: { rating: 4.583333 },
+        _count: { _all: 24 },
+      });
     });
 
     it('reads approved reviews from active venues listed for the brand', async () => {
@@ -621,6 +636,7 @@ describe('restaurantVenueService', () => {
           venueName: 'Buka Restaurant',
           venueSlug: 'buka',
           venueCity: 'Accra',
+          venueCoverPhoto: 'https://res.cloudinary.com/buka.jpg',
           rating: 5,
           title: 'Still thinking about the jollof',
           body: 'Booked on a Friday and the queue was moving before we sat down.',
@@ -631,6 +647,7 @@ describe('restaurantVenueService', () => {
       ]);
       expect(data.reviews[0].proofRef).toBeUndefined();
       expect(data.reviews[0].ipHash).toBeUndefined();
+      expect(data.stats).toEqual({ averageRating: 4.6, totalReviews: 24 });
       expect(data.pagination).toEqual({
         limit: 10,
         hasMore: false,
@@ -657,9 +674,49 @@ describe('restaurantVenueService', () => {
       ]);
     });
 
+    it('reports full-feed stats even when a cursor is used', async () => {
+      const cursor = service.encodeCursor({
+        c: '2026-11-24T00:00:00.000Z',
+        id: 'r9',
+      });
+
+      const data = await service.listReviewFeed({ brand: 'ghana', limit: 1, cursor });
+
+      const statsQuery = prisma.restaurantVenueReview.aggregate.mock.calls[0][0];
+      expect(statsQuery.where).toEqual({
+        status: 'APPROVED',
+        venue: {
+          status: 'ACTIVE',
+          listings: { some: { brand: 'ghana', isActive: true } },
+        },
+      });
+      expect(statsQuery.where.OR).toBeUndefined();
+      expect(statsQuery._avg).toEqual({ rating: true });
+      expect(statsQuery._count).toEqual({ _all: true });
+      expect(data.stats).toEqual({ averageRating: 4.6, totalReviews: 24 });
+    });
+
+    it('falls back to the first venue photo when there is no cover photo', async () => {
+      prisma.restaurantVenueReview.findMany.mockResolvedValue([
+        {
+          ...feedRow,
+          venue: {
+            ...feedRow.venue,
+            coverPhoto: null,
+            photos: ['https://res.cloudinary.com/buka-gallery.jpg'],
+          },
+        },
+      ]);
+
+      const data = await service.listReviewFeed({ brand: 'ghana', limit: 10 });
+
+      expect(data.reviews[0].venueCoverPhoto).toBe('https://res.cloudinary.com/buka-gallery.jpg');
+    });
+
     it('rejects an unknown brand before querying', async () => {
       await expect(service.listReviewFeed({ brand: 'moon' })).rejects.toThrow(/Unknown brand/);
       expect(prisma.restaurantVenueReview.findMany).not.toHaveBeenCalled();
+      expect(prisma.restaurantVenueReview.aggregate).not.toHaveBeenCalled();
     });
   });
 });
