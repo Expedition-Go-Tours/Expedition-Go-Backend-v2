@@ -76,12 +76,27 @@ function ensureConnected() {
   return initPromise;
 }
 
-async function getOrSet(key, fetchFn, ttlSeconds = 300, { cacheEmpty = true, cacheNull = true } = {}) {
+/**
+ * `isValid` lets a caller reject a hit whose embedded freshness deadline has
+ * passed. It is checked on BOTH cache layers before the value is returned; a
+ * stale hit is deleted and the normal fetch path repopulates it.
+ */
+async function getOrSet(
+  key,
+  fetchFn,
+  ttlSeconds = 300,
+  { cacheEmpty = true, cacheNull = true, isValid } = {},
+) {
+  const isFresh = (value) =>
+    typeof isValid !== 'function' || value === NULL_SENTINEL || isValid(value) !== false;
+
   // L1: memory cache
   const fromMem = memGet(key);
   if (fromMem !== undefined) {
     if (fromMem === NULL_SENTINEL) return null;
-    return fromMem;
+    if (isFresh(fromMem)) return fromMem;
+    // Stale L1 entry: fall through and fetch a replacement.
+    memDelKey(key);
   }
 
   // Try to connect but don't fail if Redis is unavailable
@@ -99,9 +114,18 @@ async function getOrSet(key, fetchFn, ttlSeconds = 300, { cacheEmpty = true, cac
       memSet(key, null);
       return null;
     } else if (raw !== null) {
-      // Positive cache hit
-      memSet(key, raw);
-      return raw;
+      // Positive cache hit, unless the caller's freshness guard rejects it.
+      if (isFresh(raw)) {
+        memSet(key, raw);
+        return raw;
+      }
+      // Delete the stale Redis entry too, so another worker cannot serve it
+      // while this fetch is in flight.
+      try {
+        await redis.del(key);
+      } catch {
+        // Redis write failed; the fetch below will still overwrite it.
+      }
     }
     // raw === null → key doesn't exist in Redis, fall through to fetch
   } catch {
@@ -245,9 +269,12 @@ async function invalidateReviewCaches(tourId) {
  * other two showing yesterday's number.
  */
 const RESTAURANT_LIST_PREFIX = 'rv:list:*';
+const RESTAURANT_REVIEW_FEED_PREFIX = 'rv:feed:*';
 
 async function invalidateRestaurantVenueCaches(venueId, slug) {
-  const patterns = [RESTAURANT_LIST_PREFIX];
+  // A review or offer change can move a card into a different rail and can
+  // appear in the cross-venue feed, so clear that cache as well as the lists.
+  const patterns = [RESTAURANT_LIST_PREFIX, RESTAURANT_REVIEW_FEED_PREFIX];
   if (venueId) {
     patterns.push(`rv:detail:*:${venueId}`, `rv:reviews:${venueId}:*`);
   }
@@ -269,6 +296,7 @@ module.exports = {
   invalidateReviewCaches,
   invalidateRestaurantVenueCaches,
   RESTAURANT_LIST_PREFIX,
+  RESTAURANT_REVIEW_FEED_PREFIX,
   invalidateHomepageSections,
   memSet,
   TOUR_LIST_PREFIX,

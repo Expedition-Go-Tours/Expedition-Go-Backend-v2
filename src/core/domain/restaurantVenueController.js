@@ -13,6 +13,7 @@ const { isValidCloudinaryUrl } = require('../services/cloudinaryHelper');
 const service = require('../services/restaurantVenueService');
 const writeService = require('../services/restaurantVenueWriteService');
 const claimService = require('../services/restaurantVenueClaimService');
+const offerService = require('../services/restaurantVenueOfferService');
 
 /**
  * GET /api/restaurant-venues
@@ -63,6 +64,15 @@ exports.listReviews = catchAsync(async (req, res, next) => {
   }
 
   res.status(200).json({ status: 'success', data: { venueId, ...data } });
+});
+
+/**
+ * GET /api/restaurant-venues/reviews
+ * Cross-venue approved review feed for the storefront homepage.
+ */
+exports.listReviewFeed = catchAsync(async (req, res) => {
+  const data = await service.listReviewFeed(req.query);
+  res.status(200).json({ status: 'success', data });
 });
 
 /* ── review writes ──────────────────────────────────────────────────────── */
@@ -206,6 +216,47 @@ exports.createInvite = catchAsync(async (req, res) => {
   });
 
   res.status(201).json({ status: 'success', data: { invite } });
+});
+
+/* ── admin offer management ─────────────────────────────────────────────── */
+
+exports.listVenueOffers = catchAsync(async (req, res, next) => {
+  const offers = await offerService.listOffers({
+    venueId: req.params.venueId,
+    brand: req.query.brand,
+  });
+  if (!offers) {
+    return next(new AppError('Venue not found', 404, { code: 'VENUE_NOT_FOUND' }));
+  }
+  res.status(200).json({ status: 'success', data: { offers } });
+});
+
+exports.createVenueOffer = catchAsync(async (req, res) => {
+  const offer = await offerService.createOffer({
+    venueId: req.params.venueId,
+    brand: req.query.brand,
+    input: req.body,
+  });
+  res.status(201).json({ status: 'success', data: { offer } });
+});
+
+exports.updateVenueOffer = catchAsync(async (req, res) => {
+  const offer = await offerService.updateOffer({
+    venueId: req.params.venueId,
+    brand: req.query.brand,
+    offerId: req.params.offerId,
+    input: req.body,
+  });
+  res.status(200).json({ status: 'success', data: { offer } });
+});
+
+exports.deleteVenueOffer = catchAsync(async (req, res) => {
+  const result = await offerService.deleteOffer({
+    venueId: req.params.venueId,
+    brand: req.query.brand,
+    offerId: req.params.offerId,
+  });
+  res.status(200).json({ status: 'success', data: result });
 });
 
 /* ── claims and owner surface ────────────────────────────────────────────── */

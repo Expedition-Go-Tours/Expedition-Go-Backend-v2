@@ -24,6 +24,10 @@ const {
   createInviteSchema,
   pendingClaimsQuerySchema,
   resolveClaimSchema,
+  listVenueOffersSchema,
+  createVenueOfferSchema,
+  updateVenueOfferSchema,
+  deleteVenueOfferSchema,
 } = require('../src/core/services/restaurantVenueSchemas');
 
 const router = express.Router();
@@ -69,6 +73,39 @@ router.post(
   requirePermission('reviews.moderate'),
   validate(createInviteSchema),
   controller.createInvite,
+);
+
+/**
+ * Offer CRUD reuses the review permissions: an admin who can curate a
+ * restaurant's reviews can curate its offers. No new permission key, so
+ * existing admin roles keep working.
+ */
+router.get(
+  '/:venueId/offers',
+  requirePermission('reviews.view'),
+  validate(listVenueOffersSchema),
+  controller.listVenueOffers,
+);
+
+router.post(
+  '/:venueId/offers',
+  requirePermission('reviews.moderate'),
+  validate(createVenueOfferSchema),
+  controller.createVenueOffer,
+);
+
+router.patch(
+  '/:venueId/offers/:offerId',
+  requirePermission('reviews.moderate'),
+  validate(updateVenueOfferSchema),
+  controller.updateVenueOffer,
+);
+
+router.delete(
+  '/:venueId/offers/:offerId',
+  requirePermission('reviews.moderate'),
+  validate(deleteVenueOfferSchema),
+  controller.deleteVenueOffer,
 );
 
 router.get(

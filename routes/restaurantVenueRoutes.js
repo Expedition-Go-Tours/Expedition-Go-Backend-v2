@@ -19,6 +19,7 @@ const {
   suggestQuerySchema,
   venueSchema,
   reviewsQuerySchema,
+  reviewFeedQuerySchema,
   createReviewSchema,
   updateReviewSchema,
   authorReviewQuerySchema,
@@ -73,7 +74,9 @@ const claimLimiter = createUserLimiter({
  *       - { name: lng, in: query, schema: { type: number, minimum: -180, maximum: 180 } }
  *       - { name: radiusKm, in: query, schema: { type: number, minimum: 0.1, maximum: 50 } }
  *       - { name: place, in: query, schema: { type: string } }
- *       - { name: sort, in: query, schema: { type: string, enum: [rating, reviews, newest] } }
+ *       - { name: highDemand, in: query, schema: { type: boolean } }
+ *       - { name: hasOffer, in: query, schema: { type: boolean } }
+ *       - { name: sort, in: query, schema: { type: string, enum: [rating, reviews, newest, demand] } }
  *       - { name: limit, in: query, schema: { type: integer, maximum: 50 } }
  *       - { name: cursor, in: query, schema: { type: string } }
  *     responses:
@@ -95,6 +98,24 @@ router.get('/', validate(listQuerySchema), controller.listVenues);
  *       200: { description: Suggestions retrieved successfully }
  */
 router.get('/suggest', validate(suggestQuerySchema), controller.suggestVenues);
+
+/**
+ * @swagger
+ * /restaurant-venues/reviews:
+ *   get:
+ *     summary: Approved reviews across all active venues for a brand
+ *     tags: [Restaurant Venues]
+ *     parameters:
+ *       - { name: brand, in: query, schema: { type: string, enum: [ghana, africa, expedition] } }
+ *       - { name: limit, in: query, schema: { type: integer, maximum: 50 } }
+ *       - { name: cursor, in: query, schema: { type: string } }
+ *     responses:
+ *       200: { description: Review feed retrieved successfully }
+ */
+// Literal path before `/:slugOrId`: otherwise "reviews" is read as a slug and
+// the feed 404s. This route also sits ahead of `/:slugOrId/reviews`, which only
+// matches a two-segment path and so never competes with it.
+router.get('/reviews', validate(reviewFeedQuerySchema), controller.listReviewFeed);
 
 /**
  * @swagger

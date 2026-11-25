@@ -81,4 +81,25 @@ describe('/api/restaurant-venues', () => {
     expect(res.status).toBe(404);
     expect(prisma.restaurantVenueReview.findMany).not.toHaveBeenCalled();
   });
+
+  it('serves the cross-venue review feed instead of reading "reviews" as a slug', async () => {
+    prisma.restaurantVenueReview.findMany.mockResolvedValue([]);
+
+    const res = await request(app).get('/api/restaurant-venues/reviews?brand=ghana&limit=5');
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('success');
+    expect(res.body.data).toEqual({
+      reviews: [],
+      pagination: { limit: 5, hasMore: false, nextCursor: null },
+    });
+    expect(prisma.restaurantVenue.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid feed brand before querying', async () => {
+    const res = await request(app).get('/api/restaurant-venues/reviews?brand=moon');
+
+    expect(res.status).toBe(400);
+    expect(prisma.restaurantVenueReview.findMany).not.toHaveBeenCalled();
+  });
 });

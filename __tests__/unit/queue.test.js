@@ -43,6 +43,12 @@ jest.mock('../../src/core/services/tourPurge', () => ({
 jest.mock('../../src/core/services/cacheHelper', () => ({
   invalidateKeys: jest.fn(),
   TOUR_POPULAR_KEY: 'tour:popular',
+  RESTAURANT_LIST_PREFIX: 'rv:list:*',
+  RESTAURANT_REVIEW_FEED_PREFIX: 'rv:feed:*',
+}));
+
+jest.mock('../../src/core/services/restaurantVenueStats', () => ({
+  recomputeAllRestaurantRankings: jest.fn(() => Promise.resolve({ venues: 0 })),
 }));
 
 jest.mock('../../src/core/services/eventEmitter', () => ({
@@ -58,6 +64,7 @@ const emailService = require('../../src/core/services/emailService');
 const notificationService = require('../../src/core/services/notificationService');
 const auditLogger = require('../../src/core/services/auditLogger');
 const cacheHelper = require('../../src/core/services/cacheHelper');
+const restaurantVenueStats = require('../../src/core/services/restaurantVenueStats');
 const eventEmitter = require('../../src/core/services/eventEmitter');
 const queue = require('../../src/core/services/queue');
 
@@ -284,6 +291,16 @@ describe('queue', () => {
       await workerCallback({ name: 'cleanup-events' });
 
       expect(prisma.event.deleteMany).toHaveBeenCalled();
+    });
+
+    it('aggregation worker recomputes restaurant rankings nightly', async () => {
+      queue.registerWorkers();
+      const workerCallback = Worker.mock.calls.find(c => c[0] === 'analytics-aggregations')[1];
+
+      await workerCallback({ name: 'recompute-restaurant-rankings' });
+
+      expect(restaurantVenueStats.recomputeAllRestaurantRankings).toHaveBeenCalled();
+      expect(cacheHelper.invalidateKeys).toHaveBeenCalledWith(['rv:list:*', 'rv:feed:*']);
     });
 
     it('cleanup worker handles cleanup-audit-logs', async () => {

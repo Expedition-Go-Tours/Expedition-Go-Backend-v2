@@ -9,7 +9,7 @@ jest.mock('../../src/core/services/prismaClient', () => ({
 }));
 
 jest.mock('../../src/core/services/cacheHelper', () => ({
-  getOrSet: jest.fn((key, fn) => fn()),
+  getOrSet: jest.fn((key, fn, _ttl, _options) => fn()),
 }));
 
 jest.mock('../../src/core/services/locationService', () => ({
@@ -17,6 +17,7 @@ jest.mock('../../src/core/services/locationService', () => ({
 }));
 
 const prisma = require('../../src/core/services/prismaClient');
+const cache = require('../../src/core/services/cacheHelper');
 const locationService = require('../../src/core/services/locationService');
 const service = require('../../src/core/services/restaurantVenueService');
 
@@ -60,6 +61,8 @@ function venueRow(overrides = {}) {
     combinedRating: 4.72,
     combinedReviewCount: 100,
     rankingScore: 4.5833,
+    demandScore: 12.9448,
+    highDemand: true,
     rankInCity: 8,
     cityVenueCount: 143,
     listings: [{ isFeatured: true, displayOrder: 0 }],
@@ -133,6 +136,59 @@ describe('restaurantVenueService', () => {
             ],
           },
         ],
+      });
+    });
+
+    it('filters on the stored high-demand flag alongside the brand scope', async () => {
+      await service.listVenues({ brand: 'ghana', highDemand: true, limit: 20 });
+
+      expect(prisma.restaurantVenue.findMany.mock.calls[0][0].where).toEqual({
+        status: 'ACTIVE',
+        listings: { some: { brand: 'ghana', isActive: true } },
+        highDemand: true,
+      });
+    });
+
+    it('filters on offers that are brand-scoped, active and in window', async () => {
+      await service.listVenues({ brand: 'ghana', hasOffer: true, limit: 20 });
+
+      const where = prisma.restaurantVenue.findMany.mock.calls[0][0].where;
+      expect(where.offers.some.brand).toBe('ghana');
+      expect(where.offers.some.isActive).toBe(true);
+      expect(where.offers.some.AND).toHaveLength(2);
+      expect(where.offers.some.AND[0].OR[0]).toEqual({ startsAt: null });
+      expect(where.offers.some.AND[1].OR[0]).toEqual({ endsAt: null });
+      // The active Ghana listing is still required, not replaced by the offer.
+      expect(where.listings).toEqual({ some: { brand: 'ghana', isActive: true } });
+    });
+
+    it('orders by stored demand score and pages on demandScore + id', async () => {
+      prisma.restaurantVenue.findMany.mockResolvedValue([
+        venueRow(),
+        venueRow({ id: 'v2', slug: 'second', demandScore: 9 }),
+      ]);
+
+      const page = await service.listVenues({ brand: 'ghana', sort: 'demand', limit: 1 });
+
+      const query = prisma.restaurantVenue.findMany.mock.calls[0][0];
+      expect(query.orderBy).toEqual([
+        { demandScore: { sort: 'desc', nulls: 'last' } },
+        { id: 'desc' },
+      ]);
+      expect(service.decodeListCursor(page.pagination.nextCursor, 'demand')).toEqual({
+        s: 'demand',
+        v: 12.9448,
+        id: 'v1',
+      });
+    });
+
+    it('continues a demand cursor inside the unscored tail', async () => {
+      const cursor = service.encodeCursor({ s: 'demand', v: null, id: 'v9' });
+
+      await service.listVenues({ brand: 'ghana', sort: 'demand', cursor, limit: 20 });
+
+      expect(prisma.restaurantVenue.findMany.mock.calls[0][0].where.AND).toContainEqual({
+        AND: [{ demandScore: null }, { id: { lt: 'v9' } }],
       });
     });
 
@@ -233,6 +289,113 @@ describe('restaurantVenueService', () => {
         /Unknown brand/,
       );
       expect(prisma.restaurantVenue.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('toPublicVenue offers', () => {
+    const now = new Date('2026-11-25T12:00:00.000Z');
+    const baseOffer = {
+      id: 'o1',
+      brand: 'ghana',
+      title: '20% off your table',
+      discountType: 'PERCENTAGE',
+      discountValue: 20,
+      promoCode: 'GHANA20',
+      startsAt: new Date('2026-11-01T00:00:00.000Z'),
+      endsAt: new Date('2026-12-01T00:00:00.000Z'),
+      isActive: true,
+      terms: 'Internal terms',
+    };
+
+    it('exposes only active, brand-scoped, in-window offers and the boolean flag', () => {
+      const dto = service.toPublicVenue(
+        venueRow({
+          offers: [
+            baseOffer,
+            { ...baseOffer, id: 'o2', isActive: false },
+            { ...baseOffer, id: 'o3', brand: 'africa' },
+            { ...baseOffer, id: 'o4', startsAt: new Date('2026-12-01T00:00:00.000Z') },
+            { ...baseOffer, id: 'o5', endsAt: new Date('2026-11-01T00:00:00.000Z') },
+          ],
+        }),
+        { brand: 'ghana', now },
+      );
+
+      expect(dto.highDemand).toBe(true);
+      expect(dto.demandScore).toBeUndefined();
+      expect(dto.offers).toEqual([
+        {
+          id: 'o1',
+          title: '20% off your table',
+          discountType: 'PERCENTAGE',
+          discountValue: 20,
+          promoCode: 'GHANA20',
+          endsAt: '2026-12-01T00:00:00.000Z',
+        },
+      ]);
+      expect(dto.offers[0].terms).toBeUndefined();
+      expect(dto.offers[0].brand).toBeUndefined();
+    });
+
+    it('keeps open-ended windows and null promo codes', () => {
+      const dto = service.toPublicVenue(
+        venueRow({
+          offers: [{ ...baseOffer, promoCode: null, startsAt: null, endsAt: null }],
+        }),
+        { brand: 'ghana', now },
+      );
+
+      expect(dto.offers[0]).toEqual({
+        id: 'o1',
+        title: '20% off your table',
+        discountType: 'PERCENTAGE',
+        discountValue: 20,
+        promoCode: null,
+        endsAt: null,
+      });
+    });
+  });
+
+  describe('cached offer freshness', () => {
+    it('refetches when a cached offer window expires', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-11-25T12:00:00.000Z'));
+      const originalGetOrSet = cache.getOrSet.getMockImplementation();
+      try {
+        const expiringOffer = {
+          id: 'o-exp',
+          brand: 'ghana',
+          title: 'Expiring deal',
+          discountType: 'PERCENTAGE',
+          discountValue: 10,
+          promoCode: null,
+          startsAt: new Date('2026-11-25T11:00:00.000Z'),
+          endsAt: new Date('2026-11-25T12:00:05.000Z'),
+          isActive: true,
+        };
+        prisma.restaurantVenue.findMany.mockResolvedValue([
+          venueRow({ offers: [expiringOffer] }),
+        ]);
+
+        let stored;
+        cache.getOrSet.mockImplementation(async (key, loader, _ttl, options) => {
+          if (stored && options?.isValid?.(stored)) return stored;
+          stored = await loader();
+          return stored;
+        });
+
+        const first = await service.listVenues({ brand: 'ghana', limit: 20 });
+        expect(first.venues[0].offers).toHaveLength(1);
+        expect(stored.offerValidUntil).toBe(new Date('2026-11-25T12:00:05.000Z').getTime());
+
+        jest.setSystemTime(new Date('2026-11-25T12:00:06.000Z'));
+        expect(cache.getOrSet.mock.calls[0][3].isValid(stored)).toBe(false);
+        const second = await service.listVenues({ brand: 'ghana', limit: 20 });
+        expect(second.venues[0].offers).toEqual([]);
+        expect(prisma.restaurantVenue.findMany).toHaveBeenCalledTimes(2);
+      } finally {
+        cache.getOrSet.mockImplementation(originalGetOrSet);
+        jest.useRealTimers();
+      }
     });
   });
 
@@ -417,6 +580,85 @@ describe('restaurantVenueService', () => {
       prisma.restaurantVenue.findFirst.mockResolvedValue(null);
 
       await expect(service.listReviews('v1', { limit: 10 })).resolves.toBeNull();
+      expect(prisma.restaurantVenueReview.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listReviewFeed', () => {
+    const feedRow = {
+      id: 'r1',
+      venueId: 'v1',
+      rating: 5,
+      title: 'Still thinking about the jollof',
+      body: 'Booked on a Friday and the queue was moving before we sat down.',
+      source: 'TRAVIO_VERIFIED',
+      createdAt: new Date('2026-11-24T00:00:00.000Z'),
+      venue: { id: 'v1', name: 'Buka Restaurant', slug: 'buka', city: 'Accra' },
+      author: { name: 'Ama', photoURL: 'https://example.com/ama.jpg' },
+      proofRef: 'secret',
+      ipHash: 'hash',
+    };
+
+    beforeEach(() => {
+      prisma.restaurantVenueReview.findMany.mockResolvedValue([feedRow]);
+    });
+
+    it('reads approved reviews from active venues listed for the brand', async () => {
+      const data = await service.listReviewFeed({ brand: 'ghana', limit: 10 });
+
+      const query = prisma.restaurantVenueReview.findMany.mock.calls[0][0];
+      expect(query.where.status).toBe('APPROVED');
+      expect(query.where.venue).toEqual({
+        status: 'ACTIVE',
+        listings: { some: { brand: 'ghana', isActive: true } },
+      });
+      expect(query.orderBy).toEqual([{ createdAt: 'desc' }, { id: 'desc' }]);
+
+      expect(data.reviews).toEqual([
+        {
+          id: 'r1',
+          venueId: 'v1',
+          venueName: 'Buka Restaurant',
+          venueSlug: 'buka',
+          venueCity: 'Accra',
+          rating: 5,
+          title: 'Still thinking about the jollof',
+          body: 'Booked on a Friday and the queue was moving before we sat down.',
+          createdAt: new Date('2026-11-24T00:00:00.000Z'),
+          author: { name: 'Ama', photoURL: 'https://example.com/ama.jpg' },
+          verified: true,
+        },
+      ]);
+      expect(data.reviews[0].proofRef).toBeUndefined();
+      expect(data.reviews[0].ipHash).toBeUndefined();
+      expect(data.pagination).toEqual({
+        limit: 10,
+        hasMore: false,
+        nextCursor: null,
+      });
+    });
+
+    it('paginates on createdAt + id', async () => {
+      const cursor = service.encodeCursor({
+        c: '2026-11-24T00:00:00.000Z',
+        id: 'r9',
+      });
+
+      await service.listReviewFeed({ brand: 'ghana', limit: 1, cursor });
+
+      expect(prisma.restaurantVenueReview.findMany.mock.calls[0][0].where.OR).toEqual([
+        { createdAt: { lt: new Date('2026-11-24T00:00:00.000Z') } },
+        {
+          AND: [
+            { createdAt: new Date('2026-11-24T00:00:00.000Z') },
+            { id: { lt: 'r9' } },
+          ],
+        },
+      ]);
+    });
+
+    it('rejects an unknown brand before querying', async () => {
+      await expect(service.listReviewFeed({ brand: 'moon' })).rejects.toThrow(/Unknown brand/);
       expect(prisma.restaurantVenueReview.findMany).not.toHaveBeenCalled();
     });
   });

@@ -3942,7 +3942,14 @@ model RestaurantVenue {
   combinedRating      Float?
   combinedReviewCount Int    @default(0)
   /// Recency-blended Bayesian score. Orders lists; never displayed as stars.
-  rankingScore        Float?
+  rankingScore Float?
+
+  /// Booking-demand signal derived in the nightly job from the stored review
+  /// counts and rankingScore. Internal ordering input, never shown as a rating.
+  demandScore Float?
+  /// Top-quartile demand in the venue's city, with a recent-review floor.
+  /// Written by the batch demand pass; the public DTO exposes this flag only.
+  highDemand Boolean @default(false)
 
   // ── ordinal position within the city ────────────────────────────────────
   // Tripadvisor shows "#8 of 143 in Osu", not a bare score. The ordinal is
@@ -3959,6 +3966,7 @@ model RestaurantVenue {
 
   reviews       RestaurantVenueReview[]
   listings      RestaurantVenueListing[]
+  offers        RestaurantVenueOffer[]
   externalStats RestaurantVenueExternalStat[]
   claims        RestaurantVenueClaim[]
   members       RestaurantVenueMember[]
@@ -4059,6 +4067,38 @@ model RestaurantVenueListing {
   @@index([brand, isActive, displayOrder])
   @@index([brand, isActive, isFeatured])
   @@map("restaurant_venue_listings")
+}
+
+/// A storefront offer belonging to one brand's venue listing. The brand is
+/// stored on the row (not inferred from the venue) because the same venue can
+/// be listed on several storefronts with different promotions. The public DTO
+/// only surfaces rows that are active and inside their window.
+model RestaurantVenueOffer {
+  id      String          @id @default(cuid())
+  venueId String
+  venue   RestaurantVenue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  /// Brand registry key: 'ghana' | 'africa' | 'expedition'
+  brand String
+
+  title        String
+  /// 'PERCENTAGE' | 'FIXED'. Kept as a string so the allowed set is validated
+  /// at the admin boundary, like externalStat.source.
+  discountType String
+  discountValue Float
+  /// Null means the discount applies without a code.
+  promoCode   String?
+  startsAt    DateTime?
+  endsAt      DateTime?
+  isActive    Boolean @default(true)
+  terms       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([brand, isActive, startsAt, endsAt])
+  @@index([venueId, brand, isActive])
+  @@map("restaurant_venue_offers")
 }
 
 /// External aggregate only — never a review body. Google's terms restrict
