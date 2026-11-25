@@ -7,6 +7,8 @@
  */
 
 const { computeOfferStatus } = require('../../core/services/offerStatus');
+const prisma = require('../../core/services/prismaClient');
+const AppError = require('../../core/services/appError');
 
 const PROPERTY_STATUS_TO_UI = {
   DRAFT: 'Draft',
@@ -54,6 +56,45 @@ const BOOKING_TRANSITIONS = {
 
 function supplierIdFor(req) {
   return req.supplierId || req.user?.id;
+}
+
+/**
+ * Resolve a property that belongs to the supplier. Archived properties are
+ * invisible to every workspace endpoint, including availability tooling.
+ */
+async function findOwnedProperty(id, supplierId) {
+  const row = await prisma.stayProperty.findFirst({
+    where: { id, supplierId, status: { not: 'ARCHIVED' } },
+  });
+  if (!row) throw new AppError('Property not found', 404);
+  return row;
+}
+
+/**
+ * Serialise read-modify-write cycles on `StayProperty.data`.
+ *
+ * Rooms, rate plans, value adds and restrictions are edited through separate
+ * endpoints but share one JSON column. Without a row lock, two concurrent
+ * edits (e.g. a guest-pricing save and a child-rate save) each read the same
+ * snapshot and the second write silently discards the first. The lock is held
+ * for the interactive transaction only, so unrelated properties are free.
+ */
+async function withLockedProperty(id, supplierId, mutator) {
+  return prisma.$transaction(
+    async (tx) => {
+      await tx.$queryRawUnsafe(
+        'SELECT id FROM "StayProperty" WHERE id = $1 AND "supplierId" = $2 FOR UPDATE',
+        id,
+        supplierId,
+      );
+      const row = await tx.stayProperty.findFirst({
+        where: { id, supplierId, status: { not: 'ARCHIVED' } },
+      });
+      if (!row) throw new AppError('Property not found', 404);
+      return mutator(tx, row);
+    },
+    { timeout: 15000, maxWait: 10000 },
+  );
 }
 
 function objectOrEmpty(value) {
@@ -190,6 +231,8 @@ module.exports = {
   BOOKING_STATUS_FROM_UI,
   BOOKING_TRANSITIONS,
   supplierIdFor,
+  findOwnedProperty,
+  withLockedProperty,
   objectOrEmpty,
   dateKey,
   parseDateKey,

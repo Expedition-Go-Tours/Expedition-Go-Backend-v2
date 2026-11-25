@@ -16,6 +16,8 @@ const {
   uploadChatImage,
 } = require('../../../middleware/uploadMiddleware');
 const controller = require('./staysController');
+const availability = require('./staysAvailabilityController');
+const pricing = require('./staysPricingController');
 const offers = require('./staysOffersController');
 const bookings = require('./staysBookingsController');
 const analytics = require('./staysAnalyticsController');
@@ -133,6 +135,12 @@ router.delete(
 );
 
 // Rate plans
+router.get(
+  '/properties/:id/rate-plans',
+  requireTeamPermission('stays.rates'),
+  validate(schemas.propertyParams),
+  pricing.listRatePlans,
+);
 router.post(
   '/properties/:id/rate-plans',
   requireTeamPermission('stays.rates'),
@@ -145,6 +153,18 @@ router.patch(
   validate(schemas.ratePlanParams),
   controller.saveRatePlan,
 );
+router.patch(
+  '/properties/:id/rate-plans/:planId/guest-pricing',
+  requireTeamPermission('stays.rates'),
+  validate(schemas.ratePlanGuestPricingSchema),
+  pricing.updateGuestPricing,
+);
+router.patch(
+  '/properties/:id/rate-plans/:planId/child-pricing',
+  requireTeamPermission('stays.rates'),
+  validate(schemas.ratePlanChildPricingSchema),
+  pricing.updateChildPricing,
+);
 router.delete(
   '/properties/:id/rate-plans/:planId',
   requireTeamPermission('stays.rates'),
@@ -152,7 +172,13 @@ router.delete(
   controller.deleteRatePlan,
 );
 
-// Availability calendar
+// Availability calendar and range tooling
+router.get(
+  '/properties/:id/calendar',
+  requireTeamPermission('stays.availability'),
+  validate(schemas.calendarQuery),
+  availability.getCalendar,
+);
 router.get(
   '/properties/:id/availability',
   requireTeamPermission('stays.availability'),
@@ -170,6 +196,70 @@ router.delete(
   requireTeamPermission('stays.availability'),
   validate(schemas.availabilityCellDelete),
   controller.clearAvailabilityCell,
+);
+router.post(
+  '/properties/:id/availability/bulk',
+  requireTeamPermission('stays.availability'),
+  validate(schemas.availabilityBulkSchema),
+  availability.bulkAvailability,
+);
+router.post(
+  '/properties/:id/availability/copy',
+  requireTeamPermission('stays.availability'),
+  validate(schemas.availabilityCopySchema),
+  availability.copyAvailability,
+);
+
+// Dynamic restriction rules
+router.get(
+  '/properties/:id/restriction-rules',
+  requireTeamPermission('stays.availability'),
+  validate(schemas.propertyParams),
+  availability.listRestrictionRules,
+);
+router.post(
+  '/properties/:id/restriction-rules',
+  requireTeamPermission('stays.availability'),
+  validate(schemas.restrictionRuleCreateSchema),
+  availability.createRestrictionRule,
+);
+router.patch(
+  '/properties/:id/restriction-rules/:ruleId',
+  requireTeamPermission('stays.availability'),
+  validate(schemas.restrictionRuleUpdateSchema),
+  availability.updateRestrictionRule,
+);
+router.delete(
+  '/properties/:id/restriction-rules/:ruleId',
+  requireTeamPermission('stays.availability'),
+  validate(schemas.restrictionRuleParams),
+  availability.deleteRestrictionRule,
+);
+
+// Value adds
+router.get(
+  '/properties/:id/value-adds',
+  requireTeamPermission('stays.availability'),
+  validate(schemas.propertyParams),
+  availability.listValueAdds,
+);
+router.post(
+  '/properties/:id/value-adds',
+  requireTeamPermission('stays.availability'),
+  validate(schemas.valueAddCreateSchema),
+  availability.createValueAdd,
+);
+router.patch(
+  '/properties/:id/value-adds/:valueAddId',
+  requireTeamPermission('stays.availability'),
+  validate(schemas.valueAddUpdateSchema),
+  availability.updateValueAdd,
+);
+router.delete(
+  '/properties/:id/value-adds/:valueAddId',
+  requireTeamPermission('stays.availability'),
+  validate(schemas.valueAddParams),
+  availability.deleteValueAdd,
 );
 
 // Offers

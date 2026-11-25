@@ -17,7 +17,7 @@ const prisma = require('../../core/services/prismaClient');
 const AppError = require('../../core/services/appError');
 const catchAsync = require('../../core/services/catchAsync');
 const { cloudinary, isConfigured: cloudinaryConfigured } = require('../../../config/cloudinary');
-const { serializeStayBooking, stayBookingInclude } = require('./staysShared');
+const { serializeStayBooking, stayBookingInclude, withLockedProperty } = require('./staysShared');
 
 const STATUS_TO_UI = {
   DRAFT: 'Draft',
@@ -581,30 +581,32 @@ exports.removePhoto = catchAsync(async (req, res) => {
 
 exports.saveRatePlan = catchAsync(async (req, res) => {
   const supplierId = supplierIdFor(req);
-  const existing = await findOwnedProperty(req.params.id, supplierId);
-  const data = objectOrEmpty(existing.data);
-  const rooms = Array.isArray(data.rooms) ? data.rooms : [];
   const plan = objectOrEmpty(req.body);
 
-  if (!plan.roomId || !rooms.some((room) => room.id === plan.roomId)) {
-    throw new AppError('Rate plan must target a room on this property', 400);
-  }
+  const row = await withLockedProperty(req.params.id, supplierId, async (tx, existing) => {
+    const data = objectOrEmpty(existing.data);
+    const rooms = Array.isArray(data.rooms) ? data.rooms : [];
 
-  const plans = Array.isArray(data.ratePlans) ? [...data.ratePlans] : [];
-  const planId = req.params.planId || plan.id || `plan-${crypto.randomUUID()}`;
-  const index = plans.findIndex((row) => row.id === planId);
+    if (!plan.roomId || !rooms.some((room) => room.id === plan.roomId)) {
+      throw new AppError('Rate plan must target a room on this property', 400);
+    }
 
-  if (req.params.planId && index === -1) {
-    throw new AppError('Rate plan not found', 404);
-  }
+    const plans = Array.isArray(data.ratePlans) ? [...data.ratePlans] : [];
+    const planId = req.params.planId || plan.id || `plan-${crypto.randomUUID()}`;
+    const index = plans.findIndex((row) => row.id === planId);
 
-  const saved = { ...plan, id: planId, roomId: plan.roomId };
-  if (index >= 0) plans[index] = { ...plans[index], ...saved };
-  else plans.push(saved);
+    if (req.params.planId && index === -1) {
+      throw new AppError('Rate plan not found', 404);
+    }
 
-  const row = await prisma.stayProperty.update({
-    where: { id: existing.id },
-    data: { data: { ...data, ratePlans: plans } },
+    const saved = { ...plan, id: planId, roomId: plan.roomId };
+    if (index >= 0) plans[index] = { ...plans[index], ...saved };
+    else plans.push(saved);
+
+    return tx.stayProperty.update({
+      where: { id: existing.id },
+      data: { data: { ...data, ratePlans: plans } },
+    });
   });
 
   res.status(200).json({
@@ -615,22 +617,24 @@ exports.saveRatePlan = catchAsync(async (req, res) => {
 
 exports.deleteRatePlan = catchAsync(async (req, res) => {
   const supplierId = supplierIdFor(req);
-  const existing = await findOwnedProperty(req.params.id, supplierId);
-  const data = objectOrEmpty(existing.data);
-  const plans = Array.isArray(data.ratePlans) ? [...data.ratePlans] : [];
-  const plan = plans.find((row) => row.id === req.params.planId);
 
-  if (!plan) throw new AppError('Rate plan not found', 404);
+  const row = await withLockedProperty(req.params.id, supplierId, async (tx, existing) => {
+    const data = objectOrEmpty(existing.data);
+    const plans = Array.isArray(data.ratePlans) ? [...data.ratePlans] : [];
+    const plan = plans.find((row) => row.id === req.params.planId);
 
-  const siblings = plans.filter((row) => row.roomId === plan.roomId);
-  if (siblings.length <= 1) {
-    throw new AppError('Keep at least one rate plan for this room', 400);
-  }
+    if (!plan) throw new AppError('Rate plan not found', 404);
 
-  const nextPlans = plans.filter((row) => row.id !== req.params.planId);
-  const row = await prisma.stayProperty.update({
-    where: { id: existing.id },
-    data: { data: { ...data, ratePlans: nextPlans } },
+    const siblings = plans.filter((row) => row.roomId === plan.roomId);
+    if (siblings.length <= 1) {
+      throw new AppError('Keep at least one rate plan for this room', 400);
+    }
+
+    const nextPlans = plans.filter((row) => row.id !== req.params.planId);
+    return tx.stayProperty.update({
+      where: { id: existing.id },
+      data: { data: { ...data, ratePlans: nextPlans } },
+    });
   });
 
   res.status(200).json({

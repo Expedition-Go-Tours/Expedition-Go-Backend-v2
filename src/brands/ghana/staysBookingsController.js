@@ -170,14 +170,70 @@ function occupiedNights(bookings) {
 }
 
 /**
- * Validate one reservation night by night against the room's base inventory
- * and its per-date overrides.
+ * Lowercase weekday names indexed by `Date#getUTCDay()` (0 = Sunday). Stored
+ * rules use the same vocabulary as special offers.
+ */
+const WEEKDAY_NAMES = [
+  'sunday',
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+];
+
+function ruleRoomIds(rule) {
+  return Array.isArray(rule.roomIds) ? rule.roomIds : [];
+}
+
+function ruleAppliesToRoom(rule, roomId) {
+  const roomIds = ruleRoomIds(rule);
+  return roomIds.length === 0 || roomIds.includes(roomId);
+}
+
+function ruleAppliesToDate(rule, date) {
+  const key = dateKey(date);
+  const start = rule.startDate ? dateKey(rule.startDate) : null;
+  const end = rule.endDate ? dateKey(rule.endDate) : null;
+  if (start && key < start) return false;
+  if (end && key > end) return false;
+
+  const weekdays = Array.isArray(rule.weekdays) ? rule.weekdays : [];
+  if (weekdays.length) {
+    const weekday = WEEKDAY_NAMES[date.getUTCDay()];
+    if (!weekdays.some((day) => String(day).toLowerCase() === weekday)) return false;
+  }
+
+  return true;
+}
+
+function positiveInt(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 1) return null;
+  return Math.trunc(number);
+}
+
+/** Builder payloads historically stored Yes/No strings as well as booleans. */
+function booleanFlag(value) {
+  return value === true || value === 1 || value === '1' || value === 'Yes' || value === 'true';
+}
+
+/**
+ * Validate one reservation night by night against the room's base inventory,
+ * its per-date overrides, the chosen rate plan's stay restrictions and any
+ * active dynamic restriction rule.
  *
  * Returns the authoritative room-and-nights total. Overrides were previously
  * consulted for `closed` only; `count`, `price` and `minStay` were read from
  * the database and then ignored, so a supplier could cut a night's inventory to
  * one room, raise its price, or require a three-night stay, and the booking
  * endpoint would still sell it at the room's base price for a single night.
+ *
+ * Rate-plan `minStay` / `maxStay` / `closedArrival` / `closedDeparture` are
+ * saved by the builder but were never checked here either. The most restrictive
+ * minimum and maximum across the plan, matching rules and per-date overrides
+ * wins, so a rule can tighten a plan but never loosen it.
  */
 async function validateStayNights({
   tx,
@@ -191,7 +247,7 @@ async function validateStayNights({
   const baseCapacity = Math.max(1, Number(room.count) || 1);
   const baseNightly = plan ? Number(plan.price) : Number(room.price);
 
-  const [overrides, overlapping] = await Promise.all([
+  const [overrides, overlapping, ruleRows] = await Promise.all([
     tx.stayAvailabilityOverride.findMany({
       where: {
         propertyId: property.id,
@@ -210,7 +266,54 @@ async function validateStayNights({
       },
       select: { checkIn: true, checkOut: true },
     }),
+    tx.stayRestrictionRule.findMany({
+      where: {
+        propertyId: property.id,
+        isActive: true,
+        AND: [
+          { OR: [{ startDate: null }, { startDate: { lte: checkOut } }] },
+          { OR: [{ endDate: null }, { endDate: { gte: checkIn } }] },
+        ],
+      },
+      select: {
+        startDate: true,
+        endDate: true,
+        weekdays: true,
+        roomIds: true,
+        minStay: true,
+        maxStay: true,
+        stopSell: true,
+        closedToArrival: true,
+        closedToDeparture: true,
+      },
+    }),
   ]);
+
+  const rules = ruleRows.filter((rule) => ruleAppliesToRoom(rule, room.id));
+
+  const checkInKey = dateKey(checkIn);
+  const checkOutKey = dateKey(checkOut);
+
+  if (booleanFlag(plan?.closedArrival)) {
+    throw new AppError(`This rate plan is closed to arrival on ${checkInKey}`, 400);
+  }
+  if (booleanFlag(plan?.closedDeparture)) {
+    throw new AppError(`This rate plan is closed to departure on ${checkOutKey}`, 400);
+  }
+
+  if (rules.some((rule) => rule.closedToArrival && ruleAppliesToDate(rule, checkIn))) {
+    throw new AppError(`Those dates are closed to arrival (${checkInKey})`, 400);
+  }
+  // Departure is not a night, so it is checked against the checkout date rather
+  // than the [checkIn, checkOut) loop below.
+  if (rules.some((rule) => rule.closedToDeparture && ruleAppliesToDate(rule, checkOut))) {
+    throw new AppError(`Those dates are closed to departure (${checkOutKey})`, 400);
+  }
+
+  let requiredMin = positiveInt(plan?.minStay);
+  let requiredMax = positiveInt(plan?.maxStay);
+  let minStaySource = checkInKey;
+  let maxStaySource = checkInKey;
 
   const overrideByDate = new Map(overrides.map((row) => [dateKey(row.date), row]));
   const occupied = occupiedNights(overlapping);
@@ -221,16 +324,34 @@ async function validateStayNights({
     const night = addDays(checkIn, index);
     const key = dateKey(night);
     const override = overrideByDate.get(key);
+    const matchingRules = rules.filter((rule) => ruleAppliesToDate(rule, night));
 
     if (override?.closed) {
       throw new AppError(`Those dates are blocked for this room (${key} is closed)`, 400);
     }
 
-    if (override?.minStay != null && nights < override.minStay) {
-      throw new AppError(
-        `A minimum stay of ${override.minStay} night(s) applies on ${key}`,
-        400,
-      );
+    if (matchingRules.some((rule) => rule.stopSell)) {
+      throw new AppError(`Those dates are blocked for this room (${key} is closed to sale)`, 400);
+    }
+
+    for (const rule of matchingRules) {
+      const ruleMin = positiveInt(rule.minStay);
+      if (ruleMin !== null && ruleMin > (requiredMin || 0)) {
+        requiredMin = ruleMin;
+        minStaySource = key;
+      }
+
+      const ruleMax = positiveInt(rule.maxStay);
+      if (ruleMax !== null && (requiredMax === null || ruleMax < requiredMax)) {
+        requiredMax = ruleMax;
+        maxStaySource = key;
+      }
+    }
+
+    const overrideMin = positiveInt(override?.minStay);
+    if (overrideMin !== null && overrideMin > (requiredMin || 0)) {
+      requiredMin = overrideMin;
+      minStaySource = key;
     }
 
     const capacity = override?.count != null ? Math.max(0, override.count) : baseCapacity;
@@ -247,6 +368,20 @@ async function validateStayNights({
       throw new AppError(`A valid nightly price is required before taking a booking (${key})`, 400);
     }
     total += nightly;
+  }
+
+  if (requiredMin !== null && nights < requiredMin) {
+    throw new AppError(
+      `A minimum stay of ${requiredMin} night(s) applies on ${minStaySource}`,
+      400,
+    );
+  }
+
+  if (requiredMax !== null && nights > requiredMax) {
+    throw new AppError(
+      `A maximum stay of ${requiredMax} night(s) applies on ${maxStaySource}`,
+      400,
+    );
   }
 
   return Math.round(total * 100) / 100;
@@ -596,3 +731,10 @@ exports.getCancellationRecords = catchAsync(async (req, res) => {
     },
   });
 });
+
+// Exported for unit tests.
+exports._private = {
+  ruleAppliesToRoom,
+  ruleAppliesToDate,
+  positiveInt,
+};

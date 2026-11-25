@@ -39,10 +39,14 @@ jest.mock('../../src/core/services/prismaClient', () => ({
   },
   conversation: { findMany: jest.fn() },
   message: { count: jest.fn() },
+  $queryRawUnsafe: jest.fn(),
   $transaction: jest.fn(),
 }));
 
 const prisma = require('../../src/core/services/prismaClient');
+prisma.$transaction.mockImplementation((arg) => (
+  typeof arg === 'function' ? arg(prisma) : Promise.all(arg)
+));
 const controller = require('../../src/brands/ghana/staysController');
 
 function makeRes() {

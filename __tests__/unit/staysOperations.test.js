@@ -2,6 +2,7 @@ jest.mock('../../src/core/services/prismaClient', () => {
   const prisma = {
     stayProperty: { findMany: jest.fn(), findFirst: jest.fn(), groupBy: jest.fn() },
     stayAvailabilityOverride: { findFirst: jest.fn(), findMany: jest.fn() },
+    stayRestrictionRule: { findMany: jest.fn() },
     stayBooking: {
       findMany: jest.fn(),
       findFirst: jest.fn(),
@@ -128,6 +129,7 @@ describe('staysBookingsController', () => {
     prisma.user.findFirst.mockResolvedValue(null);
     prisma.stayAvailabilityOverride.findFirst.mockResolvedValue(null);
     prisma.stayAvailabilityOverride.findMany.mockResolvedValue([]);
+    prisma.stayRestrictionRule.findMany.mockResolvedValue([]);
   });
 
   it('creates a manual booking with nights, price and commission', async () => {
@@ -296,6 +298,183 @@ describe('staysBookingsController', () => {
     expect(prisma.stayBooking.create).not.toHaveBeenCalled();
     expect(next.mock.calls[0][0].statusCode).toBe(400);
     expect(next.mock.calls[0][0].message).toMatch(/blocked for this room/);
+  });
+
+  it('enforces the rate plan minimum stay', async () => {
+    prisma.stayProperty.findFirst.mockResolvedValue({
+      id: 'sp-1',
+      name: 'Akwaaba Coast Hotel',
+      data: {
+        currency: 'GHS',
+        rooms: [{ id: 'r1', name: 'Deluxe King Room', count: 4, price: 120 }],
+        ratePlans: [{ id: 'plan-r1', roomId: 'r1', name: 'Standard rate', price: 120, minStay: 3 }],
+      },
+    });
+    prisma.stayBooking.findMany.mockResolvedValue([]);
+
+    req.body = {
+      propertyId: 'sp-1',
+      roomId: 'r1',
+      guestName: 'Ama Mensah',
+      checkIn: '2026-11-10',
+      checkOut: '2026-11-12',
+    };
+
+    await bookings.createBooking(req, res, next);
+
+    expect(prisma.stayBooking.create).not.toHaveBeenCalled();
+    expect(next.mock.calls[0][0].statusCode).toBe(400);
+    expect(next.mock.calls[0][0].message).toMatch(/minimum stay of 3 night/i);
+  });
+
+  it('enforces the rate plan maximum stay', async () => {
+    prisma.stayProperty.findFirst.mockResolvedValue({
+      id: 'sp-1',
+      name: 'Akwaaba Coast Hotel',
+      data: {
+        currency: 'GHS',
+        rooms: [{ id: 'r1', name: 'Deluxe King Room', count: 4, price: 120 }],
+        ratePlans: [{ id: 'plan-r1', roomId: 'r1', name: 'Standard rate', price: 120, maxStay: 1 }],
+      },
+    });
+    prisma.stayBooking.findMany.mockResolvedValue([]);
+
+    req.body = {
+      propertyId: 'sp-1',
+      roomId: 'r1',
+      guestName: 'Ama Mensah',
+      checkIn: '2026-11-10',
+      checkOut: '2026-11-12',
+    };
+
+    await bookings.createBooking(req, res, next);
+
+    expect(prisma.stayBooking.create).not.toHaveBeenCalled();
+    expect(next.mock.calls[0][0].statusCode).toBe(400);
+    expect(next.mock.calls[0][0].message).toMatch(/maximum stay of 1 night/i);
+  });
+
+  it('enforces the rate plan closed-to-arrival flag', async () => {
+    prisma.stayProperty.findFirst.mockResolvedValue({
+      id: 'sp-1',
+      name: 'Akwaaba Coast Hotel',
+      data: {
+        currency: 'GHS',
+        rooms: [{ id: 'r1', name: 'Deluxe King Room', count: 4, price: 120 }],
+        ratePlans: [{
+          id: 'plan-r1',
+          roomId: 'r1',
+          name: 'Standard rate',
+          price: 120,
+          closedArrival: true,
+        }],
+      },
+    });
+    prisma.stayBooking.findMany.mockResolvedValue([]);
+
+    req.body = {
+      propertyId: 'sp-1',
+      roomId: 'r1',
+      guestName: 'Ama Mensah',
+      checkIn: '2026-11-10',
+      checkOut: '2026-11-12',
+    };
+
+    await bookings.createBooking(req, res, next);
+
+    expect(prisma.stayBooking.create).not.toHaveBeenCalled();
+    expect(next.mock.calls[0][0].statusCode).toBe(400);
+    expect(next.mock.calls[0][0].message).toMatch(/closed to arrival/);
+  });
+
+  it('enforces a dynamic stop-sell rule', async () => {
+    prisma.stayProperty.findFirst.mockResolvedValue({
+      id: 'sp-1',
+      name: 'Akwaaba Coast Hotel',
+      data: {
+        currency: 'GHS',
+        rooms: [{ id: 'r1', name: 'Deluxe King Room', count: 4, price: 120 }],
+        ratePlans: [{ id: 'plan-r1', roomId: 'r1', name: 'Standard rate', price: 120 }],
+      },
+    });
+    prisma.stayRestrictionRule.findMany.mockResolvedValue([{
+      startDate: new Date('2026-11-01T00:00:00.000Z'),
+      endDate: new Date('2026-11-30T00:00:00.000Z'),
+      weekdays: [],
+      roomIds: ['r1'],
+      minStay: null,
+      maxStay: null,
+      stopSell: true,
+      closedToArrival: false,
+      closedToDeparture: false,
+    }]);
+    prisma.stayBooking.findMany.mockResolvedValue([]);
+
+    req.body = {
+      propertyId: 'sp-1',
+      roomId: 'r1',
+      guestName: 'Ama Mensah',
+      checkIn: '2026-11-10',
+      checkOut: '2026-11-12',
+    };
+
+    await bookings.createBooking(req, res, next);
+
+    expect(prisma.stayBooking.create).not.toHaveBeenCalled();
+    expect(next.mock.calls[0][0].statusCode).toBe(400);
+    expect(next.mock.calls[0][0].message).toMatch(/closed to sale/);
+  });
+
+  it('enforces closed-to-arrival and closed-to-departure rules', async () => {
+    prisma.stayProperty.findFirst.mockResolvedValue({
+      id: 'sp-1',
+      name: 'Akwaaba Coast Hotel',
+      data: {
+        currency: 'GHS',
+        rooms: [{ id: 'r1', name: 'Deluxe King Room', count: 4, price: 120 }],
+        ratePlans: [{ id: 'plan-r1', roomId: 'r1', name: 'Standard rate', price: 120 }],
+      },
+    });
+    prisma.stayBooking.findMany.mockResolvedValue([]);
+
+    prisma.stayRestrictionRule.findMany.mockResolvedValue([{
+      startDate: null,
+      endDate: null,
+      weekdays: [],
+      roomIds: [],
+      minStay: null,
+      maxStay: null,
+      stopSell: false,
+      closedToArrival: true,
+      closedToDeparture: false,
+    }]);
+
+    req.body = {
+      propertyId: 'sp-1',
+      roomId: 'r1',
+      guestName: 'Ama Mensah',
+      checkIn: '2026-11-10',
+      checkOut: '2026-11-12',
+    };
+
+    await bookings.createBooking(req, res, next);
+    expect(next.mock.calls[0][0].message).toMatch(/closed to arrival/);
+
+    next.mockClear();
+    prisma.stayRestrictionRule.findMany.mockResolvedValue([{
+      startDate: null,
+      endDate: null,
+      weekdays: [],
+      roomIds: [],
+      minStay: null,
+      maxStay: null,
+      stopSell: false,
+      closedToArrival: false,
+      closedToDeparture: true,
+    }]);
+
+    await bookings.createBooking(req, res, next);
+    expect(next.mock.calls[0][0].message).toMatch(/closed to departure/);
   });
 
   it('creates a STAYS conversation and notification for a known customer', async () => {

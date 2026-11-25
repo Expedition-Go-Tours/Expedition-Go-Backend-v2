@@ -3354,6 +3354,8 @@ model StayProperty {
   data Json @default("{}")
 
   availabilityOverrides StayAvailabilityOverride[]
+  restrictionRules      StayRestrictionRule[]
+  valueAdds             StayValueAdd[]
   bookings              StayBooking[]
   reviews               StayReview[]
   offerTargets          StayOfferTarget[]
@@ -3389,6 +3391,67 @@ model StayAvailabilityOverride {
 
   @@unique([propertyId, roomId, date])
   @@index([propertyId, date])
+}
+
+/// Date/day/room rules that constrain how a stay is sold. Distinct from a
+/// per-date override: one rule can span months and repeat on weekdays, and the
+/// booking validator applies the most restrictive matching rule to each night.
+/// An empty `roomIds` array means every room on the property.
+model StayRestrictionRule {
+  id         String       @id @default(cuid())
+  propertyId String
+  property   StayProperty @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  name String?
+
+  startDate DateTime? @db.Date
+  endDate   DateTime? @db.Date
+
+  /// Lowercase weekday names ("monday"); empty means every day.
+  weekdays String[] @default([])
+  /// Room ids from StayProperty.data.rooms; empty means every room.
+  roomIds  String[] @default([])
+
+  minStay Int?
+  maxStay Int?
+
+  stopSell          Boolean @default(false)
+  closedToArrival   Boolean @default(false)
+  closedToDeparture Boolean @default(false)
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([propertyId, isActive])
+  @@index([propertyId, startDate, endDate])
+}
+
+enum StayValueAddUnit {
+  PER_STAY
+  PER_NIGHT
+  PER_PERSON
+}
+
+/// An optional property-level extra a guest can buy with a booking (airport
+/// pickup, breakfast, late checkout). Priced in the property's currency.
+model StayValueAdd {
+  id         String       @id @default(cuid())
+  propertyId String
+  property   StayProperty @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  price       Decimal          @db.Decimal(10, 2)
+  unit        StayValueAddUnit @default(PER_STAY)
+  isActive    Boolean          @default(true)
+  sortOrder   Int              @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([propertyId, isActive, sortOrder])
 }
 
 enum StayBookingStatus {
