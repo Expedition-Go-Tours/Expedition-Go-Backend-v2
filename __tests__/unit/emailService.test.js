@@ -243,7 +243,7 @@ describe('generatePrintableTicketHtml', () => {
       tourDescription: 'A great tour experience',
       travelDate: '2026-07-01T00:00:00.000Z',
       selectedTime: '10:00',
-      travelers: { adults: 2, children: 1, infants: 0, seniors: 1 },
+      travelers: { adults: 2, children: 1, infants: 0, seniors: 1, students: 2 },
       currency: 'USD',
       total: 250,
       status: 'CONFIRMED',
@@ -264,12 +264,32 @@ describe('generatePrintableTicketHtml', () => {
     expect(html).toContain('2 Adult(s)');
     expect(html).toContain('1 Child(ren)');
     expect(html).toContain('1 Senior(s)');
+    expect(html).toContain('2 Students');
     expect(html).toContain('USD 250');
     expect(html).toContain('Confirmed');
     expect(html).toContain('Professional guide');
     expect(html).toContain('No pets allowed');
     expect(html).toContain('Free cancellation 24h before');
     expect(html).toContain('Supplier Co');
+  });
+
+  it('renders categories from details when counts are absent', () => {
+    const data = {
+      bookingNumber: 'TB-003',
+      customerName: 'Ama Mensah',
+      tourTitle: 'Legacy Booking',
+      travelDate: '2026-09-10T00:00:00.000Z',
+      travelers: { details: [{ ageGroup: 'adult' }, { ageGroup: 'senior' }] },
+      currency: 'USD',
+      total: 100,
+      status: 'CONFIRMED',
+      supplierName: 'Supplier Co',
+      supportEmail: 'support@example.com',
+    };
+
+    const html = generatePrintableTicketHtml(data);
+    expect(html).toContain('1 Adult(s)');
+    expect(html).toContain('1 Senior(s)');
   });
 
   it('handles minimal input without crashing', () => {

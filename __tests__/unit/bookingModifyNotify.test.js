@@ -210,5 +210,33 @@ describe('buildChangeLabels', () => {
     expect(rows.some((r) => r.label === 'Total price')).toBe(false);
     expect(rows.some((r) => r.label === 'Activity date')).toBe(true);
   });
+
+  it('reports a category-only party change even when the total is unchanged', () => {
+    const rows = buildChangeLabels(
+      {
+        travelDate: new Date(Date.UTC(2026, 0, 1)),
+        selectedTime: '09:00',
+        travelers: { adults: 2 },
+        travelerTotal: 2,
+        grossAmount: 100,
+      },
+      {
+        travelDate: new Date(Date.UTC(2026, 0, 1)),
+        selectedTime: '09:00',
+        travelers: { adults: 1, seniors: 1 },
+        travelerTotal: 2,
+        newTotal: 100,
+      },
+      'USD'
+    );
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        label: 'Travellers',
+        previous: '2 adults',
+        updated: '1 adult, 1 senior',
+      }),
+    ]);
+  });
 });
 

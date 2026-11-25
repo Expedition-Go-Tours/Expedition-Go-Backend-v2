@@ -14,6 +14,7 @@ const { notifyDiscord } = require('../../core/services/discordNotifier');
 const { salesBookingCancelled } = require('../../core/services/channelEmbeds');
 const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('../../core/services/tourHelpers');
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob, cutoffAnchorUtc } = require('../../core/services/availabilityCore');
+const { travelerParts } = require('../../core/services/travelerBreakdown');
 const { resolvePickupSelection } = require('../../core/services/geoUtils');
 const { validatePassengerMix } = require('../../core/services/passengerMix');
 const { createPaymentIntent, createCheckoutSession, createCustomCheckoutPaymentIntent, createCustomerSession, calculateCommission, getStripe, ensureStripeCustomer } = require('../../core/services/stripeHelpers');
@@ -1406,12 +1407,13 @@ const getCheckoutDraft = catchAsync(async (req, res, next) => {
   }
 
   const travelers = draft.payload?.travelers || {};
-  const count = (v) => (typeof v === 'number' && v > 0 ? v : 0);
-  const adults = count(travelers.adults);
-  const children = count(travelers.children);
-  const infants = count(travelers.infants);
-  const details = Array.isArray(travelers.details) ? travelers.details : null;
-  const partyTotal = details && details.length > 0 ? details.length : adults + children + infants;
+  const parts = travelerParts(travelers);
+  const partyCounts = Object.fromEntries(parts.map((part) => [part.key, part.count]));
+  const adults = partyCounts.adults || 0;
+  const children = partyCounts.children || 0;
+  const infants = partyCounts.infants || 0;
+  const seniors = partyCounts.seniors || 0;
+  const partyTotal = parts.reduce((sum, part) => sum + part.count, 0);
 
   let paymentIntentId = null;
   let clientSecret = null;
@@ -1455,7 +1457,7 @@ const getCheckoutDraft = catchAsync(async (req, res, next) => {
         },
         travelDate: draft.travelDate,
         selectedTime: draft.selectedTime || null,
-        party: { adults, children, infants, total: partyTotal },
+        party: { adults, children, infants, seniors, counts: partyCounts, total: partyTotal },
         leadTraveler: {
           name: draft.payload?.leadTraveler?.name || null,
           email: draft.payload?.leadTraveler?.email || null,
@@ -1967,10 +1969,10 @@ const cancelBooking = catchAsync(async (req, res, next) => {
 
     // Decrement special offer spotsSold if an offer was applied
     if (booking.appliedOfferId) {
-      const travelerCount = (booking.travelers?.adults || 0) + (booking.travelers?.children || 0) + (booking.travelers?.infants || 0);
+      const seatsToRelease = travelerCount(booking.travelers);
       await tx.specialOffer.update({
         where: { id: booking.appliedOfferId },
-        data: { spotsSold: { decrement: travelerCount } },
+        data: { spotsSold: { decrement: seatsToRelease } },
       });
     }
 
@@ -2455,10 +2457,7 @@ const exportSupplierBookings = catchAsync(async (req, res, next) => {
   for (const row of rows) {
     const contact = contacts.get(row.id) || '';
     const travelers = row.travelers && typeof row.travelers === 'object' ? row.travelers : {};
-    const travelerCount = ['adults', 'children', 'infants'].reduce(
-      (sum, key) => sum + (Number(travelers[key]) || 0),
-      0,
-    ) || (travelers.name ? 1 : 0);
+    const headcount = travelerCount(travelers) || (travelers.name ? 1 : 0);
 
     lines.push([
       row.bookingNumber,
@@ -2478,7 +2477,7 @@ const exportSupplierBookings = catchAsync(async (req, res, next) => {
         contact,
         row.leadTravelerPhone || row.customer?.phone || '',
       ] : []),
-      travelerCount,
+      headcount,
       ...(includeMoney ? [
         row.currency,
         Number(row.subtotal || 0),

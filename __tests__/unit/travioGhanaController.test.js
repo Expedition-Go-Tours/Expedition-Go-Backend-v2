@@ -387,6 +387,20 @@ describe('cancelBooking gives back the offer capacity it consumed', () => {
     expect(res.status).toHaveBeenCalledWith(200);
   });
 
+  it('counts supplier-defined traveller categories when releasing offer spots', async () => {
+    prisma.booking.findFirst.mockResolvedValue({
+      ...offerBooking,
+      travelers: { adults: 1, seniors: 2, students: 1 },
+    });
+
+    await controller.cancelBooking(req, res);
+
+    expect(tx.specialOffer.update).toHaveBeenCalledWith({
+      where: { id: 'offer-9' },
+      data: { spotsSold: { decrement: 4 } },
+    });
+  });
+
   it('leaves the offer untouched when the booking never applied one', async () => {
     prisma.booking.findFirst.mockResolvedValue({ ...offerBooking, appliedOfferId: null });
 

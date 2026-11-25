@@ -105,6 +105,10 @@ describe('travelerCount', () => {
     })).toBe(1);
   });
 
+  it('never counts a purely numeric phone string as a traveller', () => {
+    expect(core.travelerCount({ adults: 1, phoneNumber: '233201234567' })).toBe(1);
+  });
+
   it('coerces numeric strings', () => {
     expect(core.travelerCount({ adults: '2', children: '1' })).toBe(3);
   });

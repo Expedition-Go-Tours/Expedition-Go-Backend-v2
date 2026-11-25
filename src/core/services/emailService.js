@@ -3281,11 +3281,17 @@ function generateNotificationRecipientVerifyEmail(data) {
 // ---------------------------------------------------------------------------
 
 function generatePrintableTicketHtml(data) {
-  const travelers = [];
-  if (data.travelers?.adults) travelers.push(`${data.travelers.adults} Adult(s)`);
-  if (data.travelers?.children) travelers.push(`${data.travelers.children} Child(ren)`);
-  if (data.travelers?.infants) travelers.push(`${data.travelers.infants} Infant(s)`);
-  if (data.travelers?.seniors) travelers.push(`${data.travelers.seniors} Senior(s)`);
+  const ticketLabels = {
+    adults: 'Adult(s)',
+    children: 'Child(ren)',
+    infants: 'Infant(s)',
+    seniors: 'Senior(s)',
+  };
+  const travelers = fmt.formatTravelers(data.travelers).parts.map((part) => {
+    if (ticketLabels[part.key]) return `${part.count} ${ticketLabels[part.key]}`;
+    const name = part.count === 1 ? part.singular : part.plural;
+    return `${part.count} ${name.charAt(0).toUpperCase()}${name.slice(1)}`;
+  });
 
   const includedHtml = (data.included || []).map((i) => `<li>${i}</li>`).join('');
 

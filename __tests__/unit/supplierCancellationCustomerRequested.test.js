@@ -98,6 +98,24 @@ describe('cancelBySupplier — customer-requested', () => {
     expect(result.fee).toBe(0);
   });
 
+  it('returns every traveller category to an applied offer, including seniors', async () => {
+    await cancelBySupplier({
+      booking: {
+        ...booking(),
+        appliedOfferId: 'offer-1',
+        travelers: { adults: 1, seniors: 2 },
+      },
+      payload,
+      supplierId: 's1',
+      req: {},
+    });
+
+    expect(prisma.__tx.specialOffer.update).toHaveBeenCalledWith({
+      where: { id: 'offer-1' },
+      data: { spotsSold: { decrement: 3 } },
+    });
+  });
+
   it('sends the customer and supplier cancellation emails, not the supplier-cancelled pair', async () => {
     await cancelBySupplier({ booking: booking(), payload, supplierId: 's1', req: {} });
 

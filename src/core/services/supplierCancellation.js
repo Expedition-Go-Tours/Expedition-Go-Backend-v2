@@ -25,7 +25,7 @@ const prisma = require('./prismaClient');
 const AppError = require('./appError');
 const { refundBookingPayment } = require('./payments');
 const { evaluateCancellationPolicy, activityStart } = require('./bookingHelpers');
-const { evaluateBookingAvailability } = require('./availabilityCore');
+const { evaluateBookingAvailability, travelerCount } = require('./availabilityCore');
 const { detachBookingFromActiveRequests } = require('./financeHelpers');
 const { detachBookingFromInvoices } = require('./invoiceService');
 const { enqueueEmail, enqueueNotification, enqueueEvent } = require('./queue');
@@ -51,11 +51,6 @@ const REFUND_RECLAIM_MIN_MS = 10 * 60 * 1000;
 const REFUND_STUCK_MS = 24 * 60 * 60 * 1000;
 
 const BATCH_MAX = 100;
-
-function travelerTotal(travelers) {
-  const t = travelers && typeof travelers === 'object' ? travelers : {};
-  return (t.adults || 0) + (t.children || 0) + (t.infants || 0) || 1;
-}
 
 function dateKeyOf(date) {
   return new Date(date).toISOString().slice(0, 10);
@@ -304,7 +299,7 @@ async function cancelBySupplier({ booking, payload, supplierId, req, skipValidat
     if (booking.appliedOfferId) {
       await tx.specialOffer.update({
         where: { id: booking.appliedOfferId },
-        data: { spotsSold: { decrement: travelerTotal(booking.travelers) } },
+        data: { spotsSold: { decrement: travelerCount(booking.travelers) || 1 } },
       });
     }
 
@@ -499,7 +494,7 @@ async function resolveChoiceReschedule(booking, newTravelDate) {
     if (booking.appliedOfferId) {
       await tx.specialOffer.update({
         where: { id: booking.appliedOfferId },
-        data: { spotsSold: { increment: travelerTotal(booking.travelers) } },
+        data: { spotsSold: { increment: travelerCount(booking.travelers) || 1 } },
       });
     }
 

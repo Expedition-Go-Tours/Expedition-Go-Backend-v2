@@ -8,6 +8,7 @@ const { enqueueEvent, enqueueEmail, enqueueNotification } = require('./services/
 const { validateTravelerInfo, generateBookingNumber, evaluateCancellationPolicy, evaluateModifyPolicy, isValidEmail } = require('./services/bookingHelpers');
 const { checkTourAvailability, calculateTourPrice, cheapestRetailPrice } = require('./services/tourHelpers');
 const { evaluateBookingAvailability, resolveSlotCutoffHours, cutoffLabel, getTourTimezone, zonedDateKey, zonedTimeToUtc, toDateKey, travelerCount, parseBlob, cutoffAnchorUtc } = require('./services/availabilityCore');
+const { travelerParts } = require('./services/travelerBreakdown');
 const { resolvePickupSelection, normalizePickupSnapshot } = require('./services/geoUtils');
 const { pickupChange } = require('./services/pickupChange');
 const { validatePassengerMix } = require('./services/passengerMix');
@@ -1642,6 +1643,8 @@ controller.calculateCheckout = catchAsync(async (req, res, next) => {
     if (totalTravelers > availability.availableSpots) {
       throw new AppError(`Only ${availability.availableSpots} spots available, but ${totalTravelers} travelers requested`, 400);
     }
+    const summaryParts = travelerParts(travelers);
+    const summaryCounts = Object.fromEntries(summaryParts.map((part) => [part.key, part.count]));
 
     const pricing = await calculateTourPrice(tour, travelers, travelDate, selectedTime || null, optionKeyCalc, req.user?.id, promoCode || null)
       .catch(() => ({ success: false, error: 'Unable to calculate pricing' }));
@@ -1663,9 +1666,11 @@ controller.calculateCheckout = catchAsync(async (req, res, next) => {
           total: pricing.total,
         },
         travelerSummary: {
-          adults: travelers.adults || 0,
-          children: travelers.children || 0,
-          infants: travelers.infants || 0,
+          adults: summaryCounts.adults || 0,
+          children: summaryCounts.children || 0,
+          infants: summaryCounts.infants || 0,
+          seniors: summaryCounts.seniors || 0,
+          counts: summaryCounts,
           total: totalTravelers,
         },
       },
@@ -2355,12 +2360,13 @@ controller.getCheckoutDraft = catchAsync(async (req, res, next) => {
   }
 
   const travelers = draft.payload?.travelers || {};
-  const count = (v) => (typeof v === 'number' && v > 0 ? v : 0);
-  const adults = count(travelers.adults);
-  const children = count(travelers.children);
-  const infants = count(travelers.infants);
-  const details = Array.isArray(travelers.details) ? travelers.details : null;
-  const partyTotal = details && details.length > 0 ? details.length : adults + children + infants;
+  const parts = travelerParts(travelers);
+  const partyCounts = Object.fromEntries(parts.map((part) => [part.key, part.count]));
+  const adults = partyCounts.adults || 0;
+  const children = partyCounts.children || 0;
+  const infants = partyCounts.infants || 0;
+  const seniors = partyCounts.seniors || 0;
+  const partyTotal = parts.reduce((sum, part) => sum + part.count, 0);
 
   let paymentIntentId = null;
   let clientSecret = null;
@@ -2404,7 +2410,7 @@ controller.getCheckoutDraft = catchAsync(async (req, res, next) => {
         },
         travelDate: draft.travelDate,
         selectedTime: draft.selectedTime || null,
-        party: { adults, children, infants, total: partyTotal },
+        party: { adults, children, infants, seniors, counts: partyCounts, total: partyTotal },
         leadTraveler: {
           name: draft.payload?.leadTraveler?.name || null,
           email: draft.payload?.leadTraveler?.email || null,
@@ -3231,10 +3237,10 @@ controller.cancelBooking = catchAsync(async (req, res, next) => {
 
     // Decrement special offer spotsSold if an offer was applied
     if (booking.appliedOfferId) {
-      const travelerCount = (booking.travelers?.adults || 0) + (booking.travelers?.children || 0) + (booking.travelers?.infants || 0);
+      const seatsToRelease = travelerCount(booking.travelers);
       await tx.specialOffer.update({
         where: { id: booking.appliedOfferId },
-        data: { spotsSold: { decrement: travelerCount } },
+        data: { spotsSold: { decrement: seatsToRelease } },
       });
     }
 

@@ -18,6 +18,7 @@
 
 const PDFDocument = require('pdfkit');
 const { getBrandEmail } = require('../../../config/brands');
+const { travelerParts } = require('./travelerBreakdown');
 
 // ── Layout (A4 portrait, points) ──
 const PAGE_W = 595.28;
@@ -79,13 +80,10 @@ function cardLabel(booking, settlement) {
 }
 
 function travelerSummary(travelers) {
-  const t = travelers && typeof travelers === 'object' ? travelers : {};
-  const parts = [];
-  if (t.adults) parts.push(`${t.adults} ${t.adults === 1 ? 'adult' : 'adults'}`);
-  if (t.children) parts.push(`${t.children} ${t.children === 1 ? 'child' : 'children'}`);
-  if (t.infants) parts.push(`${t.infants} ${t.infants === 1 ? 'infant' : 'infants'}`);
-  if (t.seniors) parts.push(`${t.seniors} ${t.seniors === 1 ? 'senior' : 'seniors'}`);
-  return parts.join(' · ');
+  if (!travelers || typeof travelers !== 'object') return '';
+  return travelerParts(travelers)
+    .map((part) => `${part.count} ${part.count === 1 ? part.singular : part.plural}`)
+    .join(' · ');
 }
 
 /**

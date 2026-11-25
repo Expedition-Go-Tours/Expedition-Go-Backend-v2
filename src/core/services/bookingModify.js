@@ -31,6 +31,7 @@ const AppError = require('./appError');
 const { evaluateModifyPolicy, modificationCutoffHours, activityStart } = require('./bookingHelpers');
 const { calculateTourPrice } = require('./tourHelpers');
 const { evaluateBookingAvailability, travelerCount, parseBlob, toDateKey } = require('./availabilityCore');
+const { travelerLabel } = require('./travelerBreakdown');
 const { validatePassengerMix } = require('./passengerMix');
 const {
   calculateCommission,
@@ -155,7 +156,21 @@ function buildChangeLabels(prev, next, currency = 'USD') {
       updated: next.selectedTime || 'Not set',
     });
   }
-  if (prev.travelerTotal !== next.travelerTotal) {
+  const previousParty = travelerLabel(prev.travelers);
+  const updatedParty = travelerLabel(next.travelers);
+  if (previousParty !== updatedParty) {
+    // Compare the category map, not just the total: 2 adults → 1 adult +
+    // 1 senior is a real party change even though both sides total 2.
+    const previous = previousParty || String(prev.travelerTotal);
+    const updated = updatedParty || String(next.travelerTotal);
+    labels.push({
+      label: 'Travellers',
+      detail: `${previous} → ${updated}`,
+      previous,
+      updated,
+    });
+  } else if (prev.travelerTotal !== next.travelerTotal) {
+    // Legacy snapshots may carry only a total and no travellers blob.
     labels.push({
       label: 'Travellers',
       detail: `${prev.travelerTotal} → ${next.travelerTotal}`,

@@ -1,4 +1,4 @@
-const { formatTravelers, getBookingTypeLabel, formatCompactDate, formatDateTime, formatCardBrand, formatPaymentMethodLabel, emailPhotoUrl, HERO_TRANSFORM, CARD_TRANSFORM } = require('../../src/core/services/emailFormatting');
+const { formatTravelers, getBookingTypeLabel, getCancelDeadline, formatCompactDate, formatDateTime, formatCardBrand, formatPaymentMethodLabel, emailPhotoUrl, HERO_TRANSFORM, CARD_TRANSFORM } = require('../../src/core/services/emailFormatting');
 
 /**
  * formatCompactDate — the "Reserved 9 Oct 2026" reference-bar form.
@@ -121,6 +121,20 @@ describe('formatTravelers', () => {
     expect(out.label).toBe('1 adult, 2 seniors');
   });
 
+  it('includes supplier-defined categories such as students and youth', () => {
+    expect(formatTravelers({ adults: 1, students: 2 }).label).toBe('1 adult, 2 students');
+    expect(formatTravelers({ students: 2 }).label).toBe('2 students');
+    expect(formatTravelers({ youth: 2 }).label).toBe('2 youths');
+    expect(formatTravelers({ adults: 1, seniors: 2, students: 1 }).label)
+      .toBe('1 adult, 2 seniors, 1 student');
+  });
+
+  it('counts supplier-defined categories from details too', () => {
+    const out = formatTravelers({ details: [{ ageGroup: 'student' }, { ageGroup: 'student' }] });
+    expect(out.total).toBe(2);
+    expect(out.label).toBe('2 students');
+  });
+
   it('uses details only when the booking carries no counts', () => {
     const out = formatTravelers({
       details: [{ ageGroup: 'adult' }, { ageGroup: 'child' }],
@@ -163,12 +177,38 @@ describe('formatTravelers', () => {
     expect(out.total).toBe(4);
   });
 
-  it('does not inflate on an unrecognised age group in details', () => {
-    // Nothing matches, so the single-traveller floor applies rather than the
-    // entry being silently counted as an adult.
-    const out = formatTravelers({ details: [{ ageGroup: 'student' }] });
+  it('floors an empty detail row rather than inventing a category', () => {
+    const out = formatTravelers({ details: [{}] });
     expect(out.total).toBe(1);
     expect(out.label).toBe('1 adult');
+  });
+});
+
+describe('getCancelDeadline', () => {
+  const travelDate = new Date('2026-12-01T09:00:00Z');
+
+  it('returns the policy deadline for a refundable standard policy', () => {
+    const deadline = getCancelDeadline(
+      { travelDate },
+      { bookingAndTickets: { cancellationPolicy: { type: 'standard', cancellationWindowHours: 24, refundPercentage: 100 } } }
+    );
+    expect(deadline.toISOString()).toBe('2026-11-30T09:00:00.000Z');
+  });
+
+  it('returns no deadline for a zero-refund standard policy', () => {
+    const deadline = getCancelDeadline(
+      { travelDate },
+      { bookingAndTickets: { cancellationPolicy: { type: 'standard', cancellationWindowHours: 24, refundPercentage: 0 } } }
+    );
+    expect(deadline).toBeNull();
+  });
+
+  it('returns no deadline for an all-sales-final policy', () => {
+    const deadline = getCancelDeadline(
+      { travelDate },
+      { bookingAndTickets: { cancellationPolicy: { type: 'all_sales_final' } } }
+    );
+    expect(deadline).toBeNull();
   });
 });
 

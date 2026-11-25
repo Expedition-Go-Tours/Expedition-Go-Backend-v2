@@ -189,6 +189,23 @@ describe('decideCustomerCancellation', () => {
     expect(result.customerCancellationStatus).toBe('APPROVED');
   });
 
+  it('releases every traveller category, including seniors', async () => {
+    await service.decideCustomerCancellation({
+      booking: booking({
+        customerCancellationStatus: 'PENDING',
+        appliedOfferId: 'offer-1',
+        travelers: { adults: 1, seniors: 2 },
+      }),
+      supplierId: 'sup-1',
+      approve: true,
+    });
+
+    expect(prisma.specialOffer.update).toHaveBeenCalledWith({
+      where: { id: 'offer-1' },
+      data: { spotsSold: { decrement: 3 } },
+    });
+  });
+
   it('uses the unpaid emails when no money was captured', async () => {
     await service.decideCustomerCancellation({
       booking: booking({ customerCancellationStatus: 'PENDING', paymentStatus: 'PENDING' }),

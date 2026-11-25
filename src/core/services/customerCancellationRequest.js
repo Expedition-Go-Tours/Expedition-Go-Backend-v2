@@ -19,6 +19,7 @@
 const prisma = require('./prismaClient');
 const AppError = require('./appError');
 const { activityStart, evaluateCancellationPolicy } = require('./bookingHelpers');
+const { travelerCount } = require('./availabilityCore');
 const { detachBookingFromActiveRequests } = require('./financeHelpers');
 const { detachBookingFromInvoices } = require('./invoiceService');
 const { enqueueEmail, enqueueNotification } = require('./queue');
@@ -65,11 +66,6 @@ function activityCutoff(booking) {
 function activityHasStarted(booking, now = new Date()) {
   const cutoff = activityCutoff(booking);
   return cutoff ? now >= cutoff : false;
-}
-
-function travelerTotal(travelers) {
-  const t = travelers && typeof travelers === 'object' ? travelers : {};
-  return (t.adults || 0) + (t.children || 0) + (t.infants || 0) || 1;
 }
 
 function moneyLabel(booking) {
@@ -256,7 +252,7 @@ async function decideCustomerCancellation({ booking, supplierId, approve, note =
     if (booking.appliedOfferId) {
       await tx.specialOffer.update({
         where: { id: booking.appliedOfferId },
-        data: { spotsSold: { decrement: travelerTotal(booking.travelers) } },
+        data: { spotsSold: { decrement: travelerCount(booking.travelers) || 1 } },
       }).catch(() => {});
     }
   });

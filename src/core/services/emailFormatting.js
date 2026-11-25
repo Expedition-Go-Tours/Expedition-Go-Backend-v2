@@ -5,6 +5,7 @@
  */
 
 const { travelerCount } = require('./availabilityCore');
+const { travelerParts } = require('./travelerBreakdown');
 
 const CURRENCY_SYMBOLS = {
   USD: '$',
@@ -112,20 +113,15 @@ function formatTime(time) {
 /**
  * Break down a travelers payload into counts + a human label.
  *
- * Reads in precedence order: explicit {adults, children, infants, seniors}
- * counts, then array-of-details, then any numeric parts of a mixed shape. The
- * counts are authoritative because they match what the dashboard displays;
- * `details` is a list of named travellers, not a headcount.
+ * Reads explicit numeric counts first, then array-of-details for legacy rows
+ * that carry no counts. `details` is a list of named travellers, not a
+ * headcount, so it must never override the counts. Supplier-defined categories
+ * (students, youth, …) are included exactly like the capacity accounting does.
  *
- * Returns { adults, children, infants, seniors, total, label }.
+ * Returns { adults, children, infants, seniors, counts, parts, total, label }.
  */
 function formatTravelers(travelers) {
-  const out = { adults: 0, children: 0, infants: 0, seniors: 0, total: 0, label: '' };
-
-  const num = (v) => {
-    const n = Number(v);
-    return Number.isFinite(n) && n > 0 ? n : 0;
-  };
+  const out = { adults: 0, children: 0, infants: 0, seniors: 0, counts: {}, parts: [], total: 0, label: '' };
 
   if (!travelers || typeof travelers !== 'object') {
     out.total = 1;
@@ -133,40 +129,24 @@ function formatTravelers(travelers) {
     return out;
   }
 
-  const asObj = travelers;
+  let parts = travelerParts(travelers);
 
-  // Explicit counts win. `details` lists only the travellers somebody actually
-  // named, which on a shared tour is usually just the lead booker — so a party
-  // of 2 with one name would report "1 adult" here while the dashboard sums the
-  // counts and reports 2 (storefront.js / ghana controller). Read `details` only
-  // when the booking carries no counts at all.
-  out.adults = num(asObj.adults);
-  out.children = num(asObj.children);
-  out.infants = num(asObj.infants);
-  out.seniors = num(asObj.seniors);
-
-  const hasExplicitCounts = out.adults > 0 || out.children > 0 || out.infants > 0 || out.seniors > 0;
-  if (!hasExplicitCounts && Array.isArray(asObj.details)) {
-    for (const d of asObj.details) {
-      const group = String(d?.ageGroup || d?.type || '').toLowerCase();
-      if (group === 'adult') out.adults += num(d?.count ?? d?.qty ?? 1);
-      else if (group === 'child') out.children += num(d?.count ?? d?.qty ?? 1);
-      else if (group === 'infant') out.infants += num(d?.count ?? d?.qty ?? 1);
-      else if (group === 'senior') out.seniors += num(d?.count ?? d?.qty ?? 1);
-    }
+  // Legacy/empty payloads keep the historical single-adult floor. A malformed
+  // payload is handled above so it never claims a specific category.
+  if (parts.length === 0) {
+    const fallback = Math.max(1, travelerCount(travelers));
+    parts = [{ key: 'adults', count: fallback, singular: 'adult', plural: 'adults' }];
   }
 
-  if (out.adults === 0 && out.children === 0 && out.infants === 0 && out.seniors === 0) {
-    out.adults = Math.max(1, travelerCount(travelers));
+  for (const part of parts) {
+    out[part.key] = part.count;
+    out.counts[part.key] = part.count;
   }
-
-  out.total = out.adults + out.children + out.infants + out.seniors;
-  const parts = [];
-  if (out.adults > 0) parts.push(`${out.adults} ${out.adults === 1 ? 'adult' : 'adults'}`);
-  if (out.children > 0) parts.push(`${out.children} ${out.children === 1 ? 'child' : 'children'}`);
-  if (out.infants > 0) parts.push(`${out.infants} ${out.infants === 1 ? 'infant' : 'infants'}`);
-  if (out.seniors > 0) parts.push(`${out.seniors} ${out.seniors === 1 ? 'senior' : 'seniors'}`);
-  out.label = parts.length > 0 ? parts.join(', ') : `${out.total} ${out.total === 1 ? 'traveler' : 'travelers'}`;
+  out.parts = parts;
+  out.total = parts.reduce((sum, part) => sum + part.count, 0);
+  out.label = parts
+    .map((part) => `${part.count} ${part.count === 1 ? part.singular : part.plural}`)
+    .join(', ');
 
   return out;
 }
@@ -244,7 +224,7 @@ function getCancelDeadline(booking, tour = {}) {
     }
     return null;
   }
-  if (policy.type === 'all_sales_final') return null;
+  if (policy.type === 'all_sales_final' || policy.refundPercentage === 0) return null;
   const windowHours = Number.isFinite(policy.cancellationWindowHours) ? policy.cancellationWindowHours : 24;
   const date = new Date(booking?.travelDate);
   if (Number.isNaN(date.getTime())) return null;

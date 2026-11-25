@@ -4,7 +4,7 @@
  * Every layer that reasons about availability (checkTourAvailability, the two
  * checkout transactions, and the availability calendar) derives its numbers
  * from these helpers + SQL fragments so they can never drift apart:
- *   - traveler-based accounting (adults + children + infants)
+ *   - traveler-based accounting (every numeric traveler-category key)
  *   - per-group cap for perGroup tours (maxGroupsPerTimeSlot)
  *   - TourDateOverride (BLOCKED/FULL/LIMITED + capacity + timeSlotOverrides)
  *   - dateExceptions (closed days)
@@ -18,6 +18,10 @@ const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frid
 // Statuses that occupy capacity. PENDING = a payment still being confirmed
 // holds its spots until the Stripe webhook confirms (CONFIRMED) or cancels it.
 const BOOKABLE_STATUSES = ['PENDING', 'CONFIRMED'];
+
+// Metadata keys inside the Booking.travelers JSON blob. They are never counts,
+// even when a phone number or legacy field happens to contain only digits.
+const TRAVELER_META_KEYS = new Set(['phoneNumber', 'phone', 'location', 'details', 'name', 'email', 'specialRequests']);
 
 // SQL-safe literal (internal constants only) for raw capacity queries.
 const statusLiteral = BOOKABLE_STATUSES.map((s) => `'${s}'`).join(', ');
@@ -74,7 +78,7 @@ function parseBlob(blob) {
   return blob;
 }
 
-/** Number of travelers in a Booking.travelers JSON blob (adults+children+infants). */
+/** Number of travelers in a Booking.travelers JSON blob (every numeric category). */
 function travelerCount(travelers) {
   if (!travelers || typeof travelers !== 'object') return 0;
   const num = (v) => {
@@ -82,9 +86,10 @@ function travelerCount(travelers) {
     return Number.isFinite(n) && n > 0 ? n : 0;
   };
   let total = 0;
-  for (const value of Object.values(travelers)) {
+  for (const [key, value] of Object.entries(travelers)) {
     // Only pure numeric values count as travelers — metadata (phone numbers,
     // locations, details arrays) must never inflate the headcount.
+    if (TRAVELER_META_KEYS.has(key)) continue;
     if (typeof value === 'number') {
       total += num(value);
     } else if (typeof value === 'string' && /^[0-9]+$/.test(value)) {

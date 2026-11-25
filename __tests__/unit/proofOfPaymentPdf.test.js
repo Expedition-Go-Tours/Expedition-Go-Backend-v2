@@ -125,6 +125,17 @@ describe('travelerSummary', () => {
     expect(travelerSummary({ adults: 1, children: 2, infants: 1 })).toBe('1 adult · 2 children · 1 infant');
   });
 
+  it('includes seniors and supplier-defined categories', () => {
+    expect(travelerSummary({ adults: 1, seniors: 2 })).toBe('1 adult · 2 seniors');
+    expect(travelerSummary({ adults: 1, students: 2 })).toBe('1 adult · 2 students');
+    expect(travelerSummary({ youth: 2 })).toBe('2 youths');
+  });
+
+  it('falls back to named details only when counts are absent', () => {
+    expect(travelerSummary({ details: [{ ageGroup: 'adult' }, { ageGroup: 'senior' }] }))
+      .toBe('1 adult · 1 senior');
+  });
+
   it('survives a null travelers blob', () => {
     expect(travelerSummary(null)).toBe('');
   });
