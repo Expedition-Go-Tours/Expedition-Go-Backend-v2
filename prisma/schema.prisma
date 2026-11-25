@@ -3906,6 +3906,10 @@ model RestaurantVenue {
   phone       String?
   website     String?
   description String?
+  /// Restaurant-hosted menu. Only a link we can attribute to the business is
+  /// stored here; we never scrape dishes or invent prices.
+  menuUrl     String?
+  mealTypes   String[] @default([])
   photos      String[] @default([])
   coverPhoto  String?
 

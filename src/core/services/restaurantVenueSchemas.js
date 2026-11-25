@@ -286,6 +286,8 @@ const updateOwnVenueSchema = z.object({
       description: z.string().trim().max(3000).optional(),
       phone: z.string().trim().min(7).max(40).optional(),
       website: httpUrl.optional(),
+      menuUrl: httpUrl.nullable().optional(),
+      mealTypes: z.array(z.string().trim().min(1).max(40)).max(8).optional(),
       cuisines: z.array(z.string().trim().min(1).max(40)).max(30).optional(),
       dietary: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
       amenities: z.array(z.string().trim().min(1).max(60)).max(30).optional(),

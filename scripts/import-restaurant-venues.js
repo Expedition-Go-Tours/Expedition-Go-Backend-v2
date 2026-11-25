@@ -103,6 +103,12 @@ function toNumberOrNull(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function toUrlOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const text = String(value).trim();
+  return /^https?:\/\//i.test(text) ? text : null;
+}
+
 /** Only known columns — a typo in the JSON must not become a Prisma error. */
 function toVenueData(raw) {
   const status = STATUSES.includes(String(raw.status || '').toUpperCase())
@@ -127,6 +133,10 @@ function toVenueData(raw) {
     phone: raw.phone ? String(raw.phone).trim() : null,
     website: raw.website ? String(raw.website).trim() : null,
     description: raw.description ? String(raw.description).trim() : null,
+    // The source workbook keeps the menu link and meal services under
+    // sourceMeta; accept either shape so a future export can flatten them.
+    menuUrl: toUrlOrNull(raw.menuUrl || raw.sourceMeta?.menuUrl),
+    mealTypes: toStringArray(raw.mealTypes || raw.sourceMeta?.mealTypes),
     photos: Array.isArray(raw.photos) ? raw.photos.filter(Boolean) : [],
     coverPhoto: raw.coverPhoto || null,
     hours: raw.hours && typeof raw.hours === 'object' ? raw.hours : null,

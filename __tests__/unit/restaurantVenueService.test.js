@@ -43,6 +43,8 @@ function venueRow(overrides = {}) {
     phone: '+233302123456',
     website: 'https://example.com',
     description: 'A long description',
+    menuUrl: 'https://example.com/menu',
+    mealTypes: ['breakfast', 'lunch'],
     photos: ['https://res.cloudinary.com/a.jpg'],
     coverPhoto: 'https://res.cloudinary.com/a.jpg',
     reviewCount: 10,
@@ -305,6 +307,8 @@ describe('restaurantVenueService', () => {
       expect(venue.external).toEqual({ source: 'GOOGLE', rating: 4.6, reviewCount: 1204 });
       expect(venue.rank).toEqual({ position: 8, of: 143 });
       expect(venue.description).toBe('A long description');
+      expect(venue.menuUrl).toBe('https://example.com/menu');
+      expect(venue.mealTypes).toEqual(['breakfast', 'lunch']);
       expect(venue.externalStats).toEqual([
         expect.objectContaining({ source: 'GOOGLE', rating: 4.6, reviewCount: 1204 }),
       ]);

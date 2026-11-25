@@ -180,6 +180,8 @@ function toPublicVenue(venue, { detail = false } = {}) {
 
   if (detail) {
     dto.description = venue.description;
+    dto.menuUrl = venue.menuUrl || null;
+    dto.mealTypes = venue.mealTypes || [];
     dto.externalStats = (venue.externalStats || []).map((row) => ({
       source: row.source,
       rating: row.rating == null ? null : roundOne(Number(row.rating)),

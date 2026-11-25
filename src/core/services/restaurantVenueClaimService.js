@@ -325,14 +325,17 @@ async function updateOwnVenue({ slugOrId, brand, editor, input, req }) {
   if (input.description !== undefined) data.description = String(input.description).trim() || null;
   if (input.phone !== undefined) data.phone = String(input.phone).trim() || null;
   if (input.website !== undefined) data.website = String(input.website).trim() || null;
+  if (input.menuUrl !== undefined) data.menuUrl = input.menuUrl ? String(input.menuUrl).trim() : null;
   if (input.hours !== undefined) data.hours = input.hours;
 
   const cuisines = cleanList(input.cuisines);
   const dietary = cleanList(input.dietary, { lowercase: true });
   const amenities = cleanList(input.amenities);
+  const mealTypes = cleanList(input.mealTypes, { lowercase: true });
   if (cuisines !== undefined) data.cuisines = cuisines;
   if (dietary !== undefined) data.dietary = dietary;
   if (amenities !== undefined) data.amenities = amenities;
+  if (mealTypes !== undefined) data.mealTypes = mealTypes;
 
   const photos = cleanPhotoUrls(input.photos, 'photos');
   const coverPhoto = cleanPhotoUrls(input.coverPhoto, 'coverPhoto');

@@ -129,4 +129,23 @@ describe('restaurantVenueClaimService', () => {
     ).rejects.toMatchObject({ errorCode: 'NOT_A_VENUE_MEMBER', statusCode: 403 });
     expect(prisma.restaurantVenue.update).not.toHaveBeenCalled();
   });
+
+  it('lets an approved owner publish the menu link and meal services', async () => {
+    prisma.restaurantVenueMember.findFirst.mockResolvedValue({ id: 'm1', role: 'OWNER' });
+    prisma.restaurantVenue.update.mockResolvedValue({ ...VENUE, menuUrl: 'https://buka.example/menu' });
+
+    await claims.updateOwnVenue({
+      slugOrId: 'buka-accra',
+      brand: 'ghana',
+      editor: USER,
+      input: { menuUrl: 'https://buka.example/menu', mealTypes: ['Lunch', 'Dinner'] },
+      req: REQ,
+    });
+
+    const update = prisma.restaurantVenue.update.mock.calls[0][0];
+    expect(update.data).toMatchObject({
+      menuUrl: 'https://buka.example/menu',
+      mealTypes: ['lunch', 'dinner'],
+    });
+  });
 });
