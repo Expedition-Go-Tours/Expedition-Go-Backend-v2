@@ -1213,6 +1213,8 @@ function registerWorkers() {
         await restaurantCache.invalidateKeys([
           restaurantCache.RESTAURANT_LIST_PREFIX,
           restaurantCache.RESTAURANT_REVIEW_FEED_PREFIX,
+          // Ranking inputs changed, so every home rail may have moved.
+          restaurantCache.RESTAURANT_HOME_PREFIX,
         ]);
         break;
       }

@@ -12,7 +12,7 @@ const express = require('express');
 const validate = require('../middleware/validate');
 const { uploadReviewPhotos } = require('../middleware/uploadMiddleware');
 const { createUserLimiter } = require('../middleware/dynamicRateLimiter');
-const { protect } = require('../middleware/authMiddleware');
+const { protect, optionalAuth } = require('../middleware/authMiddleware');
 const controller = require('../src/core/domain/restaurantVenueController');
 const {
   listQuerySchema,
@@ -20,6 +20,8 @@ const {
   venueSchema,
   reviewsQuerySchema,
   reviewFeedQuerySchema,
+  homeQuerySchema,
+  homeSectionQuerySchema,
   createReviewSchema,
   updateReviewSchema,
   authorReviewQuerySchema,
@@ -116,6 +118,37 @@ router.get('/suggest', validate(suggestQuerySchema), controller.suggestVenues);
 // the feed 404s. This route also sits ahead of `/:slugOrId/reviews`, which only
 // matches a two-segment path and so never competes with it.
 router.get('/reviews', validate(reviewFeedQuerySchema), controller.listReviewFeed);
+
+/**
+ * @swagger
+ * /restaurant-venues/homepage/recommended:
+ *   get:
+ *     summary: Personalised restaurant recommendations (public, anonymous by default)
+ *     tags: [Restaurant Venues]
+ *     parameters:
+ *       - { name: brand, in: query, schema: { type: string, enum: [ghana, africa, expedition] } }
+ *       - { name: city, in: query, schema: { type: string } }
+ *       - { name: lat, in: query, schema: { type: number } }
+ *       - { name: lng, in: query, schema: { type: number } }
+ *       - { name: limit, in: query, schema: { type: integer, maximum: 20 } }
+ *     responses:
+ *       200: { description: Venues retrieved successfully }
+ */
+// Literal homepage paths must sit above `/:slugOrId`, otherwise the rails are
+// read as a venue slug. optionalAuth attaches a user only when a valid token
+// is present; these reads stay public.
+router.get('/homepage/recommended', optionalAuth, validate(homeQuerySchema), controller.getRecommended);
+
+router.get('/homepage/likely-to-book-out', optionalAuth, validate(homeQuerySchema), controller.getLikelyToBookOut);
+
+router.get('/homepage/offers', optionalAuth, validate(homeQuerySchema), controller.getSpecialOffers);
+
+router.get(
+  '/homepage/section-venue-ids',
+  optionalAuth,
+  validate(homeSectionQuerySchema),
+  controller.getSectionVenueIds,
+);
 
 /**
  * @swagger

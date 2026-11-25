@@ -114,6 +114,42 @@ const reviewFeedQuerySchema = z.object({
   params: z.object({}).optional(),
 });
 
+/**
+ * Public homepage rails. Reads are anonymous by default; an authenticated
+ * storefront may send a token, in which case optionalAuth attaches req.user
+ * and the recommended rail personalizes from recent events.
+ */
+const homeQuerySchema = z.object({
+  body: emptyBody,
+  query: z
+    .object({
+      brand,
+      city: z.string().trim().min(1).max(80).optional(),
+      lat: z.coerce.number().min(-90).max(90).optional(),
+      lng: z.coerce.number().min(-180).max(180).optional(),
+      limit: z.coerce.number().int().min(1).max(20).default(8),
+    })
+    .passthrough(),
+  params: z.object({}).optional(),
+});
+
+const homeSectionQuerySchema = z.object({
+  body: emptyBody,
+  query: z
+    .object({
+      brand,
+      section: z
+        .enum(['recommended', 'likely-to-book-out', 'offers'])
+        .optional(),
+      city: z.string().trim().min(1).max(80).optional(),
+      lat: z.coerce.number().min(-90).max(90).optional(),
+      lng: z.coerce.number().min(-180).max(180).optional(),
+      limit: z.coerce.number().int().min(1).max(20).default(8),
+    })
+    .passthrough(),
+  params: z.object({}).optional(),
+});
+
 /* ── admin offer contracts ───────────────────────────────────────────────── */
 
 const offerDate = z
@@ -408,6 +444,8 @@ module.exports = {
   venueSchema,
   reviewsQuerySchema,
   reviewFeedQuerySchema,
+  homeQuerySchema,
+  homeSectionQuerySchema,
   listVenueOffersSchema,
   createVenueOfferSchema,
   updateVenueOfferSchema,

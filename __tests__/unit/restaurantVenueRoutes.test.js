@@ -22,9 +22,17 @@ jest.mock('../../src/core/services/cacheHelper', () => ({
   invalidateHomepageSections: jest.fn(() => Promise.resolve()),
 }));
 
+jest.mock('../../src/core/services/restaurantHomepageRanking', () => ({
+  getRecommended: jest.fn(),
+  getLikelyToBookOut: jest.fn(),
+  getSpecialOffers: jest.fn(),
+  getSectionVenueIds: jest.fn(),
+}));
+
 const request = require('supertest');
 const app = require('../../apps/platform-api/app');
 const prisma = require('../../src/core/services/prismaClient');
+const homeRanking = require('../../src/core/services/restaurantHomepageRanking');
 
 describe('/api/restaurant-venues', () => {
   beforeEach(() => {
@@ -101,5 +109,57 @@ describe('/api/restaurant-venues', () => {
 
     expect(res.status).toBe(400);
     expect(prisma.restaurantVenueReview.findMany).not.toHaveBeenCalled();
+  });
+
+  describe('homepage rails', () => {
+    it('serves the recommended rail before the /:slugOrId catch-all', async () => {
+      homeRanking.getRecommended.mockResolvedValue([{ id: 'v1' }]);
+
+      const res = await request(app).get(
+        '/api/restaurant-venues/homepage/recommended?brand=ghana&limit=3&city=Accra&lat=5.5&lng=-0.18',
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ status: 'success', data: { venues: [{ id: 'v1' }] } });
+      expect(homeRanking.getRecommended).toHaveBeenCalledWith({
+        brand: 'ghana',
+        limit: 3,
+        city: 'Accra',
+        lat: 5.5,
+        lng: -0.18,
+        userId: null,
+      });
+      expect(prisma.restaurantVenue.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('serves the offers and demand rails with the same envelope', async () => {
+      homeRanking.getSpecialOffers.mockResolvedValue([]);
+      homeRanking.getLikelyToBookOut.mockResolvedValue([]);
+
+      const offers = await request(app).get('/api/restaurant-venues/homepage/offers');
+      const demand = await request(app).get('/api/restaurant-venues/homepage/likely-to-book-out');
+
+      expect(offers.status).toBe(200);
+      expect(offers.body).toEqual({ status: 'success', data: { venues: [] } });
+      expect(demand.status).toBe(200);
+      expect(demand.body).toEqual({ status: 'success', data: { venues: [] } });
+      expect(homeRanking.getSpecialOffers).toHaveBeenCalledWith(
+        expect.objectContaining({ brand: 'ghana', limit: 8 }),
+      );
+    });
+
+    it('returns section ids in display order', async () => {
+      homeRanking.getSectionVenueIds.mockResolvedValue(['v2', 'v1']);
+
+      const res = await request(app).get(
+        '/api/restaurant-venues/homepage/section-venue-ids?section=offers&limit=2',
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ status: 'success', data: { venueIds: ['v2', 'v1'] } });
+      expect(homeRanking.getSectionVenueIds).toHaveBeenCalledWith(
+        expect.objectContaining({ section: 'offers', limit: 2 }),
+      );
+    });
   });
 });

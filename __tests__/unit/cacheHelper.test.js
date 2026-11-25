@@ -71,4 +71,15 @@ describe('cacheHelper', () => {
       expect(redis.delPattern).toHaveBeenCalledWith('tours:list:*');
     });
   });
+
+  describe('invalidateRestaurantVenueCaches', () => {
+    it('clears the homepage rails with the lists and review feed', async () => {
+      await cache.invalidateRestaurantVenueCaches('v-1', 'buka');
+
+      expect(redis.delPattern).toHaveBeenCalledWith('rv:list:*');
+      expect(redis.delPattern).toHaveBeenCalledWith('rv:feed:*');
+      expect(redis.delPattern).toHaveBeenCalledWith(cache.RESTAURANT_HOME_PREFIX);
+      expect(cache.RESTAURANT_HOME_PREFIX).toBe('rv:home:*');
+    });
+  });
 });

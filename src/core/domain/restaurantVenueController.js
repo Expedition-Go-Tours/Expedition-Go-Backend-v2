@@ -14,6 +14,7 @@ const service = require('../services/restaurantVenueService');
 const writeService = require('../services/restaurantVenueWriteService');
 const claimService = require('../services/restaurantVenueClaimService');
 const offerService = require('../services/restaurantVenueOfferService');
+const homeRanking = require('../services/restaurantHomepageRanking');
 
 /**
  * GET /api/restaurant-venues
@@ -73,6 +74,55 @@ exports.listReviews = catchAsync(async (req, res, next) => {
 exports.listReviewFeed = catchAsync(async (req, res) => {
   const data = await service.listReviewFeed(req.query);
   res.status(200).json({ status: 'success', data });
+});
+
+/* ── homepage rails ─────────────────────────────────────────────────────── */
+
+/**
+ * Shared query parsing for the public rails. The route schema coerces numbers,
+ * but the controller also accepts direct calls from tests/other services, so
+ * strings and out-of-range limits are normalized here as well.
+ */
+function homeQuery(req) {
+  const query = req.query || {};
+  const lat = Number(query.lat);
+  const lng = Number(query.lng);
+  return {
+    brand: query.brand || 'ghana',
+    limit: Math.min(Math.max(Number.parseInt(query.limit, 10) || 8, 1), 20),
+    city: query.city || null,
+    lat: query.lat != null && query.lat !== '' && Number.isFinite(lat) ? lat : null,
+    lng: query.lng != null && query.lng !== '' && Number.isFinite(lng) ? lng : null,
+  };
+}
+
+/** GET /api/restaurant-venues/homepage/recommended */
+exports.getRecommended = catchAsync(async (req, res) => {
+  const { userId } = req.user || {};
+  const venues = await homeRanking.getRecommended({ ...homeQuery(req), userId: userId || null });
+  res.status(200).json({ status: 'success', data: { venues } });
+});
+
+/** GET /api/restaurant-venues/homepage/likely-to-book-out */
+exports.getLikelyToBookOut = catchAsync(async (req, res) => {
+  const venues = await homeRanking.getLikelyToBookOut(homeQuery(req));
+  res.status(200).json({ status: 'success', data: { venues } });
+});
+
+/** GET /api/restaurant-venues/homepage/offers */
+exports.getSpecialOffers = catchAsync(async (req, res) => {
+  const venues = await homeRanking.getSpecialOffers(homeQuery(req));
+  res.status(200).json({ status: 'success', data: { venues } });
+});
+
+/** GET /api/restaurant-venues/homepage/section-venue-ids */
+exports.getSectionVenueIds = catchAsync(async (req, res) => {
+  const venueIds = await homeRanking.getSectionVenueIds({
+    ...homeQuery(req),
+    section: (req.query || {}).section,
+    userId: req.user?.id || null,
+  });
+  res.status(200).json({ status: 'success', data: { venueIds } });
 });
 
 /* ── review writes ──────────────────────────────────────────────────────── */

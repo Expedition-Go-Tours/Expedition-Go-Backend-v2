@@ -928,4 +928,6 @@ module.exports = {
   toFeedReview,
   offerWindowFilter,
   isPublicOffer,
+  offerValidUntil,
+  isOfferPayloadFresh,
 };

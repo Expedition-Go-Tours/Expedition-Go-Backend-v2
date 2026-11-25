@@ -270,11 +270,18 @@ async function invalidateReviewCaches(tourId) {
  */
 const RESTAURANT_LIST_PREFIX = 'rv:list:*';
 const RESTAURANT_REVIEW_FEED_PREFIX = 'rv:feed:*';
+/** Personalised/discovery rails (recommended, demand, offers, section ids). */
+const RESTAURANT_HOME_PREFIX = 'rv:home:*';
 
 async function invalidateRestaurantVenueCaches(venueId, slug) {
   // A review or offer change can move a card into a different rail and can
-  // appear in the cross-venue feed, so clear that cache as well as the lists.
-  const patterns = [RESTAURANT_LIST_PREFIX, RESTAURANT_REVIEW_FEED_PREFIX];
+  // appear in the cross-venue feed, so clear the home rails and that feed as
+  // well as the lists. Brand is not in the key's first segment, hence the `*`.
+  const patterns = [
+    RESTAURANT_LIST_PREFIX,
+    RESTAURANT_REVIEW_FEED_PREFIX,
+    RESTAURANT_HOME_PREFIX,
+  ];
   if (venueId) {
     patterns.push(`rv:detail:*:${venueId}`, `rv:reviews:${venueId}:*`);
   }
@@ -297,6 +304,7 @@ module.exports = {
   invalidateRestaurantVenueCaches,
   RESTAURANT_LIST_PREFIX,
   RESTAURANT_REVIEW_FEED_PREFIX,
+  RESTAURANT_HOME_PREFIX,
   invalidateHomepageSections,
   memSet,
   TOUR_LIST_PREFIX,
