@@ -3285,6 +3285,7 @@ function generatePrintableTicketHtml(data) {
   if (data.travelers?.adults) travelers.push(`${data.travelers.adults} Adult(s)`);
   if (data.travelers?.children) travelers.push(`${data.travelers.children} Child(ren)`);
   if (data.travelers?.infants) travelers.push(`${data.travelers.infants} Infant(s)`);
+  if (data.travelers?.seniors) travelers.push(`${data.travelers.seniors} Senior(s)`);
 
   const includedHtml = (data.included || []).map((i) => `<li>${i}</li>`).join('');
 

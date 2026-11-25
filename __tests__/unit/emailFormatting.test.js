@@ -93,6 +93,34 @@ describe('formatTravelers', () => {
     expect(formatTravelers(realBooking).total).toBe(dashboardTotal);
   });
 
+  it('includes senior counts in the label and total', () => {
+    // Verbatim from TRG-16017475-2026-187, where the dashboard showed
+    // "1 adult, 2 seniors" but the email claimed only "1 adult".
+    const out = formatTravelers({
+      adults: 1,
+      children: 0,
+      infants: 0,
+      seniors: 2,
+      details: [{ name: 'Danielle Niekoop', ageGroup: 'adult' }],
+      location: 'Container, East La (Tse Addo) Street, Accra, Ghana',
+      phoneNumber: '+31611283654',
+    });
+    expect(out.adults).toBe(1);
+    expect(out.seniors).toBe(2);
+    expect(out.total).toBe(3);
+    expect(out.label).toBe('1 adult, 2 seniors');
+  });
+
+  it('counts seniors from details when the booking has no explicit counts', () => {
+    const out = formatTravelers({
+      details: [{ ageGroup: 'adult' }, { ageGroup: 'senior' }, { ageGroup: 'senior' }],
+    });
+    expect(out.adults).toBe(1);
+    expect(out.seniors).toBe(2);
+    expect(out.total).toBe(3);
+    expect(out.label).toBe('1 adult, 2 seniors');
+  });
+
   it('uses details only when the booking carries no counts', () => {
     const out = formatTravelers({
       details: [{ ageGroup: 'adult' }, { ageGroup: 'child' }],
@@ -138,7 +166,7 @@ describe('formatTravelers', () => {
   it('does not inflate on an unrecognised age group in details', () => {
     // Nothing matches, so the single-traveller floor applies rather than the
     // entry being silently counted as an adult.
-    const out = formatTravelers({ details: [{ ageGroup: 'senior' }] });
+    const out = formatTravelers({ details: [{ ageGroup: 'student' }] });
     expect(out.total).toBe(1);
     expect(out.label).toBe('1 adult');
   });

@@ -243,7 +243,7 @@ describe('generatePrintableTicketHtml', () => {
       tourDescription: 'A great tour experience',
       travelDate: '2026-07-01T00:00:00.000Z',
       selectedTime: '10:00',
-      travelers: { adults: 2, children: 1, infants: 0 },
+      travelers: { adults: 2, children: 1, infants: 0, seniors: 1 },
       currency: 'USD',
       total: 250,
       status: 'CONFIRMED',
@@ -263,6 +263,7 @@ describe('generatePrintableTicketHtml', () => {
     expect(html).toContain('10:00');
     expect(html).toContain('2 Adult(s)');
     expect(html).toContain('1 Child(ren)');
+    expect(html).toContain('1 Senior(s)');
     expect(html).toContain('USD 250');
     expect(html).toContain('Confirmed');
     expect(html).toContain('Professional guide');

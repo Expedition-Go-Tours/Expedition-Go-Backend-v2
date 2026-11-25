@@ -112,15 +112,15 @@ function formatTime(time) {
 /**
  * Break down a travelers payload into counts + a human label.
  *
- * Reads in precedence order: explicit {adults, children,infants} counts, then
- * array-of-details, then any numeric parts of a mixed shape. The counts are
- * authoritative because they match what the dashboard displays; `details` is a
- * list of named travellers, not a headcount.
+ * Reads in precedence order: explicit {adults, children, infants, seniors}
+ * counts, then array-of-details, then any numeric parts of a mixed shape. The
+ * counts are authoritative because they match what the dashboard displays;
+ * `details` is a list of named travellers, not a headcount.
  *
- * Returns { adults, children, infants, total, label }.
+ * Returns { adults, children, infants, seniors, total, label }.
  */
 function formatTravelers(travelers) {
-  const out = { adults: 0, children: 0, infants: 0, total: 0, label: '' };
+  const out = { adults: 0, children: 0, infants: 0, seniors: 0, total: 0, label: '' };
 
   const num = (v) => {
     const n = Number(v);
@@ -143,25 +143,29 @@ function formatTravelers(travelers) {
   out.adults = num(asObj.adults);
   out.children = num(asObj.children);
   out.infants = num(asObj.infants);
+  out.seniors = num(asObj.seniors);
 
-  if (out.adults === 0 && out.children === 0 && out.infants === 0 && Array.isArray(asObj.details)) {
+  const hasExplicitCounts = out.adults > 0 || out.children > 0 || out.infants > 0 || out.seniors > 0;
+  if (!hasExplicitCounts && Array.isArray(asObj.details)) {
     for (const d of asObj.details) {
-      const group = d?.ageGroup || d?.type;
-      if (group === 'adult' || group === 'Adult') out.adults += num(d?.count ?? d?.qty ?? 1);
-      else if (group === 'child' || group === 'Child') out.children += num(d?.count ?? d?.qty ?? 1);
-      else if (group === 'infant' || group === 'Infant') out.infants += num(d?.count ?? d?.qty ?? 1);
+      const group = String(d?.ageGroup || d?.type || '').toLowerCase();
+      if (group === 'adult') out.adults += num(d?.count ?? d?.qty ?? 1);
+      else if (group === 'child') out.children += num(d?.count ?? d?.qty ?? 1);
+      else if (group === 'infant') out.infants += num(d?.count ?? d?.qty ?? 1);
+      else if (group === 'senior') out.seniors += num(d?.count ?? d?.qty ?? 1);
     }
   }
 
-  if (out.adults === 0 && out.children === 0 && out.infants === 0) {
+  if (out.adults === 0 && out.children === 0 && out.infants === 0 && out.seniors === 0) {
     out.adults = Math.max(1, travelerCount(travelers));
   }
 
-  out.total = out.adults + out.children + out.infants;
+  out.total = out.adults + out.children + out.infants + out.seniors;
   const parts = [];
   if (out.adults > 0) parts.push(`${out.adults} ${out.adults === 1 ? 'adult' : 'adults'}`);
   if (out.children > 0) parts.push(`${out.children} ${out.children === 1 ? 'child' : 'children'}`);
   if (out.infants > 0) parts.push(`${out.infants} ${out.infants === 1 ? 'infant' : 'infants'}`);
+  if (out.seniors > 0) parts.push(`${out.seniors} ${out.seniors === 1 ? 'senior' : 'seniors'}`);
   out.label = parts.length > 0 ? parts.join(', ') : `${out.total} ${out.total === 1 ? 'traveler' : 'travelers'}`;
 
   return out;
