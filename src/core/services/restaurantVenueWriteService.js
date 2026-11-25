@@ -173,6 +173,7 @@ function toAuthorReview(review) {
     title: review.title,
     body: review.body,
     photos: review.photos || [],
+    companions: review.companions || [],
     visitedAt: review.visitedAt,
     source: review.source,
     proofMethod: review.proofMethod,
@@ -228,6 +229,7 @@ async function createReview({ slugOrId, brand, author, input, req }) {
     title: input.title ? String(input.title).trim() : null,
     body: input.body ? String(input.body).trim() : null,
     photos,
+    companions: input.companions || [],
     source: proof ? 'TRAVIO_VERIFIED' : 'TRAVIO_COMMUNITY',
     proofMethod: proof ? proof.proofMethod : null,
     proofRef: proof ? proof.proofRef : null,
@@ -425,6 +427,7 @@ async function replaceOwnReview({ slugOrId, brand, reviewId, author, input, req 
         title: input.title ? String(input.title).trim() : null,
         body: input.body ? String(input.body).trim() : null,
         photos,
+        companions: input.companions || [],
         source: review.source,
         proofMethod: review.proofMethod,
         // The signed invite was consumed on the first submission. We keep its

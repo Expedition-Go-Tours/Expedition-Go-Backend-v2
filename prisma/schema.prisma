@@ -3918,9 +3918,10 @@ model RestaurantVenueReview {
   atmosphereRating Int?
   valueRating      Int?
 
-  title  String?
-  body   String?
-  photos String[] @default([])
+  title      String?
+  body       String?
+  photos     String[] @default([])
+  companions String[] @default([])
 
   // ── provenance ──────────────────────────────────────────────────────────
   source      RestaurantReviewSource @default(TRAVIO_COMMUNITY)

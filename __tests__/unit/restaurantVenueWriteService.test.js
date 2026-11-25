@@ -66,6 +66,7 @@ function reviewInput(over = {}) {
     rating: 5,
     title: 'Worth the queue',
     body: 'The jollof was smoky and the service was warm from start to finish.',
+    companions: ['COUPLES'],
     visitedAt: daysAgo(3),
     ...over,
   };
@@ -126,6 +127,7 @@ describe('restaurantVenueWriteService', () => {
         proofRef: null,
         proofMethod: null,
         visitKey: daysAgo(3).slice(0, 7),
+        companions: ['COUPLES'],
       });
       expect(data.ipHash).toMatch(/^[0-9a-f]{64}$/);
       expect(data.ipHash).not.toBe('127.0.0.1');
@@ -375,6 +377,7 @@ describe('restaurantVenueWriteService', () => {
         status: 'PENDING',
         visitKey: '2026-11',
         rating: 4,
+        companions: ['COUPLES'],
       });
       expect(result).toMatchObject({ status: 'PENDING', verified: true, rating: 4 });
     });

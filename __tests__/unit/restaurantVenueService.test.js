@@ -336,6 +336,7 @@ describe('restaurantVenueService', () => {
       title: 'Excellent',
       body: 'Great food and a calm garden.',
       photos: [],
+      companions: ['COUPLES'],
       visitedAt: null,
       source: 'TRAVIO_VERIFIED',
       helpfulCount: 3,
@@ -368,6 +369,7 @@ describe('restaurantVenueService', () => {
 
       const review = data.reviews[0];
       expect(review.verified).toBe(true);
+      expect(review.companions).toEqual(['COUPLES']);
       expect(review.author).toEqual({ name: 'Ama', photoURL: null });
       expect(review.proofRef).toBeUndefined();
       expect(review.ipHash).toBeUndefined();

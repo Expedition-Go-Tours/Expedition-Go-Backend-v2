@@ -19,6 +19,11 @@ const booleanString = z.enum(['true', 'false']).transform((value) => value === '
 
 const emptyBody = z.any().optional();
 
+// The review composer mirrors Tripadvisor's "Who did you go with?" choices.
+// Stored as stable values so the UI can localise the labels later.
+const companionValues = ['BUSINESS', 'COUPLES', 'FAMILY', 'FRIENDS', 'SOLO'];
+const companionsSchema = z.array(z.enum(companionValues)).max(5).optional();
+
 const listQuerySchema = z.object({
   body: emptyBody,
   query: z
@@ -112,6 +117,7 @@ const createReviewSchema = z.object({
       valueRating: z.coerce.number().int().min(1).max(5).optional(),
       title: z.string().trim().min(3).max(120).optional(),
       body: z.string().trim().min(20).max(3000),
+      companions: companionsSchema,
       visitedAt: z
         .string()
         .max(40)
@@ -142,6 +148,7 @@ const updateReviewSchema = z.object({
       title: z.string().trim().min(3).max(120).optional(),
       body: z.string().trim().min(20).max(3000),
       photos: z.array(z.string().max(500)).max(5).optional(),
+      companions: companionsSchema,
     })
     .strict(),
   query: z.object({ brand }).passthrough(),

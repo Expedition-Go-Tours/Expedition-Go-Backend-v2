@@ -67,6 +67,7 @@ const VALID_REVIEW = {
   rating: 5,
   title: 'Worth the queue',
   body: 'The jollof was smoky and the service was warm from start to finish.',
+  companions: ['COUPLES', 'FRIENDS'],
   visitedAt: '2026-11-20',
 };
 
@@ -165,6 +166,16 @@ describe('/api/restaurant-venues write routes', () => {
       .post('/api/restaurant-venues/buka/reviews')
       .set('Authorization', user('user-token'))
       .send({ ...VALID_REVIEW, authorId: 'someone-else' });
+
+    expect(res.status).toBe(400);
+    expect(write.createReview).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown companion type', async () => {
+    const res = await request(app)
+      .post('/api/restaurant-venues/buka/reviews')
+      .set('Authorization', user('user-token'))
+      .send({ ...VALID_REVIEW, companions: ['STRANGERS'] });
 
     expect(res.status).toBe(400);
     expect(write.createReview).not.toHaveBeenCalled();
