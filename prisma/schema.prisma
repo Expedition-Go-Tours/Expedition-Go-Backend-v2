@@ -3396,7 +3396,9 @@ model StayAvailabilityOverride {
 /// Date/day/room rules that constrain how a stay is sold. Distinct from a
 /// per-date override: one rule can span months and repeat on weekdays, and the
 /// booking validator applies the most restrictive matching rule to each night.
-/// An empty `roomIds` array means every room on the property.
+/// An empty `roomIds` array means every room on the property. Rules are a
+/// dynamic layer over the dated inventory rows in StayAvailabilityOverride;
+/// a rule never deletes or rewrites those rows.
 model StayRestrictionRule {
   id         String       @id @default(cuid())
   propertyId String
