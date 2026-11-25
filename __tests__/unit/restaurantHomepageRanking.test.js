@@ -225,6 +225,37 @@ describe('restaurantHomepageRanking', () => {
       expect(rows[0]).not.toHaveProperty('_score');
     });
 
+    it('includes stored high-demand venues even when review volume would hide them', async () => {
+      prisma.restaurantVenue.findMany.mockImplementation(({ where }) =>
+        Promise.resolve(
+          where.highDemand
+            ? [
+                venue({
+                  id: 'flagged',
+                  rankingScore: 1,
+                  recentReviewCount: 4,
+                  demandScore: 5,
+                  highDemand: true,
+                }),
+              ]
+            : [
+                venue({
+                  id: 'volume',
+                  rankingScore: 9,
+                  recentReviewCount: 0,
+                  demandScore: 0,
+                  highDemand: false,
+                }),
+              ],
+        ),
+      );
+
+      const rows = await ranking.getLikelyToBookOut({ limit: 2 });
+
+      expect(ids(rows)).toContain('flagged');
+      expect(rows[0]).not.toHaveProperty('demandScore');
+    });
+
     it('keeps local venues ahead of global ones', async () => {
       prisma.restaurantVenue.findMany.mockImplementation(({ where }) =>
         Promise.resolve(

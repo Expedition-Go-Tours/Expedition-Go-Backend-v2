@@ -239,6 +239,40 @@ async function findVenueRows({ brand, city, now, offersOnly, take }) {
   return offersOnly ? rows.filter((row) => publicOffers(row, brand, now).length > 0) : rows;
 }
 
+/**
+ * High-demand venues are stored by the nightly batch pass, not derived from
+ * rankingScore on a request. Fetch them explicitly so a venue flagged by its
+ * city quartile can never be crowded out of the demand rail by external review
+ * volume. General-pool rows are still merged in below as backfill.
+ */
+async function findDemandVenueRows({ brand, city, take }) {
+  const where = {
+    status: 'ACTIVE',
+    listings: { some: { brand, isActive: true } },
+    highDemand: true,
+  };
+  if (city) where.city = { equals: city, mode: 'insensitive' };
+
+  return prisma.restaurantVenue.findMany({
+    where,
+    include: includeFor(brand),
+    orderBy: [{ demandScore: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }],
+    take,
+  });
+}
+
+async function fetchDemandPool({ brand, city, limit }) {
+  const take = Math.max(limit * 2, 12);
+  if (!city) return findDemandVenueRows({ brand, take });
+
+  const [local, global] = await Promise.all([
+    findDemandVenueRows({ brand, city, take }),
+    findDemandVenueRows({ brand, take }),
+  ]);
+  const localIds = new Set(local.map((venue) => venue.id));
+  return [...local, ...global.filter((venue) => !localIds.has(venue.id))];
+}
+
 async function fetchPool({ brand, city, limit, offersOnly = false }) {
   const now = new Date();
   const take = Math.max(limit * 4, 12);
@@ -409,7 +443,12 @@ async function getLikelyToBookOut({ city = null, limit = 8, brand = 'ghana' } = 
   const key = cacheKey('likely-to-book-out', { brand, city, limit: max });
 
   return cachedVenues(key, async () => {
-    const rows = await fetchPool({ brand, city, limit: max });
+    const [flagged, pool] = await Promise.all([
+      fetchDemandPool({ brand, city, limit: max }),
+      fetchPool({ brand, city, limit: max }),
+    ]);
+    const seen = new Set(flagged.map((venue) => venue.id));
+    const rows = [...flagged, ...pool.filter((venue) => !seen.has(venue.id))];
     if (rows.length === 0) return [];
 
     const maxDemand = Math.max(1, ...rows.map((venue) => toNumber(venue.demandScore)));
