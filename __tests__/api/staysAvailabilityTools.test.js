@@ -12,6 +12,13 @@
  */
 const request = require('supertest');
 
+// The Stays app deliberately applies the upload limiter to supplier writes
+// (20/hour by default). This suite makes enough writes to exhaust that budget,
+// so raise it before the app is constructed; the limiter reads env at build
+// time. Rate-limit behaviour itself is covered by apiVersioning.test.js.
+process.env.RATELIMIT_UPLOAD_MAX = process.env.RATELIMIT_UPLOAD_MAX || '1000';
+process.env.RATELIMIT_GLOBAL_MAX = process.env.RATELIMIT_GLOBAL_MAX || '10000';
+
 jest.mock('../../src/core/services/cacheHelper', () => ({
   getOrSet: jest.fn((_key, loader) => loader()),
   invalidateKey: jest.fn(() => Promise.resolve()),
