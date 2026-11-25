@@ -18,6 +18,10 @@ function setIO(socketIO) {
   io = socketIO;
 }
 
+function getIO() {
+  return io;
+}
+
 function emitDataChange(modelName, action, recordId) {
   if (!io) return;
   io.to('admin-room').emit('data-change', {
@@ -77,4 +81,4 @@ function setupPrismaMiddleware(prisma) {
   console.log(`[dataChangeEmitter] Prisma middleware installed (tracking ${TRACKED_MODELS.size} models)`);
 }
 
-module.exports = { setIO, setupPrismaMiddleware, emitDataChange };
+module.exports = { setIO, getIO, setupPrismaMiddleware, emitDataChange };

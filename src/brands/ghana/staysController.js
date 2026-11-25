@@ -235,6 +235,40 @@ exports.getDashboard = catchAsync(async (req, res) => {
     }),
   ]);
 
+  // Stays-only unread messages: never count the supplier's tour inbox.
+  const stayConversations = await prisma.conversation.findMany({
+    where: {
+      domain: 'STAYS',
+      participants: { some: { userId: supplierId } },
+    },
+    select: {
+      id: true,
+      type: true,
+      participants: {
+        where: { userId: supplierId },
+        select: { lastReadAt: true },
+      },
+    },
+  });
+
+  const unreadByConversation = await Promise.all(
+    stayConversations.map(async (conversation) => {
+      const lastReadAt = conversation.participants[0]?.lastReadAt || new Date(0);
+      const unread = await prisma.message.count({
+        where: {
+          conversationId: conversation.id,
+          senderId: { not: supplierId },
+          createdAt: { gt: lastReadAt },
+        },
+      });
+      return { type: conversation.type, unread };
+    }),
+  );
+
+  const messagesAwaitingReply = unreadByConversation
+    .filter((conversation) => conversation.type === 'SUPPLIER_CUSTOMER')
+    .reduce((sum, conversation) => sum + conversation.unread, 0);
+
   const counts = rows.reduce((acc, row) => {
     acc[row.status] = (acc[row.status] || 0) + 1;
     return acc;
@@ -310,7 +344,7 @@ exports.getDashboard = catchAsync(async (req, res) => {
         total: bookings.length,
       },
       actionRequired: {
-        messagesAwaitingReply: 0,
+        messagesAwaitingReply,
         bookingsToReview: newReservations,
         draftProperties: counts.DRAFT || 0,
       },

@@ -3,6 +3,7 @@ const catchAsync = require('../services/catchAsync');
 const AppError = require('../services/appError');
 const chatService = require('../services/chatService');
 const { isValidCloudinaryUrl } = require('../services/cloudinaryHelper');
+const { parseProductDomain } = require('../services/productDomain');
 const { BRANDS } = require('../../../config/brands');
 
 const BRAND_KEYS = Object.keys(BRANDS);
@@ -85,7 +86,10 @@ exports.getConversations = catchAsync(async (req, res) => {
     ? (req.brandKey || chatService.brandKeyFromRoles(req.user.roles))
     : null;
   const { accessId } = chatIdentity(req);
-  const conversations = await chatService.getConversations(accessId, brandKey);
+  const domain = parseProductDomain(req.query.domain);
+  const conversations = domain
+    ? await chatService.getConversations(accessId, brandKey, domain)
+    : await chatService.getConversations(accessId, brandKey);
   const filtered = conversations.filter((c) => canAccessType(req.user, c.type));
   res.json({ status: 'success', data: { conversations: filtered } });
 });
@@ -156,6 +160,13 @@ exports.getOrCreateConversation = catchAsync(async (req, res) => {
   const ctx = {};
   if (routeBrand) ctx.routeBrand = routeBrand;
   if (explicitBrand) ctx.explicitBrand = explicitBrand;
+  const domain = parseProductDomain(req.body.domain);
+  if (req.body.domain && !domain) {
+    throw new AppError(`Unknown product domain '${req.body.domain}'`, 400);
+  }
+  if (domain) ctx.domain = domain;
+  if (typeof req.body.stayBookingId === 'string' && req.body.stayBookingId) ctx.stayBookingId = req.body.stayBookingId;
+  if (typeof req.body.propertyId === 'string' && req.body.propertyId) ctx.propertyId = req.body.propertyId;
   if (typeof req.body.bookingId === 'string' && req.body.bookingId) ctx.bookingId = req.body.bookingId;
   if (typeof req.body.bookingNumber === 'string' && req.body.bookingNumber) ctx.bookingNumber = req.body.bookingNumber;
   if (typeof req.body.tourTitle === 'string' && req.body.tourTitle) ctx.tourTitle = req.body.tourTitle;
@@ -231,7 +242,10 @@ exports.getUnreadCount = catchAsync(async (req, res) => {
     ? (req.brandKey || chatService.brandKeyFromRoles(req.user.roles))
     : null;
   const { accessId } = chatIdentity(req);
-  const result = await chatService.getUnreadCount(accessId, types, brandKey);
+  const domain = parseProductDomain(req.query.domain);
+  const result = domain
+    ? await chatService.getUnreadCount(accessId, types, brandKey, domain)
+    : await chatService.getUnreadCount(accessId, types, brandKey);
   res.json({ status: 'success', data: result });
 });
 

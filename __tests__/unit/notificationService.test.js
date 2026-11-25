@@ -1,7 +1,9 @@
 jest.mock('../../src/core/services/prismaClient', () => ({
   notification: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn(), update: jest.fn(), updateMany: jest.fn(), deleteMany: jest.fn() },
-  user: { findUnique: jest.fn() },
+  user: { findUnique: jest.fn(), findMany: jest.fn() },
   review: { findUnique: jest.fn() },
+  supplierProfile: { findFirst: jest.fn() },
+  teamMember: { findMany: jest.fn() },
 }));
 
 jest.mock('../../src/core/services/emailService', () => ({
@@ -11,18 +13,24 @@ jest.mock('../../src/core/services/emailService', () => ({
 }));
 
 let mockIo;
-jest.mock('../../app', () => {
+jest.mock('../../src/core/services/dataChangeEmitter', () => {
   mockIo = { to: jest.fn().mockReturnThis(), emit: jest.fn() };
-  return { get: jest.fn(() => mockIo) };
+  return {
+    getIO: jest.fn(() => mockIo),
+    setIO: jest.fn(),
+    emitDataChange: jest.fn(),
+    setupPrismaMiddleware: jest.fn(),
+  };
 });
 
 const prisma = require('../../src/core/services/prismaClient');
 const { sendEmail } = require('../../src/core/services/emailService');
-const app = require('../../app');
+const { getIO } = require('../../src/core/services/dataChangeEmitter');
 
 const {
   sendNotification,
   sendWebSocketNotification,
+  fanOutToTeamMembers,
   getUserNotifications,
   markNotificationAsRead,
   markAllNotificationsAsRead,
@@ -69,6 +77,24 @@ describe('sendNotification', () => {
     await sendNotification({ userId: 'u-1', type: 'BOOKING_CONFIRMED', title: 'T', message: 'M' });
     expect(mockIo.to).toHaveBeenCalledWith('user:u-1');
     expect(mockIo.emit).toHaveBeenCalledWith('notification', expect.objectContaining({ type: 'BOOKING_CONFIRMED' }));
+  });
+
+  it('persists the STAYS domain and carries it to the realtime payload', async () => {
+    await sendNotification({
+      userId: 'u-1',
+      type: 'BOOKING_CREATED_BY_SUPPLIER',
+      title: 'New stay booking',
+      message: 'M',
+      domain: 'STAYS',
+    });
+
+    expect(prisma.notification.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ domain: 'STAYS', userId: 'u-1' }),
+    }));
+    expect(mockIo.emit).toHaveBeenCalledWith(
+      'notification',
+      expect.objectContaining({ domain: 'STAYS' }),
+    );
   });
 
   it('sends email notification when shouldSendEmail is true', async () => {
@@ -206,12 +232,12 @@ describe('sendWebSocketNotification', () => {
   });
 
   it('handles missing io gracefully', async () => {
-    app.get.mockReturnValue(null);
+    getIO.mockReturnValueOnce(null);
     await sendWebSocketNotification('u-1', { type: 'TEST' });
   });
 
   it('handles error gracefully', async () => {
-    app.get.mockImplementation(() => { throw new Error('App error'); });
+    getIO.mockImplementationOnce(() => { throw new Error('realtime error'); });
     await sendWebSocketNotification('u-1', { type: 'TEST' });
   });
 });
@@ -219,6 +245,30 @@ describe('sendWebSocketNotification', () => {
 // ---------------------------------------------------------------------------
 // getUserNotifications
 // ---------------------------------------------------------------------------
+describe('fanOutToTeamMembers — domain isolation', () => {
+  it('copies the STAYS domain onto team-member notifications', async () => {
+    prisma.supplierProfile.findFirst.mockResolvedValue({ id: 'sp-1' });
+    prisma.teamMember.findMany.mockResolvedValue([
+      { email: 'staff@example.com', notificationCategories: [], customRoles: [] },
+    ]);
+    prisma.user.findMany.mockResolvedValue([{ id: 'staff-1', email: 'staff@example.com' }]);
+    prisma.notification.create.mockResolvedValue({ id: 'n-staff', createdAt: new Date() });
+
+    await fanOutToTeamMembers({
+      userId: 'u-1',
+      type: 'BOOKING_CONFIRMED',
+      title: 'T',
+      message: 'M',
+      data: {},
+      domain: 'STAYS',
+    });
+
+    expect(prisma.notification.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ userId: 'staff-1', domain: 'STAYS' }),
+    }));
+  });
+});
+
 describe('getUserNotifications', () => {
   it('returns notifications with pagination', async () => {
     const notifs = [{ id: 'n1', type: 'BOOKING_CONFIRMED', read: false, createdAt: new Date() }];
@@ -237,7 +287,20 @@ describe('getUserNotifications', () => {
 
     await getUserNotifications('u-1', { page: 1, limit: 20, unreadOnly: true });
     expect(prisma.notification.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { userId: 'u-1', read: false } })
+      expect.objectContaining({
+        where: { userId: 'u-1', read: false, domain: { not: 'STAYS' } },
+      })
+    );
+  });
+
+  it('asks for STAYS only when the Stays bell requests it', async () => {
+    prisma.notification.findMany.mockResolvedValue([]);
+    prisma.notification.count.mockResolvedValue(0);
+
+    await getUserNotifications('u-1', { domain: 'STAYS' });
+
+    expect(prisma.notification.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ domain: 'STAYS' }) })
     );
   });
 });

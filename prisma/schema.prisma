@@ -2330,12 +2330,28 @@ enum ConversationType {
   EXPEDITION_CUSTOMER
 }
 
+// Product vertical a conversation or notification belongs to. Existing rows
+// default to EXPERIENCES so the tour inboxes keep their current contents; the
+// Stays dashboard asks for STAYS explicitly.
+enum ProductDomain {
+  STAYS
+  EXPERIENCES
+}
+
 model Conversation {
   id        String           @id @default(cuid())
   type      ConversationType @default(SUPPLIER_ADMIN)
   title     String? // Auto-generated for 1-on-1: other participant's name
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
+
+  // Product vertical. Stays conversations carry the stay booking/property they
+  // belong to; everything else defaults to EXPERIENCES.
+  domain        ProductDomain @default(EXPERIENCES)
+  stayBookingId String?
+  stayBooking   StayBooking?  @relation(fields: [stayBookingId], references: [id], onDelete: SetNull)
+  propertyId    String?
+  property      StayProperty? @relation(fields: [propertyId], references: [id], onDelete: SetNull)
 
   // Optional booking context (Viator-style "About" line in chat emails).
   // Snapshot of the booking/tour the conversation relates to, captured when
@@ -2360,6 +2376,9 @@ model Conversation {
   @@index([updatedAt])
   @@index([bookingId])
   @@index([brand])
+  @@index([domain])
+  @@index([stayBookingId])
+  @@index([propertyId])
 }
 
 model ConversationParticipant {
@@ -2424,6 +2443,10 @@ model Notification {
   message String
   data    Json? // Additional structured data
 
+  // Product vertical. Stays notifications are tagged STAYS so the Stays bell
+  // can request domain=STAYS and never mix in tour activity.
+  domain ProductDomain @default(EXPERIENCES)
+
   // Optional idempotency key for operational alerts (for example
   // booking:<id>:payment-failed:<attemptId>). Nullable so every existing
   // notification type keeps its current behaviour.
@@ -2446,6 +2469,7 @@ model Notification {
   @@index([type])
   @@index([read])
   @@index([createdAt])
+  @@index([domain])
 }
 
 model AdminNotification {
@@ -3334,6 +3358,7 @@ model StayProperty {
   reviews               StayReview[]
   offerTargets          StayOfferTarget[]
   verificationDocuments StayVerificationDocument[]
+  conversations         Conversation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3435,6 +3460,7 @@ model StayBooking {
   disputes          StayDispute[]
   refundClaims      StayRefundClaim[]
   supplierCharges   StaySupplierCharge[]
+  conversations     Conversation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

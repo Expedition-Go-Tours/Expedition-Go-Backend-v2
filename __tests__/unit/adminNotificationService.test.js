@@ -2,14 +2,19 @@ jest.mock('../../src/core/services/prismaClient', () => ({
   adminNotification: { create: jest.fn(), findMany: jest.fn(), count: jest.fn(), updateMany: jest.fn(), groupBy: jest.fn() },
 }));
 
-jest.mock('../../app', () => ({ get: jest.fn() }));
+jest.mock('../../src/core/services/dataChangeEmitter', () => ({
+  getIO: jest.fn(),
+  setIO: jest.fn(),
+  emitDataChange: jest.fn(),
+  setupPrismaMiddleware: jest.fn(),
+}));
 
 jest.mock('../../src/core/services/discordNotifier', () => ({
   notifyDiscord: jest.fn(() => Promise.resolve()),
 }));
 
 const prisma = require('../../src/core/services/prismaClient');
-const app = require('../../app');
+const { getIO } = require('../../src/core/services/dataChangeEmitter');
 const { notifyDiscord } = require('../../src/core/services/discordNotifier');
 const service = require('../../src/core/services/adminNotificationService');
 
@@ -19,7 +24,7 @@ describe('adminNotificationService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockIo = { to: jest.fn().mockReturnThis(), emit: jest.fn() };
-    app.get.mockReturnValue(mockIo);
+    getIO.mockReturnValue(mockIo);
 
     prisma.adminNotification.create.mockResolvedValue({ id: 'an-1', createdAt: new Date() });
     prisma.adminNotification.findMany.mockResolvedValue([]);
@@ -66,7 +71,7 @@ describe('adminNotificationService', () => {
     });
 
     it('returns success with id even when io is not available', async () => {
-      app.get.mockReturnValue(null);
+      getIO.mockReturnValue(null);
       const result = await service.notifyAdmin({ type: 'TEST', title: 'Test', message: 'No socket' });
       expect(result).toEqual({ success: true, id: 'an-1' });
     });

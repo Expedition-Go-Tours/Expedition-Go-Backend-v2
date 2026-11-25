@@ -13,6 +13,7 @@
  */
 
 const prisma = require('./prismaClient');
+const { getIO } = require('./dataChangeEmitter');
 const chatService = require('./chatService');
 const chatInbound = require('./chatInbound');
 const chatAttachments = require('./chatAttachments');
@@ -322,7 +323,7 @@ async function ingestReceivedEmail(emailId) {
   await prisma.conversation.update({ where: { id: conversation.id }, data: { updatedAt: new Date() } });
 
   // Realtime: push every inserted message to the room + other participants.
-  const io = require('../../../app').get('io');
+  const io = getIO();
   const others = await prisma.conversationParticipant.findMany({
     where: { conversationId: conversation.id, userId: { not: author.user.id } },
     select: { userId: true, user: { select: { id: true, roles: true } } },
@@ -344,7 +345,13 @@ async function ingestReceivedEmail(emailId) {
       type: 'NEW_MESSAGE',
       title: 'New Message',
       message: preview.length > 100 ? `${preview.slice(0, 100)}…` : preview,
-      data: { conversationId: conversation.id, senderId: author.user.id, conversationType: conversation.type },
+      domain: conversation.domain || 'EXPERIENCES',
+      data: {
+        conversationId: conversation.id,
+        senderId: author.user.id,
+        conversationType: conversation.type,
+        domain: conversation.domain || 'EXPERIENCES',
+      },
     });
     if (!result?.success) console.error(`[ChatEmailIngest] notification failed for ${o.userId}`);
 

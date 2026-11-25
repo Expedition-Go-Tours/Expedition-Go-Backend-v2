@@ -37,6 +37,8 @@ jest.mock('../../src/core/services/prismaClient', () => ({
     deleteMany: jest.fn(),
     createMany: jest.fn(),
   },
+  conversation: { findMany: jest.fn() },
+  message: { count: jest.fn() },
   $transaction: jest.fn(),
 }));
 
@@ -127,6 +129,8 @@ describe('staysController endpoints', () => {
     res = makeRes();
     next = jest.fn();
     prisma.stayBooking.findMany.mockResolvedValue([]);
+    prisma.conversation.findMany.mockResolvedValue([]);
+    prisma.message.count.mockResolvedValue(0);
   });
 
   it('returns dashboard counts with zeroed booking data', async () => {
@@ -147,6 +151,26 @@ describe('staysController endpoints', () => {
         recentBookings: [],
       }),
     });
+  });
+
+  it('counts only STAYS conversations in the dashboard message tile', async () => {
+    prisma.conversation.findMany.mockResolvedValue([
+      { id: 'c-1', type: 'SUPPLIER_CUSTOMER', participants: [{ lastReadAt: new Date(0) }] },
+    ]);
+    prisma.message.count.mockResolvedValue(4);
+
+    await controller.getDashboard(req, res, next);
+
+    expect(prisma.conversation.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ domain: 'STAYS' }),
+      })
+    );
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        actionRequired: expect.objectContaining({ messagesAwaitingReply: 4 }),
+      }),
+    }));
   });
 
   it('creates a draft with defaults and ignores protected fields', async () => {

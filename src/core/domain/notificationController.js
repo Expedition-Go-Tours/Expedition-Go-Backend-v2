@@ -15,6 +15,7 @@ const {
   markAllNotificationsAsRead,
   deleteNotification
 } = require('../services/notificationService');
+const { parseProductDomain } = require('../services/productDomain');
 
 /**
  * Get user's notifications
@@ -22,11 +23,13 @@ const {
 exports.getNotifications = catchAsync(async (req, res, next) => {
   const userId = req.user.id;
   const { page = 1, limit = 20, unreadOnly = false } = req.query;
+  const domain = parseProductDomain(req.query.domain);
 
   const result = await getUserNotifications(userId, {
     page: parseInt(page),
     limit: parseInt(limit),
-    unreadOnly: unreadOnly === 'true'
+    unreadOnly: unreadOnly === 'true',
+    ...(domain ? { domain } : {}),
   });
 
   res.status(200).json({
@@ -41,8 +44,11 @@ exports.getNotifications = catchAsync(async (req, res, next) => {
 exports.markAsRead = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const userId = req.user.id;
+  const domain = parseProductDomain(req.query.domain);
 
-  const result = await markNotificationAsRead(id, userId);
+  const result = domain
+    ? await markNotificationAsRead(id, userId, domain)
+    : await markNotificationAsRead(id, userId);
 
   if (!result.success) {
     return next(new AppError(result.error, 404));
@@ -67,8 +73,11 @@ exports.markAllAsRead = catchAsync(async (req, res, next) => {
     : allowedCategories;
   const categories = requested.filter((category) => allowedCategories.includes(category));
   const types = notificationTypesForCategories(categories);
+  const domain = parseProductDomain(req.query.domain);
 
-  const result = await markAllNotificationsAsRead(userId, types);
+  const result = domain
+    ? await markAllNotificationsAsRead(userId, types, domain)
+    : await markAllNotificationsAsRead(userId, types);
 
   if (!result.success) {
     return next(new AppError(result.error, 500));
@@ -86,8 +95,11 @@ exports.markAllAsRead = catchAsync(async (req, res, next) => {
 exports.deleteNotification = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const userId = req.user.id;
+  const domain = parseProductDomain(req.query.domain);
 
-  const result = await deleteNotification(id, userId);
+  const result = domain
+    ? await deleteNotification(id, userId, domain)
+    : await deleteNotification(id, userId);
 
   if (!result.success) {
     return next(new AppError(result.error, 404));

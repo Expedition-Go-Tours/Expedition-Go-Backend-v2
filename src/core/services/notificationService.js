@@ -13,6 +13,7 @@
  */
 
 const prisma = require('./prismaClient');
+const { getIO } = require('./dataChangeEmitter');
 const { notificationCategoryForType } = require('../../../config/permissions');
 const { sendEmail, resolveEmailBrand, buildReviewEmailData } = require('./emailService');
 const { categoryForType } = require('./notificationCategories');
@@ -34,7 +35,7 @@ const { resolveRecipients } = require('./notificationRecipientService');
  * Requiring both refused a custom role that had categories assigned and no
  * view key: nothing arrived, and the bell looked broken rather than empty.
  */
-async function fanOutToTeamMembers({ userId, type, title, message, data, dedupeKey }) {
+async function fanOutToTeamMembers({ userId, type, title, message, data, dedupeKey, domain = null }) {
   try {
     if (!prisma.supplierProfile || !prisma.teamMember || !prisma.user) return;
     const profile = await prisma.supplierProfile.findFirst({
@@ -89,6 +90,7 @@ async function fanOutToTeamMembers({ userId, type, title, message, data, dedupeK
             title,
             message,
             data,
+            ...(domain ? { domain } : {}),
             ...(dedupeKey ? { dedupeKey } : {}),
             emailSent: false,
             pushSent: false,
@@ -100,6 +102,7 @@ async function fanOutToTeamMembers({ userId, type, title, message, data, dedupeK
           title,
           message,
           data,
+          ...(domain ? { domain } : {}),
           createdAt: copy.createdAt,
         });
       } catch (error) {
@@ -119,6 +122,7 @@ async function sendNotification({
   title,
   message,
   data = {},
+  domain = null,
   sendEmail: shouldSendEmail = false,
   emailTemplate = null,
   dedupeKey = null,
@@ -144,6 +148,7 @@ async function sendNotification({
           title,
           message,
           data,
+          ...(domain ? { domain } : {}),
           ...(dedupeKey ? { dedupeKey } : {}),
           emailSent: false,
           pushSent: false
@@ -180,11 +185,12 @@ async function sendNotification({
       title,
       message,
       data,
+      ...(domain ? { domain } : {}),
       createdAt: notification.createdAt
     });
 
     // In-app copies for teammates whose role allows this category.
-    await fanOutToTeamMembers({ userId, type, title, message, data, dedupeKey });
+    await fanOutToTeamMembers({ userId, type, title, message, data, dedupeKey, domain });
 
     // Send email notification if requested
     if (shouldSendEmail && user.email) {
@@ -229,9 +235,9 @@ async function sendNotification({
  */
 async function sendWebSocketNotification(userId, notificationData) {
   try {
-    // Get Socket.IO instance from app
-    const app = require('../../../app');
-    const io = app.get('io');
+    // Socket.IO lives in the Platform API. Stays has no io and must not load
+    // the platform composition root just to discover that.
+    const io = getIO();
 
     if (!io) {
       console.warn('⚠️ Socket.IO not available for real-time notifications');
@@ -330,8 +336,12 @@ async function sendNotificationEmail(user, { type, title, message, data, templat
 /**
  * Get user notifications with pagination
  */
-async function getUserNotifications(userId, { page = 1, limit = 20, unreadOnly = false }) {
-  const where = { userId };
+async function getUserNotifications(userId, { page = 1, limit = 20, unreadOnly = false, domain = null }) {
+  const where = {
+    userId,
+    // Default excludes Stays rows; the Stays bell explicitly asks for them.
+    domain: domain || { not: 'STAYS' },
+  };
   if (unreadOnly) {
     where.read = false;
   }
@@ -347,7 +357,7 @@ async function getUserNotifications(userId, { page = 1, limit = 20, unreadOnly =
     }),
     prisma.notification.count({ where }),
     prisma.notification.count({
-      where: { userId, read: false }
+      where: { ...where, read: false }
     })
   ]);
 
@@ -368,12 +378,13 @@ async function getUserNotifications(userId, { page = 1, limit = 20, unreadOnly =
 /**
  * Mark notification as read
  */
-async function markNotificationAsRead(notificationId, userId) {
+async function markNotificationAsRead(notificationId, userId, domain = null) {
   try {
     const notification = await prisma.notification.updateMany({
       where: {
         id: notificationId,
-        userId
+        userId,
+        ...(domain ? { domain } : {}),
       },
       data: {
         read: true,
@@ -395,12 +406,13 @@ async function markNotificationAsRead(notificationId, userId) {
 /**
  * Mark all notifications as read for user
  */
-async function markAllNotificationsAsRead(userId, types = null) {
+async function markAllNotificationsAsRead(userId, types = null, domain = null) {
   try {
     const result = await prisma.notification.updateMany({
       where: {
         userId,
         read: false,
+        domain: domain || { not: 'STAYS' },
         ...(Array.isArray(types) && types.length ? { type: { in: types } } : {}),
       },
       data: {
@@ -420,12 +432,13 @@ async function markAllNotificationsAsRead(userId, types = null) {
 /**
  * Delete notification
  */
-async function deleteNotification(notificationId, userId) {
+async function deleteNotification(notificationId, userId, domain = null) {
   try {
     const result = await prisma.notification.deleteMany({
       where: {
         id: notificationId,
-        userId
+        userId,
+        ...(domain ? { domain } : {}),
       }
     });
 

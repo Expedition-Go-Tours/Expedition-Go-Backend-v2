@@ -172,9 +172,12 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
     explicitBrand: context?.explicitBrand ?? null,
   });
 
+  const domain = context?.domain || 'EXPERIENCES';
+
   const existing = await prisma.conversation.findFirst({
     where: {
       type,
+      domain,
       AND: [
         { participants: { some: { userId: senderId } } },
         { participants: { some: { userId: recipientId } } }
@@ -200,6 +203,17 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
       patch.bookingId = context.bookingId ?? null;
       patch.bookingNumber = context.bookingNumber;
       patch.tourTitle = context.tourTitle ?? null;
+    }
+    // Stays context is stamped on the first Stays conversation between the
+    // pair, so the inbox and dashboard can count/filter it by property.
+    if (context?.stayBookingId && !existing.stayBookingId) {
+      patch.stayBookingId = context.stayBookingId;
+    }
+    if (context?.propertyId && !existing.propertyId) {
+      patch.propertyId = context.propertyId;
+    }
+    if (context?.stayBookingId && !existing.tourTitle && context.tourTitle) {
+      patch.tourTitle = context.tourTitle;
     }
     // Backfill the platform on conversations created before isolation.
     if (!existing.brand && brand) {
@@ -242,6 +256,9 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
       type,
       title,
       brand,
+      domain,
+      stayBookingId: context?.stayBookingId ?? null,
+      propertyId: context?.propertyId ?? null,
       bookingId: context?.bookingId ?? null,
       bookingNumber: context?.bookingNumber ?? null,
       tourTitle: context?.tourTitle ?? null,
@@ -268,7 +285,7 @@ async function findOrCreateConversation(senderId, recipientId, type = 'SUPPLIER_
   return conversation;
 }
 
-async function getConversations(userId, brandKey = null) {
+async function getConversations(userId, brandKey = null, domain = null) {
   userId = await resolveChatUserId(userId);
 
   const participants = await prisma.conversationParticipant.findMany({
@@ -319,6 +336,15 @@ async function getConversations(userId, brandKey = null) {
     );
   }
 
+  // Product vertical: the Stays dashboard asks for STAYS, the Experiences
+  // dashboard for EXPERIENCES. With no filter, hide Stays rows so the tour
+  // inbox can never show property conversations created by the other service.
+  if (domain) {
+    results = results.filter((c) => c.domain === domain);
+  } else {
+    results = results.filter((c) => c.domain !== 'STAYS');
+  }
+
   // Only resolve customers for the conversations that actually ship.
   await attachCustomerUserIds(results);
   return results;
@@ -339,14 +365,29 @@ async function getConversations(userId, brandKey = null) {
 async function attachCustomerUserIds(conversations) {
   for (const c of conversations) c.customerUserId = null;
   const withBooking = conversations.filter((c) => c && c.bookingId);
-  if (withBooking.length === 0) return;
+  const withStayBooking = conversations.filter((c) => c && c.stayBookingId);
+  if (withBooking.length === 0 && withStayBooking.length === 0) return;
 
-  const bookings = await prisma.booking.findMany({
-    where: { id: { in: withBooking.map((c) => c.bookingId) } },
-    select: { id: true, customerId: true, tour: { select: { supplierId: true } } },
-  });
+  const [bookings, stayBookings] = await Promise.all([
+    withBooking.length
+      ? prisma.booking.findMany({
+        where: { id: { in: withBooking.map((c) => c.bookingId) } },
+        select: { id: true, customerId: true, tour: { select: { supplierId: true } } },
+      })
+      : [],
+    withStayBooking.length
+      ? prisma.stayBooking.findMany({
+        where: { id: { in: withStayBooking.map((c) => c.stayBookingId) } },
+        select: { id: true, customerId: true, supplierId: true },
+      })
+      : [],
+  ]);
   const bookingById = new Map(bookings.map((b) => [b.id, b]));
-  const supplierIds = [...new Set(bookings.map((b) => b.tour?.supplierId).filter(Boolean))];
+  const stayBookingById = new Map(stayBookings.map((b) => [b.id, b]));
+  const supplierIds = [...new Set([
+    ...bookings.map((b) => b.tour?.supplierId).filter(Boolean),
+    ...stayBookings.map((b) => b.supplierId).filter(Boolean),
+  ])];
 
   const staffEmailsBySupplier = new Map();
   if (supplierIds.length > 0) {
@@ -376,6 +417,25 @@ async function attachCustomerUserIds(conversations) {
     const staff = staffEmailsBySupplier.get(supplierId) || new Set();
     const customer = (c.participants || []).find((p) => {
       if (p.userId === supplierId) return false;
+      const email = String(p.user?.email || '').toLowerCase();
+      if (email && staff.has(email)) return false;
+      return true;
+    });
+    c.customerUserId = customer?.userId || null;
+  }
+
+  for (const c of withStayBooking) {
+    const stay = stayBookingById.get(c.stayBookingId);
+    if (!stay) continue;
+
+    if (stay.customerId && c.participants?.some((p) => p.userId === stay.customerId)) {
+      c.customerUserId = stay.customerId;
+      continue;
+    }
+
+    const staff = staffEmailsBySupplier.get(stay.supplierId) || new Set();
+    const customer = (c.participants || []).find((p) => {
+      if (p.userId === stay.supplierId) return false;
       const email = String(p.user?.email || '').toLowerCase();
       if (email && staff.has(email)) return false;
       return true;
@@ -489,7 +549,13 @@ async function sendMessage(conversationId, accessId, actorId, content, attachmen
       type: 'NEW_MESSAGE',
       title: 'New Message',
       message: content.length > 100 ? content.slice(0, 100) + '...' : content,
-      data: { conversationId, senderId, conversationType: participant.conversation.type }
+      domain: participant.conversation.domain || 'EXPERIENCES',
+      data: {
+        conversationId,
+        senderId,
+        conversationType: participant.conversation.type,
+        domain: participant.conversation.domain || 'EXPERIENCES',
+      }
     }).catch((err) => console.error('[ChatService] Failed to enqueue notification:', err));
   }
 
@@ -722,12 +788,13 @@ async function deleteConversation(conversationId, userId) {
  * conversations are counted (backward compatible — the storefront relies on
  * this).
  */
-async function getUnreadCount(userId, types = null, brandKey = null) {
+async function getUnreadCount(userId, types = null, brandKey = null, domain = null) {
   userId = await resolveChatUserId(userId);
 
   const hasTypes = Array.isArray(types) && types.length > 0;
   const conversationWhere = {};
   if (hasTypes) conversationWhere.type = { in: types };
+  conversationWhere.domain = domain || { not: 'STAYS' };
   if (brandKey && BRAND_KEYS.includes(brandKey)) {
     // Mirror getConversations: Ghana also counts unassigned legacy rows.
     if (brandKey === 'ghana') {

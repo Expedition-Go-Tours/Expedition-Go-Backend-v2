@@ -10,7 +10,11 @@
 const express = require('express');
 const { requireTeamPermission } = require('../../../middleware/teamRoleMiddleware');
 const validate = require('../../../middleware/validate');
-const { uploadTourPhotos, uploadSupplierDocument } = require('../../../middleware/uploadMiddleware');
+const {
+  uploadTourPhotos,
+  uploadSupplierDocument,
+  uploadChatImage,
+} = require('../../../middleware/uploadMiddleware');
 const controller = require('./staysController');
 const offers = require('./staysOffersController');
 const bookings = require('./staysBookingsController');
@@ -19,13 +23,67 @@ const finance = require('./staysFinanceController');
 const financeController = require('../../core/domain/financeController');
 const payoutMethodController = require('../../core/domain/payoutMethodController');
 const verification = require('./staysVerificationController');
+const chatController = require('../../core/domain/chatController');
+const notificationController = require('../../core/domain/notificationController');
+const prisma = require('../../core/services/prismaClient');
+const AppError = require('../../core/services/appError');
 const schemas = require('../../core/services/staysValidation');
 
 const router = express.Router();
 
+/**
+ * Force shared chat/notification controllers onto the Stays product domain.
+ * These routes live under /supplier/stays, so Nginx serves them from the
+ * stays-api container rather than the Experiences API.
+ */
+function staysDomain(req, _res, next) {
+  req.query = { ...(req.query || {}), domain: 'stays' };
+  next();
+}
+
+/**
+ * A by-ID chat operation must prove the conversation is a Stays thread before
+ * the controller reads or mutates it. List-level filtering alone would let a
+ * supplier open a tour thread by guessing its id.
+ */
+async function assertStayConversation(req, _res, next) {
+  try {
+    const accessIds = [req.supplierId, req.user?.id].filter(Boolean);
+    const conversation = await prisma.conversation.findFirst({
+      where: {
+        id: req.params.id,
+        domain: 'STAYS',
+        participants: { some: { userId: { in: accessIds } } },
+      },
+      select: { id: true },
+    });
+    if (!conversation) return next(new AppError('Conversation not found', 404));
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
 // Dashboard is available to every signed-in supplier member, matching the
 // frontend's `"/stays": null` page-access rule.
 router.get('/dashboard', controller.getDashboard);
+
+// Stays-only chat. The shared controller is forced onto the STAYS domain, and
+// every by-ID operation is checked against that domain before it runs.
+router.get('/conversations', requireTeamPermission('chat.view'), staysDomain, chatController.getConversations);
+router.get('/conversations/unread-count', requireTeamPermission('chat.view'), staysDomain, chatController.getUnreadCount);
+router.get('/conversations/:id/messages', requireTeamPermission('chat.view'), assertStayConversation, chatController.getMessages);
+router.post('/conversations/:id/messages', requireTeamPermission('chat.respond'), assertStayConversation, chatController.sendMessage);
+router.patch('/conversations/:id/read', requireTeamPermission('chat.view'), assertStayConversation, chatController.markAsRead);
+router.delete('/conversations/:id', requireTeamPermission('chat.respond'), assertStayConversation, chatController.deleteConversation);
+router.post('/chat/upload', requireTeamPermission('chat.respond'), uploadChatImage, chatController.uploadImage);
+
+// Stays-only notifications. The by-ID operations receive domain=STAYS too, so
+// a tour notification id can never be marked read or deleted from this bell.
+router.get('/notifications', staysDomain, notificationController.getNotifications);
+router.patch('/notifications/mark-all-read', staysDomain, notificationController.markAllAsRead);
+router.patch('/notifications/:id/read', staysDomain, notificationController.markAsRead);
+router.delete('/notifications/:id', staysDomain, notificationController.deleteNotification);
 
 // Properties / builder
 router.get('/properties', requireTeamPermission('stays.view'), controller.listProperties);
@@ -185,3 +243,5 @@ router.post(
 );
 
 module.exports = router;
+// Exported for the isolation unit test; not part of the HTTP surface.
+module.exports._assertStayConversation = assertStayConversation;

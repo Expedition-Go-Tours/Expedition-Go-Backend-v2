@@ -8,6 +8,7 @@ jest.mock('../../src/core/services/prismaClient', () => ({
   adminNotification: { updateMany: jest.fn() },
   systemConfig: { findUnique: jest.fn() },
   booking: { findUnique: jest.fn(), findMany: jest.fn() },
+  stayBooking: { findMany: jest.fn() },
   supplierNotificationRecipient: { findMany: jest.fn() },
 }));
 
@@ -64,6 +65,8 @@ describe('chatService', () => {
     prisma.adminNotification.updateMany.mockResolvedValue({ count: 1 });
     prisma.systemConfig.findUnique.mockResolvedValue(null);
     prisma.booking.findUnique.mockResolvedValue(null);
+    prisma.stayBooking.findMany.mockResolvedValue([]);
+    prisma.supplierNotificationRecipient.findMany.mockResolvedValue([]);
     enqueueEmail.mockResolvedValue();
   });
 
@@ -96,6 +99,40 @@ describe('chatService', () => {
       const result = await chatService.findOrCreateConversation('u-1', 'admin-1');
       expect(result).toBe(mockConversation);
       expect(prisma.conversation.create).not.toHaveBeenCalled();
+    });
+
+    it('scopes the existing-conversation lookup to the product domain', async () => {
+      await chatService.findOrCreateConversation('u-1', 'admin-1', 'SUPPLIER_CUSTOMER', {
+        domain: 'STAYS',
+      });
+
+      expect(prisma.conversation.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ domain: 'STAYS' }),
+        })
+      );
+    });
+
+    it('creates a STAYS conversation with its stay booking and property context', async () => {
+      prisma.conversation.findFirst.mockResolvedValue(null);
+
+      await chatService.findOrCreateConversation('u-1', 'customer-1', 'SUPPLIER_CUSTOMER', {
+        domain: 'STAYS',
+        stayBookingId: 'sb-1',
+        propertyId: 'sp-1',
+        bookingNumber: 'TRG-S-1',
+        tourTitle: 'Akwaaba Coast Hotel',
+      });
+
+      expect(prisma.conversation.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            domain: 'STAYS',
+            stayBookingId: 'sb-1',
+            propertyId: 'sp-1',
+          }),
+        })
+      );
     });
 
     it('creates new conversation when none exists', async () => {
@@ -165,6 +202,17 @@ describe('chatService', () => {
     it('returns 0 unread when no messages', async () => {
       const result = await chatService.getConversations('u-1');
       expect(result[0].unreadCount).toBe(0);
+    });
+
+    it('returns only STAYS conversations when the Stays dashboard asks', async () => {
+      prisma.conversationParticipant.findMany.mockResolvedValue([
+        { ...mockParticipant, conversation: { ...mockConversation, id: 'c-stays', domain: 'STAYS' } },
+        { ...mockParticipant, conversation: { ...mockConversation, id: 'c-exp', domain: 'EXPERIENCES' } },
+      ]);
+
+      const result = await chatService.getConversations('u-1', null, 'STAYS');
+
+      expect(result.map((conversation) => conversation.id)).toEqual(['c-stays']);
     });
   });
 
@@ -552,7 +600,21 @@ describe('chatService', () => {
 
       const findManyArg = prisma.conversationParticipant.findMany.mock.calls[0][0];
       expect(findManyArg.where).toMatchObject({ userId: 'u-1' });
-      expect(findManyArg.where.conversation).toBeUndefined();
+      // The default inbox is Experiences-only; Stays must be requested
+      // explicitly so the tour badge can never count property messages.
+      expect(findManyArg.where.conversation).toEqual({ domain: { not: 'STAYS' } });
+    });
+
+    it('filters to STAYS when the Stays dashboard asks for it', async () => {
+      prisma.message.count.mockResolvedValueOnce(2);
+      prisma.conversationParticipant.findMany.mockResolvedValue([
+        { conversationId: 'c-9', lastReadAt: new Date(0) },
+      ]);
+
+      await chatService.getUnreadCount('u-1', null, null, 'STAYS');
+
+      const findManyArg = prisma.conversationParticipant.findMany.mock.calls[0][0];
+      expect(findManyArg.where.conversation).toEqual({ domain: 'STAYS' });
     });
   });
 

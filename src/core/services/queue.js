@@ -775,11 +775,13 @@ async function enqueueNotification({
   title,
   message,
   data,
+  domain,
   sendEmail,
   emailTemplate,
   dedupeKey,
 }) {
   const job = { userId, type, title, message, data };
+  if (domain) job.domain = domain;
   if (sendEmail) job.sendEmail = sendEmail;
   if (emailTemplate) job.emailTemplate = emailTemplate;
   if (dedupeKey) job.dedupeKey = dedupeKey;

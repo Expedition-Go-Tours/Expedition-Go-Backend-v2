@@ -5,6 +5,7 @@ const AppError = require('../services/appError');
 const crypto = require('crypto');
 const cache = require('../services/cacheHelper');
 const { invalidateUserCache } = require('../../../middleware/authMiddleware');
+const { getIO } = require('../services/dataChangeEmitter');
 const { signAccessToken, signRefreshToken } = require('../../../config/jwt');
 const { storeRefreshToken } = require('../services/refreshTokenHelper');
 const { sendTeamInviteEmail, sendTeamInviteRevokedEmail, resolveEmailBrand } = require('../services/emailService');
@@ -578,8 +579,7 @@ async function invalidateMemberContext(email) {
 function emitTeamSocketEvent(userIds, event) {
   if (!Array.isArray(userIds) || !userIds.length) return;
   try {
-    const app = require('../../../app');
-    const io = app.get('io');
+    const io = getIO();
     if (!io) return;
     for (const userId of userIds) {
       io.to(`user:${userId}`).emit(event);

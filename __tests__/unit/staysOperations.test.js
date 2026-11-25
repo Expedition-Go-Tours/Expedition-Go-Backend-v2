@@ -25,6 +25,7 @@ jest.mock('../../src/core/services/prismaClient', () => {
       update: jest.fn(),
       aggregate: jest.fn(),
     },
+    user: { findFirst: jest.fn() },
     bookingCounter: { upsert: jest.fn() },
     systemConfig: { findUnique: jest.fn() },
     $queryRaw: jest.fn(),
@@ -37,7 +38,17 @@ jest.mock('../../src/core/services/prismaClient', () => {
   return prisma;
 });
 
+jest.mock('../../src/core/services/queue', () => ({
+  enqueueNotification: jest.fn(() => Promise.resolve()),
+}));
+
+jest.mock('../../src/core/services/chatService', () => ({
+  findOrCreateConversation: jest.fn(() => Promise.resolve()),
+}));
+
 const prisma = require('../../src/core/services/prismaClient');
+const { enqueueNotification } = require('../../src/core/services/queue');
+const chatService = require('../../src/core/services/chatService');
 const bookings = require('../../src/brands/ghana/staysBookingsController');
 const offers = require('../../src/brands/ghana/staysOffersController');
 const analytics = require('../../src/brands/ghana/staysAnalyticsController');
@@ -114,6 +125,9 @@ describe('staysBookingsController', () => {
     next = jest.fn();
     prisma.bookingCounter.upsert.mockResolvedValue({ count: 1 });
     prisma.systemConfig.findUnique.mockResolvedValue(null);
+    prisma.user.findFirst.mockResolvedValue(null);
+    prisma.stayAvailabilityOverride.findFirst.mockResolvedValue(null);
+    prisma.stayAvailabilityOverride.findMany.mockResolvedValue([]);
   });
 
   it('creates a manual booking with nights, price and commission', async () => {
@@ -282,6 +296,50 @@ describe('staysBookingsController', () => {
     expect(prisma.stayBooking.create).not.toHaveBeenCalled();
     expect(next.mock.calls[0][0].statusCode).toBe(400);
     expect(next.mock.calls[0][0].message).toMatch(/blocked for this room/);
+  });
+
+  it('creates a STAYS conversation and notification for a known customer', async () => {
+    prisma.user.findFirst.mockResolvedValue({ id: 'cust-1' });
+    prisma.stayProperty.findFirst.mockResolvedValue({
+      id: 'sp-1',
+      name: 'Akwaaba Coast Hotel',
+      data: {
+        currency: 'GHS',
+        rooms: [{ id: 'r1', name: 'Deluxe King Room', count: 4, price: 120 }],
+        ratePlans: [{ id: 'plan-r1', roomId: 'r1', name: 'Standard rate', price: 120 }],
+      },
+    });
+    prisma.stayBooking.count.mockResolvedValue(0);
+    prisma.stayAvailabilityOverride.findFirst.mockResolvedValue(null);
+    prisma.stayBooking.create.mockResolvedValue(bookingRow());
+
+    req.body = {
+      propertyId: 'sp-1',
+      roomId: 'r1',
+      guestName: 'Ama Mensah',
+      guestEmail: 'ama@example.com',
+      checkIn: '2026-11-10',
+      checkOut: '2026-11-12',
+      guests: 2,
+    };
+
+    await bookings.createBooking(req, res, next);
+
+    expect(enqueueNotification).toHaveBeenCalledWith(expect.objectContaining({
+      domain: 'STAYS',
+      type: 'BOOKING_CREATED_BY_SUPPLIER',
+      data: expect.objectContaining({ domain: 'STAYS', stayBookingId: 'sb-1' }),
+    }));
+    expect(chatService.findOrCreateConversation).toHaveBeenCalledWith(
+      'sup-1',
+      'cust-1',
+      'SUPPLIER_CUSTOMER',
+      expect.objectContaining({
+        domain: 'STAYS',
+        stayBookingId: 'sb-1',
+        propertyId: 'sp-1',
+      }),
+    );
   });
 
   it('rejects an invalid status transition', async () => {

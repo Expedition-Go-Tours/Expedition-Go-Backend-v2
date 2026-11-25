@@ -1,4 +1,5 @@
 const prisma = require('./prismaClient');
+const { getIO } = require('./dataChangeEmitter');
 const { notifyDiscord, sendViaBot } = require('./discordNotifier');
 const channelEmbeds = require('./channelEmbeds');
 const { isGhanaSupplier } = require('./supplierCountry');
@@ -173,8 +174,7 @@ async function notifyAdmin({ type, title, message, data = {}, storefront = null 
       data: { type, title, message, data, storefront: resolvedStorefront },
     });
 
-    const app = require('../../../app');
-    const io = app.get('io');
+    const io = getIO();
     if (io) {
       io.to('admin-room').emit('admin-notification', {
         id: notification.id,
@@ -257,8 +257,7 @@ async function acknowledgeAll(adminId, where = {}) {
 
 async function emitToRoom(room, { type, title, message, data = {} }) {
   try {
-    const app = require('../../../app');
-    const io = app.get('io');
+    const io = getIO();
     if (io) {
       io.to(room).emit('admin-notification', {
         type,

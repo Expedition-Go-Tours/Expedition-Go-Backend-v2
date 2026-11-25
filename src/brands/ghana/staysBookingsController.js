@@ -11,6 +11,8 @@ const AppError = require('../../core/services/appError');
 const catchAsync = require('../../core/services/catchAsync');
 const { generateBookingNumber } = require('../../core/services/bookingHelpers');
 const { calculateCommission } = require('../../core/services/stripeHelpers');
+const { enqueueNotification } = require('../../core/services/queue');
+const chatService = require('../../core/services/chatService');
 const {
   BOOKING_TRANSITIONS,
   supplierIdFor,
@@ -20,11 +22,37 @@ const {
   addDays,
   nightsBetween,
   enumBookingStatus,
+  displayBookingStatus,
   serializeStayBooking,
   stayBookingInclude,
 } = require('./staysShared');
 
 const MAX_BOOKINGS = 500;
+
+/**
+ * Stays notifications are tagged with the product domain so the Stays bell can
+ * request domain=STAYS and never surface tour activity.
+ */
+function enqueueStayNotification({ userId, type, title, message, booking }) {
+  return enqueueNotification({
+    userId,
+    type,
+    title,
+    message,
+    domain: 'STAYS',
+    data: {
+      domain: 'STAYS',
+      bookingId: booking.id,
+      stayBookingId: booking.id,
+      bookingNumber: booking.bookingNumber,
+      propertyId: booking.propertyId,
+      propertyName: booking.property?.name || '',
+      guestName: booking.guestName,
+    },
+  }).catch((err) => {
+    console.error('[Stays] booking notification failed:', err.message);
+  });
+}
 
 function parseGuestName(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -239,6 +267,16 @@ exports.createBooking = catchAsync(async (req, res) => {
 
   const guestName = parseGuestName(body.guestName);
   if (!guestName) throw new AppError('Guest name is required', 400);
+  const guestEmail = typeof body.guestEmail === 'string' ? body.guestEmail.trim() || null : null;
+
+  // Link an existing customer account by email so the Stays inbox can show the
+  // guest and both sides can share one conversation thread.
+  const customer = guestEmail
+    ? await prisma.user.findFirst({
+      where: { email: { equals: guestEmail, mode: 'insensitive' }, roles: { has: 'customer' } },
+      select: { id: true },
+    })
+    : null;
 
   const guests = parseGuests(body.guests);
 
@@ -341,7 +379,8 @@ exports.createBooking = catchAsync(async (req, res) => {
             ratePlanId: plan?.id || null,
             ratePlanName: plan?.name || null,
             guestName,
-            guestEmail: typeof body.guestEmail === 'string' ? body.guestEmail.trim() || null : null,
+            customerId: customer?.id ?? null,
+            guestEmail,
             guestPhone: typeof body.guestPhone === 'string' ? body.guestPhone.trim() || null : null,
             checkIn,
             checkOut,
@@ -363,6 +402,31 @@ exports.createBooking = catchAsync(async (req, res) => {
       { isolationLevel: 'ReadCommitted', timeout: 15000, maxWait: 10000 },
     ),
   );
+
+  enqueueStayNotification({
+    userId: supplierId,
+    type: 'BOOKING_CREATED_BY_SUPPLIER',
+    title: 'New stay booking',
+    message: `${guestName} booked ${booking.property?.name || 'a property'} (${booking.bookingNumber}).`,
+    booking,
+  });
+
+  if (customer && customer.id !== supplierId) {
+    await chatService.findOrCreateConversation(
+      supplierId,
+      customer.id,
+      'SUPPLIER_CUSTOMER',
+      {
+        domain: 'STAYS',
+        stayBookingId: booking.id,
+        propertyId: booking.propertyId,
+        bookingNumber: booking.bookingNumber,
+        tourTitle: booking.property?.name || '',
+      },
+    ).catch((err) => {
+      console.error('[Stays] conversation creation failed:', err.message);
+    });
+  }
 
   res.status(201).json({
     status: 'success',
@@ -400,6 +464,14 @@ exports.updateBookingStatus = catchAsync(async (req, res) => {
     where: { id: existing.id },
     data,
     include: stayBookingInclude,
+  });
+
+  enqueueStayNotification({
+    userId: supplierId,
+    type: 'BOOKING_STATUS_UPDATED',
+    title: 'Stay booking updated',
+    message: `${booking.guestName}'s booking is now ${displayBookingStatus(booking.status)}.`,
+    booking,
   });
 
   res.status(200).json({
