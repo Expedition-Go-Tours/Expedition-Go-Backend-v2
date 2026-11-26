@@ -312,6 +312,9 @@ enum NotificationType {
   INVOICE_APPROVED // Finance v3: finance approved the invoice (transfer authorized)
   PRICE_DROP // A wishlisted experience dropped in price
   WAITLIST_OPEN // A sold-out date on the waitlist became bookable again
+  RESTAURANT_CLAIM_UPDATE // Admin approved/rejected this account's restaurant claim
+  REVIEW_STATUS_UPDATE // A restaurant review was approved, rejected or flagged
+  REVIEW_REMOVED // A restaurant review was removed after an upheld report
 }
 
 // Lifecycle of an additional notification email address. PENDING until the
@@ -345,6 +348,9 @@ enum AdminNotificationType {
   BOOKING_MODIFIED
   SUPPLIER_CANCELLATION_REQUEST // Supplier submitted a cancellation request awaiting approval
   SUPPLIER_CANCELLATION_DECIDED // Admin approved/rejected a supplier cancellation request
+  RESTAURANT_VENUE_CLAIM_PENDING // Someone asked to manage a restaurant listing
+  RESTAURANT_REVIEW_NEEDS_MODERATION // A restaurant review is waiting for a moderator
+  RESTAURANT_REVIEW_REPORTED // A diner reported a restaurant review
 }
 
 enum ReviewStatus {

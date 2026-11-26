@@ -49,6 +49,8 @@ jest.mock('../../src/core/services/restaurantVenueRatings', () => ({
 
 const prisma = require('../../src/core/services/prismaClient');
 const ratings = require('../../src/core/services/restaurantVenueRatings');
+const { enqueueNotification } = require('../../src/core/services/queue');
+const { notifyAdmin } = require('../../src/core/services/adminNotificationService');
 const { mintReviewProof } = require('../../src/core/services/restaurantReviewProof');
 const { logActivity } = require('../../src/core/services/auditLogger');
 const write = require('../../src/core/services/restaurantVenueWriteService');
@@ -134,6 +136,23 @@ describe('restaurantVenueWriteService', () => {
       expect(ratings.addApprovedRating).not.toHaveBeenCalled();
       expect(result.status).toBe('PENDING');
       expect(result.verified).toBe(false);
+    });
+
+    it('rings the admin bell so a moderator sees the pending review', async () => {
+      await write.createReview({
+        slugOrId: 'buka-accra',
+        brand: 'ghana',
+        author: AUTHOR,
+        input: reviewInput(),
+        req: REQ,
+      });
+
+      expect(notifyAdmin).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'RESTAURANT_REVIEW_NEEDS_MODERATION',
+          data: expect.objectContaining({ reviewId: 'r1', venueSlug: 'buka-accra' }),
+        }),
+      );
     });
 
     it('ignores client-supplied provenance and approves a signed invite', async () => {
@@ -433,6 +452,25 @@ describe('restaurantVenueWriteService', () => {
       expect(result.status).toBe('APPROVED');
     });
 
+    it('tells the author their review was decided through their bell', async () => {
+      prisma.restaurantVenueReview.findUnique.mockResolvedValue(baseReview);
+
+      await write.moderateReview({
+        reviewId: 'r1',
+        adminId: 'admin1',
+        action: 'approve',
+        req: REQ,
+      });
+
+      expect(enqueueNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'u2',
+          type: 'REVIEW_STATUS_UPDATE',
+          data: expect.objectContaining({ reviewId: 'r1', venueSlug: 'buka-accra' }),
+        }),
+      );
+    });
+
     it('removes the rating when an approved review is rejected', async () => {
       prisma.restaurantVenueReview.findUnique.mockResolvedValue({
         ...baseReview,
@@ -555,6 +593,12 @@ describe('restaurantVenueWriteService', () => {
         data: expect.objectContaining({ status: 'REMOVED' }),
       });
       expect(result.reviewStatus).toBe('REMOVED');
+      expect(enqueueNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'REVIEW_REMOVED',
+          data: expect.objectContaining({ reviewId: 'r1', venueSlug: 'buka-accra' }),
+        }),
+      );
     });
 
     it('keeps the review when a CONTESTED report is upheld', async () => {

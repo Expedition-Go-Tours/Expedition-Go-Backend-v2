@@ -302,7 +302,7 @@ async function createReview({ slugOrId, brand, author, input, req }) {
       type: 'RESTAURANT_REVIEW_NEEDS_MODERATION',
       title: 'Restaurant review needs moderation',
       message: `A ${rating}-star review for ${venue.name} is waiting for approval.`,
-      data: { reviewId: review.id, venueId: venue.id },
+      data: { reviewId: review.id, venueId: venue.id, venueSlug: venue.slug },
     }).catch((err) => logger.warn('[admin] review notification failed:', err?.message));
   }
 
@@ -464,7 +464,7 @@ async function replaceOwnReview({ slugOrId, brand, reviewId, author, input, req 
     type: 'RESTAURANT_REVIEW_NEEDS_MODERATION',
     title: 'Updated restaurant review needs moderation',
     message: `A ${rating}-star review of ${venue.name} was updated and is waiting for approval.`,
-    data: { reviewId: created.id, venueId: venue.id },
+    data: { reviewId: created.id, venueId: venue.id, venueSlug: venue.slug },
   }).catch((err) => logger.warn('[admin] review notification failed:', err?.message));
 
   return toAuthorReview(created);
@@ -538,7 +538,7 @@ async function moderateReview({ reviewId, adminId, action, reason, req }) {
     message: action === 'approve'
       ? 'Your restaurant review is now visible.'
       : `Your restaurant review was ${action === 'flag' ? 'flagged for review' : 'not approved'}.`,
-    data: { reviewId: review.id },
+    data: { reviewId: review.id, venueId: review.venueId, venueSlug: review.venue.slug },
   }).catch((err) => logger.warn('[notification] review update failed:', err?.message));
 
   return toAuthorReview({ ...review, ...updated });
@@ -660,7 +660,7 @@ async function submitReport({ slugOrId, brand, reviewId, reporter, input, req })
     type: 'RESTAURANT_REVIEW_REPORTED',
     title: 'Restaurant review reported',
     message: `A review of ${venue.name} was reported: ${report.reason}`,
-    data: { reportId: report.id, reviewId: review.id, venueId: venue.id },
+    data: { reportId: report.id, reviewId: review.id, venueId: venue.id, venueSlug: venue.slug },
   }).catch((err) => logger.warn('[admin] report notification failed:', err?.message));
 
   return toReport(report);
@@ -728,7 +728,7 @@ async function resolveReport({ reportId, adminId, classification, outcome, req }
       type: 'REVIEW_REMOVED',
       title: 'Restaurant review removed',
       message: 'A moderator found that your review did not describe a first-hand visit, so it was removed.',
-      data: { reviewId: review.id },
+      data: { reviewId: review.id, venueId: review.venueId, venueSlug: review.venue.slug },
     }).catch((err) => logger.warn('[notification] review removal failed:', err?.message));
   }
 

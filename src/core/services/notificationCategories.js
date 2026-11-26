@@ -32,6 +32,8 @@ const CATEGORY_BY_TYPE = {
   // Reviews
   REVIEW_RECEIVED: 'reviews',
   REVIEW_REQUEST: 'reviews',
+  REVIEW_STATUS_UPDATE: 'reviews',
+  REVIEW_REMOVED: 'reviews',
 
   // Payments & payouts
   PAYMENT_RECEIVED: 'payments',
@@ -57,6 +59,7 @@ const CATEGORY_BY_TYPE = {
   TOUR_FLAGGED: 'systemAlerts',
   SUPPLIER_APPROVED: 'systemAlerts',
   SUPPLIER_REJECTED: 'systemAlerts',
+  RESTAURANT_CLAIM_UPDATE: 'systemAlerts',
   DOCUMENT_REJECTED: 'systemAlerts',
   DOCUMENT_EXPIRY_REMINDER: 'systemAlerts',
   DOCUMENT_EXPIRED: 'systemAlerts',

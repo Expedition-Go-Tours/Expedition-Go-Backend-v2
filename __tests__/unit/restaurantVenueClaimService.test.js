@@ -39,6 +39,8 @@ jest.mock('../../src/core/services/restaurantVenueService', () => ({
 }));
 
 const prisma = require('../../src/core/services/prismaClient');
+const { enqueueNotification } = require('../../src/core/services/queue');
+const { notifyAdmin } = require('../../src/core/services/adminNotificationService');
 const claims = require('../../src/core/services/restaurantVenueClaimService');
 
 const VENUE = { id: 'v1', slug: 'buka-accra', name: 'Buka', city: 'Accra' };
@@ -79,6 +81,23 @@ describe('restaurantVenueClaimService', () => {
     expect(prisma.restaurantVenueMember.upsert).not.toHaveBeenCalled();
   });
 
+  it('rings the admin bell with the claim queue type on submit', async () => {
+    await claims.submitClaim({
+      slugOrId: 'buka-accra',
+      brand: 'ghana',
+      claimant: USER,
+      input: { message: 'I manage this restaurant and can provide the business registration.' },
+      req: REQ,
+    });
+
+    expect(notifyAdmin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'RESTAURANT_VENUE_CLAIM_PENDING',
+        data: expect.objectContaining({ claimId: 'c1', venueId: 'v1' }),
+      }),
+    );
+  });
+
   it('refuses a second pending claim from the same person', async () => {
     prisma.restaurantVenueClaim.findFirst.mockResolvedValue({ id: 'c1', status: 'PENDING' });
 
@@ -115,6 +134,32 @@ describe('restaurantVenueClaimService', () => {
     expect(result.status).toBe('APPROVED');
     expect(result.membership).toMatchObject({ role: 'OWNER', status: 'ACTIVE' });
     expect(prisma.restaurantVenueMember.upsert).toHaveBeenCalled();
+  });
+
+  it('tells the claimant about the decision through their bell', async () => {
+    prisma.restaurantVenueClaim.findUnique.mockResolvedValue({
+      id: 'c1',
+      venueId: 'v1',
+      userId: 'u1',
+      brand: 'ghana',
+      status: 'PENDING',
+      venue: VENUE,
+    });
+
+    await claims.resolveClaim({
+      claimId: 'c1',
+      adminId: 'admin1',
+      action: 'approve',
+      req: REQ,
+    });
+
+    expect(enqueueNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'u1',
+        type: 'RESTAURANT_CLAIM_UPDATE',
+        data: expect.objectContaining({ claimId: 'c1', venueSlug: 'buka-accra' }),
+      }),
+    );
   });
 
   it('blocks venue edits until the signed-in user has an active membership', async () => {
