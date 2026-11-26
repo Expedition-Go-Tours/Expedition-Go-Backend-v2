@@ -64,6 +64,28 @@ describe('chatController', () => {
       expect(chatService.getConversations).toHaveBeenCalledWith('admin-1', 'africa');
     });
 
+    it('resolves an admin to the shared admin identity when the admin mount sets chatAsAdmin', async () => {
+      req.user = { id: 'admin-1', roles: ['admin', 'customer'], permissionKeys: ['dashboard.*'] };
+      req.chatAsAdmin = true;
+      req.brandKey = 'ghana';
+      chatService.getSharedAdminId.mockResolvedValue('shared-admin');
+      chatService.getConversations.mockResolvedValue([]);
+
+      await controller.getConversations(req, res, next);
+
+      expect(chatService.getConversations).toHaveBeenCalledWith('shared-admin', 'ghana');
+    });
+
+    it('keeps a dual-role admin on their own identity without the admin mount flag', async () => {
+      req.user = { id: 'admin-1', roles: ['admin', 'customer'], permissionKeys: ['dashboard.*'] };
+      req.brandKey = 'ghana';
+      chatService.getConversations.mockResolvedValue([]);
+
+      await controller.getConversations(req, res, next);
+
+      expect(chatService.getConversations).toHaveBeenCalledWith('admin-1', 'ghana');
+    });
+
     it('filters out conversations user cannot access', async () => {
       req.user = { id: 'admin-1', roles: ['admin'], permissionKeys: ['chat.suppliers'] };
       chatService.getConversations.mockResolvedValue([

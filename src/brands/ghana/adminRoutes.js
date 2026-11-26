@@ -403,6 +403,11 @@ router.patch('/notifications/acknowledge-all',
 // CHAT — proxied to shared chat controller (admin talks to all users)
 // ══════════════════════════════════════════════════════════════════════════
 const chatController = require('../../core/domain/chatController');
+// Platform admins share one chat identity: the shared admin inbox. Force that
+// identity regardless of the admin's own roles (a dual-role admin also holds a
+// storefront `customer` role and would otherwise resolve to their own account,
+// leaving the Customer Support inbox empty).
+router.use('/chat', (req, _res, next) => { req.chatAsAdmin = true; next(); });
 router.get('/chat/conversations', chatController.getConversations);
 router.post('/chat/conversations', chatController.getOrCreateConversation);
 router.get('/chat/conversations/unread-count', chatController.getUnreadCount);

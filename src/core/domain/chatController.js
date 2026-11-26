@@ -55,9 +55,20 @@ function canAccessType(user, type) {
  * authorship stays with the member who typed. For owners and customers the two
  * ids are identical, so behaviour is unchanged.
  */
-function chatIdentity(req) {
+async function chatIdentity(req) {
   const actorId = req.user.id;
-  const accessId = req.supplierId || actorId;
+  let accessId = req.supplierId || actorId;
+
+  // The admin dashboard's chat is keyed to the shared admin identity, so every
+  // admin sees the same customer-support inbox. A dual-role account (an admin
+  // who is also a storefront customer) must not fall back to its own customer
+  // identity here, or the inbox would be empty while the bell kept ringing.
+  // The storefront mounts never set this flag, so customer/supplier routing
+  // there is unchanged.
+  if (req.chatAsAdmin) {
+    const shared = await chatService.getSharedAdminId();
+    if (shared) accessId = shared;
+  }
   return { actorId, accessId, isTeamMember: accessId !== actorId };
 }
 
@@ -85,7 +96,7 @@ exports.getConversations = catchAsync(async (req, res) => {
   const brandKey = isAdmin
     ? (req.brandKey || chatService.brandKeyFromRoles(req.user.roles))
     : null;
-  const { accessId } = chatIdentity(req);
+  const { accessId } = await chatIdentity(req);
   const domain = parseProductDomain(req.query.domain);
   const conversations = domain
     ? await chatService.getConversations(accessId, brandKey, domain)
@@ -100,7 +111,7 @@ exports.getOrCreateConversation = catchAsync(async (req, res) => {
     throw new AppError('recipientId is required', 400);
   }
 
-  const { actorId, accessId } = chatIdentity(req);
+  const { actorId, accessId } = await chatIdentity(req);
 
   // A member would otherwise be able to open a conversation with their own
   // supplier account; the conversation belongs to the account, not the person.
@@ -181,7 +192,7 @@ exports.getMessages = catchAsync(async (req, res) => {
   const { id } = req.params;
   const { cursor, limit = 50 } = req.query;
 
-  const { actorId, accessId } = chatIdentity(req);
+  const { actorId, accessId } = await chatIdentity(req);
   const result = await chatService.getMessages(
     id,
     accessId,
@@ -209,7 +220,7 @@ exports.sendMessage = catchAsync(async (req, res) => {
     throw new AppError('Invalid attachment URL', 400);
   }
 
-  const { actorId, accessId } = chatIdentity(req);
+  const { actorId, accessId } = await chatIdentity(req);
   const message = await chatService.sendMessage(id, accessId, actorId, content || '', {
     url: attachmentUrl,
     type: attachmentType,
@@ -221,7 +232,7 @@ exports.sendMessage = catchAsync(async (req, res) => {
 exports.markAsRead = catchAsync(async (req, res) => {
   const { id } = req.params;
 
-  const { accessId } = chatIdentity(req);
+  const { accessId } = await chatIdentity(req);
   const result = await chatService.markAsRead(id, accessId);
 
   res.json({ status: 'success', data: result });
@@ -241,7 +252,7 @@ exports.getUnreadCount = catchAsync(async (req, res) => {
   const brandKey = isAdmin
     ? (req.brandKey || chatService.brandKeyFromRoles(req.user.roles))
     : null;
-  const { accessId } = chatIdentity(req);
+  const { accessId } = await chatIdentity(req);
   const domain = parseProductDomain(req.query.domain);
   const result = domain
     ? await chatService.getUnreadCount(accessId, types, brandKey, domain)
@@ -257,7 +268,7 @@ exports.updateMessage = catchAsync(async (req, res) => {
     throw new AppError('Message content is required', 400);
   }
 
-  const { actorId, accessId } = chatIdentity(req);
+  const { actorId, accessId } = await chatIdentity(req);
   const message = await chatService.updateMessage(id, messageId, accessId, actorId, content);
 
   const io = req.app.get('io');
@@ -276,7 +287,7 @@ exports.updateMessage = catchAsync(async (req, res) => {
 exports.deleteMessage = catchAsync(async (req, res) => {
   const { id, messageId } = req.params;
 
-  const { actorId, accessId } = chatIdentity(req);
+  const { actorId, accessId } = await chatIdentity(req);
   await chatService.deleteMessage(id, messageId, accessId, actorId);
 
   const io = req.app.get('io');
@@ -296,7 +307,7 @@ exports.deleteMessage = catchAsync(async (req, res) => {
 exports.hideMessageForMe = catchAsync(async (req, res) => {
   const { id, messageId } = req.params;
 
-  const { actorId, accessId } = chatIdentity(req);
+  const { actorId, accessId } = await chatIdentity(req);
   const resolvedUserId = await chatService.hideMessageForMe(id, messageId, accessId, actorId);
 
   const io = req.app.get('io');
@@ -318,7 +329,7 @@ exports.deleteConversation = catchAsync(async (req, res) => {
     select: { userId: true }
   });
 
-  const { actorId, accessId, isTeamMember } = chatIdentity(req);
+  const { actorId, accessId, isTeamMember } = await chatIdentity(req);
   await chatService.deleteConversation(id, accessId);
 
   const io = req.app.get('io');
