@@ -458,6 +458,59 @@ function nearFilter(lat, lng, radiusKm) {
   };
 }
 
+/* ── free-text search ───────────────────────────────────────────────────── */
+
+/** Generic words that add no signal to a restaurant name search. */
+const SEARCH_STOP_WORDS = new Set([
+  'the',
+  'and',
+  'of',
+  'a',
+  'an',
+  'restaurant',
+  'restaurants',
+]);
+
+/**
+ * Split a free-text restaurant query into matchable tokens.
+ *
+ * A plain `contains` on the raw query misses real catalogue names because the
+ * stored name and what a diner types differ in punctuation:
+ *
+ *   "Vixies"                    → ["vixies"]   (callers also try "vixie")
+ *   "Vixie's"                   → ["vixie"]
+ *   "Simret – The Taste of..."  → ["simret", "taste", "ethiopia"]
+ *   "vida e caffè"              → ["vida", "caffe"]
+ *
+ * Matching the ASCII slug as well as the name covers accented names, since
+ * slugs are generated without diacritics ("Café de Kumasi" → cafe-de-kumasi).
+ */
+function searchTokens(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter((token) => token.length > 1 && !SEARCH_STOP_WORDS.has(token));
+}
+
+/**
+ * Fields a single token may match. Slugs are ASCII and indexed, which is what
+ * lets "cafe" find "New Life Café" and "vixie" find "Vixie's Delicacies".
+ */
+function tokenFields(token) {
+  return [
+    { name: { contains: token, mode: 'insensitive' } },
+    { slug: { contains: token, mode: 'insensitive' } },
+    { city: { contains: token, mode: 'insensitive' } },
+    { region: { contains: token, mode: 'insensitive' } },
+    { neighbourhood: { contains: token, mode: 'insensitive' } },
+    { cuisines: { has: token } },
+  ];
+}
+
 function baseWhere({
   brand,
   q,
@@ -487,13 +540,28 @@ function baseWhere({
   if (hasOffer === true) where.offers = { some: offerWindowFilter(brand, now) };
 
   if (q) {
+    const tokens = searchTokens(q);
+    const tokenGroups = tokens.map((token) => {
+      // Possessive/plural names: "Vixies" should still find "Vixie's".
+      const variants = [token];
+      if (token.length > 4 && token.endsWith('s')) variants.push(token.slice(0, -1));
+      return {
+        OR: variants.flatMap((variant) => tokenFields(variant)),
+      };
+    });
+
     and.push({
       OR: [
+        // Exact phrase / facet hit first — keeps the existing behaviour for
+        // clean queries and cuisine names.
         { name: { contains: q, mode: 'insensitive' } },
         { city: { contains: q, mode: 'insensitive' } },
         { region: { contains: q, mode: 'insensitive' } },
         { neighbourhood: { contains: q, mode: 'insensitive' } },
         { cuisines: { has: q.toLowerCase() } },
+        // Punctuation/possessive/accent-tolerant: every meaningful token must
+        // appear somewhere (name or ASCII slug, or a place facet).
+        ...(tokenGroups.length > 0 ? [{ AND: tokenGroups }] : []),
       ],
     });
   }
@@ -990,6 +1058,7 @@ module.exports = {
   encodeCursor,
   decodeListCursor,
   decodeReviewCursor,
+  searchTokens,
   listVenues,
   suggestVenues,
   getVenue,

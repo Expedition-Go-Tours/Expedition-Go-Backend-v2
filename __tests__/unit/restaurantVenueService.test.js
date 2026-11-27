@@ -137,10 +137,73 @@ describe('restaurantVenueService', () => {
               { region: { contains: 'buka', mode: 'insensitive' } },
               { neighbourhood: { contains: 'buka', mode: 'insensitive' } },
               { cuisines: { has: 'buka' } },
+              {
+                AND: [
+                  {
+                    OR: [
+                      { name: { contains: 'buka', mode: 'insensitive' } },
+                      { slug: { contains: 'buka', mode: 'insensitive' } },
+                      { city: { contains: 'buka', mode: 'insensitive' } },
+                      { region: { contains: 'buka', mode: 'insensitive' } },
+                      { neighbourhood: { contains: 'buka', mode: 'insensitive' } },
+                      { cuisines: { has: 'buka' } },
+                    ],
+                  },
+                ],
+              },
             ],
           },
         ],
       });
+    });
+
+    it('normalises punctuation, possessives and accents into search tokens', () => {
+      expect(service.searchTokens('Simret – The Taste of Ethiopia')).toEqual([
+        'simret',
+        'taste',
+        'ethiopia',
+      ]);
+      expect(service.searchTokens("Vixie's")).toEqual(['vixie']);
+      expect(service.searchTokens('vida e caffè')).toEqual(['vida', 'caffe']);
+      expect(service.searchTokens('The Neem Grill')).toEqual(['neem', 'grill']);
+    });
+
+    it('builds token clauses that match names across punctuation and possessives', async () => {
+      await service.listVenues({
+        brand: 'ghana',
+        q: 'Vixies',
+        sort: 'rating',
+        limit: 20,
+      });
+
+      const or = prisma.restaurantVenue.findMany.mock.calls[0][0].where.AND[0].OR;
+      const tokenGroup = or.find((clause) => Array.isArray(clause.AND));
+      expect(tokenGroup).toBeDefined();
+      expect(tokenGroup.AND).toHaveLength(1);
+      const fields = tokenGroup.AND[0].OR;
+      expect(fields).toContainEqual({ name: { contains: 'vixies', mode: 'insensitive' } });
+      // The singular variant finds "Vixie's Delicacies".
+      expect(fields).toContainEqual({ name: { contains: 'vixie', mode: 'insensitive' } });
+      expect(fields).toContainEqual({ slug: { contains: 'vixie', mode: 'insensitive' } });
+    });
+
+    it('requires every meaningful token and ignores stop words', async () => {
+      await service.listVenues({
+        brand: 'ghana',
+        q: 'Simret – The Taste of Ethiopia',
+        sort: 'rating',
+        limit: 20,
+      });
+
+      const or = prisma.restaurantVenue.findMany.mock.calls[0][0].where.AND[0].OR;
+      const tokenGroup = or.find((clause) => Array.isArray(clause.AND));
+      expect(tokenGroup).toBeDefined();
+      expect(tokenGroup.AND).toHaveLength(3);
+      expect(tokenGroup.AND.map((clause) => clause.OR[0].name.contains)).toEqual([
+        'simret',
+        'taste',
+        'ethiopia',
+      ]);
     });
 
     it('filters on the stored high-demand flag alongside the brand scope', async () => {
