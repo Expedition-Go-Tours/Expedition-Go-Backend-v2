@@ -2,6 +2,7 @@ const {
   DEMO_USERS,
   VENUE_ROLE,
   assertNonProduction,
+  mergeRoles,
 } = require('../../scripts/seed-staging-access');
 
 describe('seed-staging-access', () => {
@@ -29,5 +30,16 @@ describe('seed-staging-access', () => {
       'expeditiongotravelandtoursltd@gmail.com',
     ]);
     expect(VENUE_ROLE).toBe('OWNER');
+  });
+
+  it('preserves existing platform roles when granting admin access', () => {
+    expect(mergeRoles(['supplier', 'ghana', 'expedition'])).toEqual([
+      'supplier',
+      'ghana',
+      'expedition',
+      'customer',
+      'admin',
+    ]);
+    expect(mergeRoles(['customer', 'admin'])).toEqual(['customer', 'admin']);
   });
 });

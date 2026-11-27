@@ -19,7 +19,10 @@ const { logActivity } = require('../src/core/services/auditLogger');
 
 const DEMO_ENVIRONMENTS = ['development', 'staging'];
 const DEFAULT_VENUE_SLUG = 'the-place';
-const USER_ROLES = ['customer', 'admin'];
+// Add these roles; preserve any roles the account already holds. A real
+// supplier/admin account must not lose its platform roles when it is granted
+// dashboard access.
+const GRANTED_USER_ROLES = ['customer', 'admin'];
 const VENUE_ROLE = 'OWNER';
 
 const DEMO_USERS = [
@@ -75,6 +78,10 @@ async function findVenue(slugOrId) {
   return venue;
 }
 
+function mergeRoles(existingRoles, grantedRoles = GRANTED_USER_ROLES) {
+  return [...new Set([...(existingRoles || []), ...grantedRoles])];
+}
+
 async function upsertDemoUser(spec, superAdminRole) {
   const email = spec.email.trim().toLowerCase();
   const existing = await prisma.user.findUnique({ where: { email } });
@@ -107,8 +114,8 @@ async function upsertDemoUser(spec, superAdminRole) {
   return prisma.user.upsert({
     where: { email },
     update: {
-      name: spec.name,
-      roles: USER_ROLES,
+      name: existing?.name || spec.name,
+      roles: mergeRoles(existing?.roles),
       active: true,
       emailVerified: true,
       emailVerifiedAt: existing?.emailVerifiedAt || new Date(),
@@ -121,7 +128,7 @@ async function upsertDemoUser(spec, superAdminRole) {
       photoURL: '',
       firebaseUid: spec.firebaseUid || null,
       authProvider: spec.firebaseUid ? 'local' : 'google',
-      roles: USER_ROLES,
+      roles: GRANTED_USER_ROLES,
       active: true,
       emailVerified: true,
       emailVerifiedAt: new Date(),
@@ -196,6 +203,7 @@ module.exports = {
   DEMO_USERS,
   VENUE_ROLE,
   assertNonProduction,
+  mergeRoles,
   findSuperAdminRole,
   findVenue,
   upsertDemoUser,
