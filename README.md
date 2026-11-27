@@ -169,6 +169,7 @@ node scripts/backfill-supplier-documents.js   # idempotent, run once in prod
 | `npm start` | Start in production mode |
 | `npm run migrate` | Apply pending migrations (`prisma migrate deploy`) |
 | `npm run seed` | Seed roles, permissions, sample data |
+| `npm run seed:staging-access` | Grant demo accounts admin + restaurant-owner access in development/staging only |
 | `npm run seed:perf` / `seed:blogs` / `seed:verification` | Specialized seeds |
 | `npm run lint` / `lint:fix` | ESLint |
 | `npm run test` | Jest unit + API suites |
