@@ -28,6 +28,10 @@ const {
   createVenueOfferSchema,
   updateVenueOfferSchema,
   deleteVenueOfferSchema,
+  moderateResponseSchema,
+  pendingResponsesQuerySchema,
+  moderatePhotoSchema,
+  pendingPhotosQuerySchema,
 } = require('../src/core/services/restaurantVenueSchemas');
 
 const router = express.Router();
@@ -65,6 +69,39 @@ router.patch(
   requirePermission('reviews.moderate'),
   validate(resolveReportSchema),
   controller.resolveReport,
+);
+
+/**
+ * Owner replies and owner photos have their own queues. Both reuse the review
+ * permissions for the same reason as above: an admin who can moderate a
+ * restaurant review can moderate the venue's reply to it.
+ */
+router.get(
+  '/responses/pending',
+  requirePermission('reviews.view'),
+  validate(pendingResponsesQuerySchema),
+  controller.listPendingReviewResponses,
+);
+
+router.patch(
+  '/responses/:responseId/moderate',
+  requirePermission('reviews.moderate'),
+  validate(moderateResponseSchema),
+  controller.moderateReviewResponse,
+);
+
+router.get(
+  '/photos/pending',
+  requirePermission('reviews.view'),
+  validate(pendingPhotosQuerySchema),
+  controller.listPendingVenuePhotos,
+);
+
+router.patch(
+  '/photos/:photoId/moderate',
+  requirePermission('reviews.moderate'),
+  validate(moderatePhotoSchema),
+  controller.moderateVenuePhoto,
 );
 
 router.post(

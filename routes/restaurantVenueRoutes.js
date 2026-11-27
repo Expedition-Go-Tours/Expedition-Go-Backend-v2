@@ -10,7 +10,7 @@
 
 const express = require('express');
 const validate = require('../middleware/validate');
-const { uploadReviewPhotos } = require('../middleware/uploadMiddleware');
+const { uploadReviewPhotos, uploadVenuePhotos } = require('../middleware/uploadMiddleware');
 const { createUserLimiter } = require('../middleware/dynamicRateLimiter');
 const { protect, optionalAuth } = require('../middleware/authMiddleware');
 const controller = require('../src/core/domain/restaurantVenueController');
@@ -30,6 +30,26 @@ const {
   submitClaimSchema,
   myClaimSchema,
   updateOwnVenueSchema,
+  dashboardReadSchema,
+  dashboardActivitySchema,
+  dashboardInsightsSchema,
+  ownerReviewsQuerySchema,
+  ownerReviewSchema,
+  createResponseSchema,
+  deleteResponseSchema,
+  uploadVenuePhotosSchema,
+  updatePhotoSchema,
+  deletePhotoSchema,
+  reorderPhotosSchema,
+  setCoverPhotoSchema,
+  saveMenuSchema,
+  menuActionSchema,
+  teamReadSchema,
+  inviteMemberSchema,
+  inviteActionSchema,
+  acceptInviteSchema,
+  updateMemberRoleSchema,
+  memberActionSchema,
 } = require('../src/core/services/restaurantVenueSchemas');
 
 const router = express.Router();
@@ -53,6 +73,17 @@ const claimLimiter = createUserLimiter({
   message: {
     status: 'fail',
     message: 'Too many restaurant claims submitted, please slow down.',
+  },
+});
+
+// Team invitations send mail and are a credential. Cap them per owner.
+const teamLimiter = createUserLimiter({
+  name: 'restaurant-team-invites',
+  defaultMax: 20,
+  defaultWindowMs: 60 * 60 * 1000,
+  message: {
+    status: 'fail',
+    message: 'Too many team invitations sent, please slow down.',
   },
 });
 
@@ -148,6 +179,215 @@ router.get(
   optionalAuth,
   validate(homeSectionQuerySchema),
   controller.getSectionVenueIds,
+);
+
+/* ── owner dashboard ────────────────────────────────────────────────────── */
+
+/**
+ * Everything below resolves the venue from the signed-in user's active
+ * membership. A slug is a lookup key, never a grant: a manager of venue A gets
+ * a 403 on venue B's dashboard even with a valid token.
+ *
+ * These paths are two or more segments, so they sit safely above the single
+ * `/:slugOrId` read without shadowing it.
+ */
+
+router.post(
+  '/team/invites/accept',
+  protect,
+  validate(acceptInviteSchema),
+  controller.acceptTeamInvite,
+);
+
+router.get(
+  '/:slugOrId/dashboard',
+  protect,
+  validate(dashboardReadSchema),
+  controller.getDashboard,
+);
+
+router.get(
+  '/:slugOrId/dashboard/session',
+  protect,
+  validate(dashboardReadSchema),
+  controller.getDashboardSession,
+);
+
+router.get(
+  '/:slugOrId/dashboard/activity',
+  protect,
+  validate(dashboardActivitySchema),
+  controller.getDashboardActivity,
+);
+
+router.get(
+  '/:slugOrId/dashboard/insights',
+  protect,
+  validate(dashboardInsightsSchema),
+  controller.getDashboardInsights,
+);
+
+/* reviews and replies */
+
+router.get(
+  '/:slugOrId/dashboard/reviews',
+  protect,
+  validate(ownerReviewsQuerySchema),
+  controller.listOwnerReviews,
+);
+
+router.get(
+  '/:slugOrId/dashboard/reviews/:reviewId',
+  protect,
+  validate(ownerReviewSchema),
+  controller.getOwnerReview,
+);
+
+router.post(
+  '/:slugOrId/dashboard/reviews/:reviewId/responses',
+  protect,
+  reviewWriteLimiter,
+  validate(createResponseSchema),
+  controller.createReviewResponse,
+);
+
+router.delete(
+  '/:slugOrId/dashboard/responses/:responseId',
+  protect,
+  reviewWriteLimiter,
+  validate(deleteResponseSchema),
+  controller.deleteReviewResponse,
+);
+
+/* photos */
+
+router.get(
+  '/:slugOrId/dashboard/photos',
+  protect,
+  validate(dashboardReadSchema),
+  controller.listVenuePhotos,
+);
+
+// Multer parses the multipart body, so the uploader runs before `validate`.
+router.post(
+  '/:slugOrId/dashboard/photos',
+  protect,
+  reviewWriteLimiter,
+  uploadVenuePhotos,
+  validate(uploadVenuePhotosSchema),
+  controller.uploadVenuePhotos,
+);
+
+// Literal order/cover paths before the `:photoId` handlers.
+router.put(
+  '/:slugOrId/dashboard/photos/order',
+  protect,
+  validate(reorderPhotosSchema),
+  controller.reorderVenuePhotos,
+);
+
+router.put(
+  '/:slugOrId/dashboard/photos/cover',
+  protect,
+  validate(setCoverPhotoSchema),
+  controller.setVenueCoverPhoto,
+);
+
+router.patch(
+  '/:slugOrId/dashboard/photos/:photoId',
+  protect,
+  validate(updatePhotoSchema),
+  controller.updateVenuePhoto,
+);
+
+router.delete(
+  '/:slugOrId/dashboard/photos/:photoId',
+  protect,
+  validate(deletePhotoSchema),
+  controller.deleteVenuePhoto,
+);
+
+/* menus */
+
+router.get(
+  '/:slugOrId/dashboard/menu',
+  protect,
+  validate(dashboardReadSchema),
+  controller.listVenueMenus,
+);
+
+router.put(
+  '/:slugOrId/dashboard/menu',
+  protect,
+  reviewWriteLimiter,
+  validate(saveMenuSchema),
+  controller.saveVenueMenu,
+);
+
+router.post(
+  '/:slugOrId/dashboard/menu/:menuId/publish',
+  protect,
+  validate(menuActionSchema),
+  controller.publishVenueMenu,
+);
+
+router.post(
+  '/:slugOrId/dashboard/menu/:menuId/unpublish',
+  protect,
+  validate(menuActionSchema),
+  controller.unpublishVenueMenu,
+);
+
+router.delete(
+  '/:slugOrId/dashboard/menu/:menuId',
+  protect,
+  validate(menuActionSchema),
+  controller.deleteVenueMenu,
+);
+
+/* team */
+
+router.get(
+  '/:slugOrId/dashboard/team',
+  protect,
+  validate(teamReadSchema),
+  controller.getVenueTeam,
+);
+
+router.post(
+  '/:slugOrId/dashboard/team/invites',
+  protect,
+  teamLimiter,
+  validate(inviteMemberSchema),
+  controller.inviteTeamMember,
+);
+
+router.delete(
+  '/:slugOrId/dashboard/team/invites/:inviteId',
+  protect,
+  validate(inviteActionSchema),
+  controller.revokeTeamInvite,
+);
+
+router.patch(
+  '/:slugOrId/dashboard/team/members/:memberId',
+  protect,
+  validate(updateMemberRoleSchema),
+  controller.updateTeamMemberRole,
+);
+
+router.delete(
+  '/:slugOrId/dashboard/team/members/:memberId',
+  protect,
+  validate(memberActionSchema),
+  controller.removeTeamMember,
+);
+
+router.post(
+  '/:slugOrId/dashboard/team/members/:memberId/transfer',
+  protect,
+  validate(memberActionSchema),
+  controller.transferVenueOwnership,
 );
 
 /**

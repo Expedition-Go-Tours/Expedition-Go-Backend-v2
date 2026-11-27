@@ -75,6 +75,9 @@ exports.uploadTourPhotos = wrapWithRecord(imageUpload.array('photos', 20));
 
 exports.uploadReviewPhotos = wrapWithRecord(imageUpload.array('photos', 10));
 
+/** Owner gallery upload. Ten at a time matches the dashboard's upload limit. */
+exports.uploadVenuePhotos = wrapWithRecord(imageUpload.array('photos', 10));
+
 exports.uploadSupplierDocuments = wrapWithRecord(documentUpload.fields(SUPPLIER_DOCUMENT_FIELDS));
 
 // Single-document replacement upload (supplier re-submits one file).

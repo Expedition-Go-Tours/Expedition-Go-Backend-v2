@@ -15,6 +15,12 @@ const writeService = require('../services/restaurantVenueWriteService');
 const claimService = require('../services/restaurantVenueClaimService');
 const offerService = require('../services/restaurantVenueOfferService');
 const homeRanking = require('../services/restaurantHomepageRanking');
+const { resolveManagedVenue } = require('../services/restaurantVenueAccess');
+const dashboardService = require('../services/restaurantVenueDashboardService');
+const responseService = require('../services/restaurantVenueResponseService');
+const photoService = require('../services/restaurantVenuePhotoService');
+const menuService = require('../services/restaurantVenueMenuService');
+const teamService = require('../services/restaurantVenueTeamService');
 
 /**
  * GET /api/restaurant-venues
@@ -361,4 +367,254 @@ exports.resolveClaim = catchAsync(async (req, res) => {
     req,
   });
   res.status(200).json({ status: 'success', data: { claim } });
+});
+
+/* ── owner dashboard ─────────────────────────────────────────────────────── */
+
+/**
+ * Every handler below resolves the venue from the authenticated user's active
+ * membership. A slug in the URL is a lookup key, never a permission.
+ */
+function ownerContext(req) {
+  return resolveManagedVenue({
+    slugOrId: req.params.slugOrId,
+    userId: req.user.id,
+    brand: req.query.brand,
+  });
+}
+
+exports.getDashboard = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const data = await dashboardService.getOverview(context);
+  res.status(200).json({ status: 'success', data });
+});
+
+exports.getDashboardSession = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const data = await dashboardService.getSession(context);
+  res.status(200).json({ status: 'success', data });
+});
+
+exports.getDashboardActivity = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const data = await dashboardService.getActivity(context, req.query);
+  res.status(200).json({ status: 'success', data });
+});
+
+exports.getDashboardInsights = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const data = await dashboardService.getInsights(context, { days: req.query.days });
+  res.status(200).json({ status: 'success', data });
+});
+
+/* reviews and replies */
+
+exports.listOwnerReviews = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const data = await responseService.listVenueReviews(context, req.query);
+  res.status(200).json({ status: 'success', data });
+});
+
+exports.getOwnerReview = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const review = await responseService.getReview(context, req.params.reviewId);
+  res.status(200).json({ status: 'success', data: { review } });
+});
+
+exports.createReviewResponse = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const response = await responseService.createResponse(
+    context,
+    { reviewId: req.params.reviewId, body: req.body.body },
+    req,
+  );
+  res.status(201).json({ status: 'success', data: { response } });
+});
+
+exports.deleteReviewResponse = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const response = await responseService.deleteResponse(
+    context,
+    { responseId: req.params.responseId },
+    req,
+  );
+  res.status(200).json({ status: 'success', data: { response } });
+});
+
+exports.listPendingReviewResponses = catchAsync(async (req, res) => {
+  const data = await responseService.listPendingResponses(req.query);
+  res.status(200).json({ status: 'success', data });
+});
+
+exports.moderateReviewResponse = catchAsync(async (req, res) => {
+  const response = await responseService.moderateResponse({
+    responseId: req.params.responseId,
+    adminId: req.user.id,
+    action: req.body.action,
+    reason: req.body.reason,
+    req,
+  });
+  res.status(200).json({ status: 'success', data: { response } });
+});
+
+/* photos */
+
+exports.listVenuePhotos = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const data = await photoService.listPhotos(context);
+  res.status(200).json({ status: 'success', data });
+});
+
+exports.uploadVenuePhotos = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const urls = (req.files || [])
+    .map((file) => file.path || file.secure_url || file.url)
+    .filter(isValidCloudinaryUrl);
+  if (!urls.length) {
+    throw new AppError('Upload at least one photo', 400, { code: 'NO_PHOTOS_UPLOADED' });
+  }
+  const data = await photoService.addPhotos(
+    context,
+    { urls, caption: req.body ? req.body.caption : undefined },
+    req,
+  );
+  res.status(201).json({ status: 'success', data });
+});
+
+exports.updateVenuePhoto = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const photo = await photoService.updatePhoto(context, {
+    photoId: req.params.photoId,
+    caption: req.body.caption,
+    position: req.body.position,
+  });
+  res.status(200).json({ status: 'success', data: { photo } });
+});
+
+exports.deleteVenuePhoto = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const data = await photoService.deletePhoto(context, { photoId: req.params.photoId });
+  res.status(200).json({ status: 'success', data });
+});
+
+exports.reorderVenuePhotos = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const data = await photoService.reorderPhotos(context, {
+    photoIds: req.body.photoIds,
+  });
+  res.status(200).json({ status: 'success', data });
+});
+
+exports.setVenueCoverPhoto = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const data = await photoService.setCoverPhoto(context, { photoId: req.body.photoId });
+  res.status(200).json({ status: 'success', data });
+});
+
+exports.listPendingVenuePhotos = catchAsync(async (req, res) => {
+  const data = await photoService.listPendingPhotos(req.query);
+  res.status(200).json({ status: 'success', data });
+});
+
+exports.moderateVenuePhoto = catchAsync(async (req, res) => {
+  const data = await photoService.moderatePhoto({
+    photoId: req.params.photoId,
+    adminId: req.user.id,
+    action: req.body.action,
+    reason: req.body.reason,
+    req,
+  });
+  res.status(200).json({ status: 'success', data });
+});
+
+/* menus */
+
+exports.listVenueMenus = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const data = await menuService.listMenus(context);
+  res.status(200).json({ status: 'success', data });
+});
+
+exports.saveVenueMenu = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const menu = await menuService.saveMenu(context, req.body, req);
+  res.status(200).json({ status: 'success', data: { menu } });
+});
+
+exports.publishVenueMenu = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const menu = await menuService.publishMenu(context, { menuId: req.params.menuId }, req);
+  res.status(200).json({ status: 'success', data: { menu } });
+});
+
+exports.unpublishVenueMenu = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const menu = await menuService.unpublishMenu(context, { menuId: req.params.menuId }, req);
+  res.status(200).json({ status: 'success', data: { menu } });
+});
+
+exports.deleteVenueMenu = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const data = await menuService.deleteMenu(context, { menuId: req.params.menuId }, req);
+  res.status(200).json({ status: 'success', data });
+});
+
+/* team */
+
+exports.getVenueTeam = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const data = await teamService.listTeam(context);
+  res.status(200).json({ status: 'success', data });
+});
+
+exports.inviteTeamMember = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const invite = await teamService.inviteMember(context, req.body, req);
+  res.status(201).json({ status: 'success', data: { invite } });
+});
+
+exports.revokeTeamInvite = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const invite = await teamService.revokeInvite(
+    context,
+    { inviteId: req.params.inviteId },
+    req,
+  );
+  res.status(200).json({ status: 'success', data: { invite } });
+});
+
+/** The venue comes from the invite, so this route has no slug. */
+exports.acceptTeamInvite = catchAsync(async (req, res) => {
+  const data = await teamService.acceptInvite({ token: req.body.token, user: req.user }, req);
+  res.status(200).json({ status: 'success', data });
+});
+
+exports.updateTeamMemberRole = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const member = await teamService.updateMemberRole(
+    context,
+    { memberId: req.params.memberId, role: req.body.role },
+    req,
+  );
+  res.status(200).json({ status: 'success', data: { member } });
+});
+
+exports.removeTeamMember = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const data = await teamService.removeMember(
+    context,
+    { memberId: req.params.memberId },
+    req,
+  );
+  res.status(200).json({ status: 'success', data });
+});
+
+exports.transferVenueOwnership = catchAsync(async (req, res) => {
+  const context = await ownerContext(req);
+  const data = await teamService.transferOwnership(
+    context,
+    { memberId: req.params.memberId },
+    req,
+  );
+  res.status(200).json({ status: 'success', data });
 });

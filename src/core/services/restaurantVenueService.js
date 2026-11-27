@@ -246,6 +246,37 @@ function orderFor(sort) {
 
 /* ── DTOs ───────────────────────────────────────────────────────────────── */
 
+/**
+ * Published menu DTO for the detail page.
+ *
+ * Kept local instead of importing `restaurantVenueMenuService`: that service
+ * imports the access module, which imports `BRANDS` from this file, so
+ * requiring it here would close a cycle and leave BRANDS undefined at load.
+ */
+function toPublicMenu(menu) {
+  return {
+    id: menu.id,
+    name: menu.name,
+    description: menu.description ?? null,
+    currency: menu.currency,
+    sections: (menu.sections || []).map((section) => ({
+      id: section.id,
+      title: section.title,
+      description: section.description ?? null,
+      items: (section.items || []).map((item) => ({
+        id: item.id,
+        name: item.name,
+        description: item.description ?? null,
+        priceMinor: item.priceMinor ?? null,
+        currency: item.currency,
+        dietary: item.dietary || [],
+        isAvailable: item.isAvailable,
+        photoUrl: item.photoUrl ?? null,
+      })),
+    })),
+  };
+}
+
 function toPublicVenue(venue, { detail = false, brand = 'ghana', now = new Date() } = {}) {
   const dto = {
     id: venue.id,
@@ -308,6 +339,7 @@ function toPublicVenue(venue, { detail = false, brand = 'ghana', now = new Date(
   if (detail) {
     dto.description = venue.description;
     dto.menuUrl = venue.menuUrl || null;
+    dto.menus = (venue.menus || []).map(toPublicMenu);
     dto.mealTypes = venue.mealTypes || [];
     dto.externalStats = (venue.externalStats || []).map((row) => ({
       source: row.source,
@@ -720,6 +752,16 @@ async function getVenue(slugOrId, brand) {
             select: { isFeatured: true, displayOrder: true },
           },
           offers: offerInclude(brand),
+          menus: {
+            where: { status: 'PUBLISHED' },
+            orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+            include: {
+              sections: {
+                orderBy: { position: 'asc' },
+                include: { items: { orderBy: { position: 'asc' } } },
+              },
+            },
+          },
           externalStats: {
             orderBy: { source: 'asc' },
             select: {

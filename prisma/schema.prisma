@@ -555,6 +555,7 @@ model User {
   restaurantVenueReviews       RestaurantVenueReview[]
   restaurantVenueClaims        RestaurantVenueClaim[]
   restaurantVenueMemberships    RestaurantVenueMember[]
+  restaurantVenueResponses     RestaurantVenueReviewResponse[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3970,12 +3971,18 @@ model RestaurantVenue {
   /// Deliberately not a relation yet — restaurant owners are not suppliers.
   supplierId String?
 
-  reviews       RestaurantVenueReview[]
-  listings      RestaurantVenueListing[]
-  offers        RestaurantVenueOffer[]
-  externalStats RestaurantVenueExternalStat[]
-  claims        RestaurantVenueClaim[]
-  members       RestaurantVenueMember[]
+  reviews         RestaurantVenueReview[]
+  listings        RestaurantVenueListing[]
+  offers          RestaurantVenueOffer[]
+  externalStats   RestaurantVenueExternalStat[]
+  claims          RestaurantVenueClaim[]
+  members         RestaurantVenueMember[]
+  /// Managed photo library. `photos`/`coverPhoto` above stay the published
+  /// projection the storefront reads, so adding this table changes no read DTO.
+  photoLibrary    RestaurantVenuePhoto[]
+  menus           RestaurantMenu[]
+  reviewResponses RestaurantVenueReviewResponse[]
+  invites         RestaurantVenueInvite[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4035,6 +4042,9 @@ model RestaurantVenueReview {
   updatedAt DateTime @updatedAt
 
   reports RestaurantVenueReviewReport[]
+  /// Owner replies. A review keeps its whole response history; at most one
+  /// row per review may be PENDING or PUBLISHED at a time.
+  responses RestaurantVenueReviewResponse[]
 
   // One review per person per visit. A second visit months later is a new row;
   // a correction within the same visit updates this one. The cooldown and the
@@ -4220,4 +4230,214 @@ model RestaurantVenueMember {
   @@unique([venueId, userId])
   @@index([userId, status])
   @@map("restaurant_venue_members")
+}
+// ═══════════════════════════════════════════════════════════════════════════
+// OWNER DASHBOARD
+//
+// Everything below exists because the storefront only ever needed a flat
+// `photos String[]` and a `menuUrl`. A dashboard needs a managed photo library
+// with moderation, a structured menu with real prices, owner replies with their
+// own moderation state, and team invitations. None of these change a public
+// read DTO: the published projection is still written back to the columns on
+// RestaurantVenue, so the storefront keeps reading exactly what it read before.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Owner-uploaded gallery items. A photo is not public until a moderator
+/// publishes it; the venue's `photos` array is the published projection.
+enum RestaurantPhotoStatus {
+  PENDING
+  PUBLISHED
+  REJECTED
+}
+
+/// Where a gallery photo came from. Kept as a string so a new source (a review,
+/// a Terra import) does not need a migration to be recorded.
+/// 'OWNER' | 'REVIEW' | 'TERRA'
+enum RestaurantPhotoSource {
+  OWNER
+  REVIEW
+  TERRA
+}
+
+model RestaurantVenuePhoto {
+  id      String          @id @default(cuid())
+  venueId String
+  venue   RestaurantVenue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  url     String
+  /// Alt text the owner writes for diners. Required by the UI, optional here
+  /// so an import is never blocked on copy.
+  caption String?
+
+  /// Gallery order. The cover is a pointer on the venue, so reordering never
+  /// rewrites the cover flag on every row.
+  position Int @default(0)
+
+  status RestaurantPhotoStatus @default(PENDING)
+  source RestaurantPhotoSource @default(OWNER)
+
+  /// Raw upload record. The photo row is the attribution; Media is the file.
+  mediaId String?
+
+  uploadedById String?
+  moderatedBy  String?
+  moderatedAt  DateTime?
+  flagReason   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([venueId, url])
+  @@index([venueId, status, position])
+  @@index([venueId, position])
+  @@index([status, createdAt])
+  @@map("restaurant_venue_photos")
+}
+
+enum RestaurantMenuStatus {
+  DRAFT
+  PUBLISHED
+}
+
+/// A structured menu. Prices live in integer minor units with an explicit
+/// currency, because GHS 45.50 must never become 45.499999 in a float and a
+/// menu is the one place a wrong number is a consumer-protection problem.
+model RestaurantMenu {
+  id      String          @id @default(cuid())
+  venueId String
+  venue   RestaurantVenue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  name        String               @default("Main menu")
+  description String?
+  status      RestaurantMenuStatus @default(DRAFT)
+  currency    String               @default("GHS")
+  position    Int                  @default(0)
+  publishedAt DateTime?
+
+  sections RestaurantMenuSection[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([venueId, name])
+  @@index([venueId, position])
+  @@index([venueId, status])
+  @@map("restaurant_menus")
+}
+
+model RestaurantMenuSection {
+  id     String         @id @default(cuid())
+  menuId String
+  menu   RestaurantMenu @relation(fields: [menuId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  position    Int     @default(0)
+
+  items RestaurantMenuItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([menuId, position])
+  @@map("restaurant_menu_sections")
+}
+
+model RestaurantMenuItem {
+  id        String                @id @default(cuid())
+  sectionId String
+  section   RestaurantMenuSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  /// Minor currency units (pesewas for GHS). Null means "market price" — a real
+  /// answer for seafood, and deliberately distinct from zero.
+  priceMinor  Int?
+  currency    String   @default("GHS")
+  dietary     String[] @default([])
+  isAvailable Boolean  @default(true)
+  position    Int      @default(0)
+  photoUrl    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sectionId, position])
+  @@map("restaurant_menu_items")
+}
+
+/// Owner replies have their own moderation state. Tripadvisor's model is
+/// adopted on purpose: a reply can be edited only before it is published, and
+/// a published reply is corrected by deleting it and submitting a new one.
+enum RestaurantResponseStatus {
+  PENDING
+  PUBLISHED
+  REJECTED
+  REMOVED
+}
+
+model RestaurantVenueReviewResponse {
+  id       String                @id @default(cuid())
+  reviewId String
+  review   RestaurantVenueReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  venueId String
+  venue   RestaurantVenue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  /// Role at submission time. A later promotion must not rewrite what the
+  /// diner was shown, so this is a snapshot, not a join.
+  authorRole RestaurantVenueMemberRole
+
+  body   String
+  status RestaurantResponseStatus @default(PENDING)
+
+  moderatedBy String?
+  moderatedAt DateTime?
+  flagReason  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([reviewId, status])
+  @@index([venueId, status, createdAt(sort: Desc)])
+  @@index([authorId, createdAt(sort: Desc)])
+  @@map("restaurant_venue_review_responses")
+}
+
+enum RestaurantVenueInviteStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+/// An invitation to help manage a venue. The raw token is emailed and never
+/// stored; only its SHA-256 hash is, so a database read cannot mint access.
+model RestaurantVenueInvite {
+  id      String          @id @default(cuid())
+  venueId String
+  venue   RestaurantVenue @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  email String
+  role  RestaurantVenueMemberRole @default(MANAGER)
+
+  status    RestaurantVenueInviteStatus @default(PENDING)
+  tokenHash String                      @unique
+  expiresAt DateTime
+
+  invitedById  String?
+  acceptedById String?
+  acceptedAt   DateTime?
+  revokedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([venueId, status, createdAt(sort: Desc)])
+  @@index([email, status])
+  @@index([status, expiresAt])
+  @@map("restaurant_venue_invites")
 }

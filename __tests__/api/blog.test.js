@@ -54,6 +54,7 @@ jest.mock('../../middleware/uploadMiddleware', () => {
     uploadUserPhoto: fn,
     uploadTourPhotos: fn,
     uploadReviewPhotos: fn,
+    uploadVenuePhotos: fn,
     uploadSupplierDocuments: fn,
     uploadSupplierDocument: fn,
     uploadChatImage: fn,

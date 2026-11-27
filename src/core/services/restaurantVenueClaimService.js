@@ -16,6 +16,7 @@ const { logActivity } = require('./auditLogger');
 const { notifyAdmin } = require('./adminNotificationService');
 const { isValidCloudinaryUrl } = require('./cloudinaryHelper');
 const { BRANDS, decodeReviewCursor, encodeCursor, toPublicVenue } = require('./restaurantVenueService');
+const { resolveManagedVenue } = require('./restaurantVenueAccess');
 
 async function resolveVenue(slugOrId, brand) {
   if (!BRANDS.includes(brand)) {
@@ -30,7 +31,7 @@ async function resolveVenue(slugOrId, brand) {
       listings: { some: { brand, isActive: true } },
       OR: [{ slug: needle }, { id: needle }],
     },
-    select: { id: true, slug: true, name: true, city: true },
+    select: { id: true, slug: true, name: true, city: true, status: true },
   });
 }
 
@@ -310,16 +311,13 @@ async function listMyVenues({ claimant }) {
 }
 
 async function updateOwnVenue({ slugOrId, brand, editor, input, req }) {
-  const venue = await resolveVenue(slugOrId, brand);
-  if (!venue) throw new AppError('Venue not found', 404, { code: 'VENUE_NOT_FOUND' });
-
-  const membership = await prisma.restaurantVenueMember.findFirst({
-    where: { venueId: venue.id, userId: editor.id, status: 'ACTIVE' },
-    select: { id: true, role: true },
-  });
-  if (!membership) {
-    throw new AppError('You do not manage this restaurant', 403, { code: 'NOT_A_VENUE_MEMBER' });
-  }
+  // The public resolver requires an ACTIVE listing. That is right for claims
+  // and storefront reads, but an owner must still be able to pause a listing
+  // and bring it back. Resolve by signed-in membership instead, exactly as the
+  // dashboard does; brand is still validated on the way in.
+  const context = await resolveManagedVenue({ slugOrId, userId: editor.id, brand });
+  const venue = context.venue;
+  const membership = context.membership;
 
   const data = {};
   if (input.description !== undefined) data.description = String(input.description).trim() || null;
@@ -327,6 +325,17 @@ async function updateOwnVenue({ slugOrId, brand, editor, input, req }) {
   if (input.website !== undefined) data.website = String(input.website).trim() || null;
   if (input.menuUrl !== undefined) data.menuUrl = input.menuUrl ? String(input.menuUrl).trim() : null;
   if (input.hours !== undefined) data.hours = input.hours;
+
+  if (input.status !== undefined) {
+    // Reopening is only meaningful for a venue that was live. A DRAFT has never
+    // been published and a CLOSED venue is an admin decision.
+    if (!['ACTIVE', 'PAUSED'].includes(venue.status)) {
+      throw new AppError('This listing’s status can only be changed by Travio', 409, {
+        code: 'STATUS_NOT_EDITABLE',
+      });
+    }
+    data.status = input.status;
+  }
 
   const cuisines = cleanList(input.cuisines);
   const dietary = cleanList(input.dietary, { lowercase: true });
