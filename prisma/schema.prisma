@@ -315,6 +315,10 @@ enum NotificationType {
   RESTAURANT_CLAIM_UPDATE // Admin approved/rejected this account's restaurant claim
   REVIEW_STATUS_UPDATE // A restaurant review was approved, rejected or flagged
   REVIEW_REMOVED // A restaurant review was removed after an upheld report
+  RESTAURANT_REVIEW_RESPONSE_UPDATE // A moderator decided on this account's owner reply
+  RESTAURANT_TEAM_INVITE // An existing account was invited to manage a venue
+  RESTAURANT_TEAM_ROLE_CHANGED // The account's role on a venue team changed
+  RESTAURANT_OWNERSHIP_TRANSFERRED // Ownership of a venue was transferred to this account
 }
 
 // Lifecycle of an additional notification email address. PENDING until the
@@ -351,6 +355,8 @@ enum AdminNotificationType {
   RESTAURANT_VENUE_CLAIM_PENDING // Someone asked to manage a restaurant listing
   RESTAURANT_REVIEW_NEEDS_MODERATION // A restaurant review is waiting for a moderator
   RESTAURANT_REVIEW_REPORTED // A diner reported a restaurant review
+  RESTAURANT_PHOTOS_NEED_MODERATION // Owner-uploaded venue photos are waiting for approval
+  RESTAURANT_REVIEW_RESPONSE_PENDING // An owner reply is waiting for a moderator
 }
 
 enum ReviewStatus {

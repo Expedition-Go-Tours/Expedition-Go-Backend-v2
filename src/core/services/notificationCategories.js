@@ -34,6 +34,7 @@ const CATEGORY_BY_TYPE = {
   REVIEW_REQUEST: 'reviews',
   REVIEW_STATUS_UPDATE: 'reviews',
   REVIEW_REMOVED: 'reviews',
+  RESTAURANT_REVIEW_RESPONSE_UPDATE: 'reviews',
 
   // Payments & payouts
   PAYMENT_RECEIVED: 'payments',
@@ -60,6 +61,9 @@ const CATEGORY_BY_TYPE = {
   SUPPLIER_APPROVED: 'systemAlerts',
   SUPPLIER_REJECTED: 'systemAlerts',
   RESTAURANT_CLAIM_UPDATE: 'systemAlerts',
+  RESTAURANT_TEAM_INVITE: 'systemAlerts',
+  RESTAURANT_TEAM_ROLE_CHANGED: 'systemAlerts',
+  RESTAURANT_OWNERSHIP_TRANSFERRED: 'systemAlerts',
   DOCUMENT_REJECTED: 'systemAlerts',
   DOCUMENT_EXPIRY_REMINDER: 'systemAlerts',
   DOCUMENT_EXPIRED: 'systemAlerts',
