@@ -34,6 +34,7 @@ const availabilityQuery = z.object({
   query: z.object({
     from: z.string().regex(DATE_KEY).optional(),
     to: z.string().regex(DATE_KEY).optional(),
+    ratePlanId: z.string().min(1).optional(),
   }),
   params: z.object({ id: z.string().min(1) }),
 });
@@ -41,11 +42,15 @@ const availabilityQuery = z.object({
 const availabilityCellBody = z.object({
   body: z.object({
     roomId: z.string().min(1),
+    ratePlanId: z.string().min(1).nullable().optional(),
     date: z.string().regex(DATE_KEY),
     count: z.coerce.number().int().min(0).nullable().optional(),
     closed: z.boolean().optional(),
     price: z.coerce.number().min(0).nullable().optional(),
     minStay: z.coerce.number().int().min(1).nullable().optional(),
+    maxStay: z.coerce.number().int().min(1).nullable().optional(),
+    closedArrival: z.boolean().optional(),
+    closedDeparture: z.boolean().optional(),
   }).passthrough(),
   query: queryObject,
   params: z.object({ id: z.string().min(1) }),
@@ -55,6 +60,7 @@ const availabilityCellDelete = z.object({
   body: bodyObject,
   query: z.object({
     roomId: z.string().min(1),
+    ratePlanId: z.string().min(1).optional(),
     date: z.string().regex(DATE_KEY),
   }),
   params: z.object({ id: z.string().min(1) }),
@@ -132,31 +138,61 @@ const calendarQuery = z.object({
     from: z.string().regex(DATE_KEY).optional(),
     to: z.string().regex(DATE_KEY).optional(),
     roomId: z.string().min(1).optional(),
+    ratePlanId: z.string().min(1).optional(),
   }),
   params: z.object({ id: z.string().min(1) }),
+});
+
+const availabilityTarget = z.object({
+  roomId: z.string().min(1),
+  ratePlanId: z.string().min(1).nullable().optional(),
 });
 
 const availabilityBulkSchema = z.object({
   body: z.object({
     action: z.enum(['close', 'open']),
-    roomIds: z.array(z.string().min(1)).min(1).max(100),
+    targets: z.array(availabilityTarget).min(1).max(200).optional(),
+    roomIds: z.array(z.string().min(1)).min(1).max(100).optional(),
     from: z.string().regex(DATE_KEY),
     to: z.string().regex(DATE_KEY),
-  }),
+    weekdays: z.array(z.coerce.number().int().min(0).max(6)).max(7).optional(),
+  }).refine(
+    (value) => Boolean(value.targets?.length || value.roomIds?.length),
+    { message: 'Choose at least one room or rate plan' },
+  ),
   query: queryObject,
   params: z.object({ id: z.string().min(1) }),
 });
 
 const availabilityCopySchema = z.object({
   body: z.object({
-    roomIds: z.array(z.string().min(1)).min(1).max(100),
+    targets: z.array(availabilityTarget).min(1).max(200).optional(),
+    roomIds: z.array(z.string().min(1)).min(1).max(100).optional(),
     sourceFrom: z.string().regex(DATE_KEY),
     sourceTo: z.string().regex(DATE_KEY),
     targetStart: z.string().regex(DATE_KEY),
-    fields: z.array(z.enum(['price', 'count', 'minStay', 'closed'])).min(1).optional(),
+    targetTo: z.string().regex(DATE_KEY).optional(),
+    weekdays: z.array(z.coerce.number().int().min(0).max(6)).max(7).optional(),
+    fields: z.array(z.enum([
+      'price',
+      'count',
+      'minStay',
+      'maxStay',
+      'closed',
+      'closedArrival',
+      'closedDeparture',
+    ])).min(1).optional(),
+    adjustment: z.object({
+      direction: z.enum(['increase', 'decrease']),
+      unit: z.enum(['amount', 'percent']),
+      value: z.coerce.number().min(0).max(1000000),
+    }).nullable().optional(),
     overwrite: z.boolean().optional(),
     dryRun: z.boolean().optional(),
-  }),
+  }).refine(
+    (value) => Boolean(value.targets?.length || value.roomIds?.length),
+    { message: 'Choose at least one room or rate plan' },
+  ),
   query: queryObject,
   params: z.object({ id: z.string().min(1) }),
 });

@@ -3385,25 +3385,32 @@ model StayProperty {
 
 /// Room × date inventory override for the stays calendar. Defaults live on the
 /// room inside StayProperty.data; a row here means the supplier changed that
-/// specific room/date (count, closed, price, minStay).
+/// specific room/date (count, closed, price, minStay). `ratePlanId = ""` is the
+/// room-level default; a non-empty value targets one rate plan in that room.
 model StayAvailabilityOverride {
   id         String       @id @default(cuid())
   propertyId String
   property   StayProperty @relation(fields: [propertyId], references: [id], onDelete: Cascade)
 
-  roomId String
-  date   DateTime @db.Date
+  roomId     String
+  ratePlanId String @default("")
+  date       DateTime @db.Date
 
   count   Int?
   closed  Boolean @default(false)
   price   Decimal? @db.Decimal(10, 2)
   minStay Int?
+  maxStay Int?
+
+  closedArrival   Boolean @default(false)
+  closedDeparture Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([propertyId, roomId, date])
+  @@unique([propertyId, roomId, ratePlanId, date])
   @@index([propertyId, date])
+  @@index([propertyId, ratePlanId, date])
 }
 
 /// Date/day/room rules that constrain how a stay is sold. Distinct from a
@@ -3555,6 +3562,16 @@ enum StayOfferType {
   LAST_MINUTE
 }
 
+/// The recent Stays promotion flows. Legacy offers created through the old
+/// builder have no kind.
+enum StayPromotionKind {
+  PROPERTY_DEAL
+  BASIC_DEAL
+  EARLY_BOOKER
+  LAST_MINUTE
+  LATE_ESCAPE
+}
+
 /// Stays version of SpecialOffer. Deliberately a parallel model: tour offers
 /// target a Tour, stay offers target a StayProperty (and optionally one room).
 model StayOffer {
@@ -3588,6 +3605,9 @@ model StayOffer {
   minSpendAmount            Float?
   maxRedemptionsPerCustomer Int?
   stackable                 Boolean @default(false)
+
+  promotionKind   StayPromotionKind?
+  promotionConfig Json              @default("{}")
 
   targets StayOfferTarget[]
 

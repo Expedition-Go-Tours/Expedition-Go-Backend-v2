@@ -32,7 +32,7 @@ const MAX_CALENDAR_DAYS = 731;
 const MAX_BULK_DAYS = 366;
 const MAX_BULK_CELLS = 5000;
 const MAX_COPY_DAYS = 366;
-const MAX_COPY_CELLS = 1000;
+const MAX_COPY_CELLS = 3000;
 
 const WEEKDAY_NAMES = [
   'sunday',
@@ -46,7 +46,15 @@ const WEEKDAY_NAMES = [
 
 const WEEKDAY_SET = new Set(WEEKDAY_NAMES);
 
-const COPY_FIELDS = new Set(['price', 'count', 'minStay', 'closed']);
+const COPY_FIELDS = new Set([
+  'price',
+  'count',
+  'minStay',
+  'maxStay',
+  'closed',
+  'closedArrival',
+  'closedDeparture',
+]);
 const VALUE_ADD_UNITS = new Set(['PER_STAY', 'PER_NIGHT', 'PER_PERSON']);
 
 function todayUtc() {
@@ -100,6 +108,65 @@ function validateRoomIds(roomIds, rooms) {
   }
   if (!unique.length) throw new AppError('Choose at least one room', 400);
   return unique;
+}
+
+/**
+ * Resolve both the legacy `roomIds` shortcut and the newer `targets` list into
+ * unique `{ roomId, ratePlanId }` pairs. `ratePlanId` is normalised to "" for
+ * room-level inventory; a plan id is validated against that room's plans.
+ */
+function resolveAvailabilityTargets(body, rooms, ratePlans) {
+  const raw = Array.isArray(body?.targets) && body.targets.length
+    ? body.targets
+    : (Array.isArray(body?.roomIds) ? body.roomIds : []).map((roomId) => ({ roomId }));
+
+  if (!raw.length) throw new AppError('Choose at least one room or rate plan', 400);
+
+  const knownRooms = new Map(rooms.map((room) => [room.id, room]));
+  const knownPlans = new Map(ratePlans.map((plan) => [plan.id, plan]));
+  const seen = new Set();
+  const targets = [];
+
+  for (const target of raw) {
+    const room = knownRooms.get(target?.roomId);
+    if (!room) throw new AppError('Room not found on this property', 400);
+    const ratePlanId = target?.ratePlanId || '';
+    if (ratePlanId) {
+      const plan = knownPlans.get(ratePlanId);
+      if (!plan || plan.roomId !== room.id) {
+        throw new AppError('Rate plan not found for this room', 400);
+      }
+    }
+    const key = `${room.id}|${ratePlanId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push({ roomId: room.id, ratePlanId });
+  }
+
+  return targets;
+}
+
+function parseWeekdayFilter(input) {
+  if (!Array.isArray(input) || input.length === 0) return null;
+  const days = new Set(input.map((day) => Number(day)).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6));
+  return days.size ? days : null;
+}
+
+function filteredDates(from, to, weekdays) {
+  return dateRange(from, to).filter(
+    (date) => !weekdays || weekdays.has(date.getUTCDay()),
+  );
+}
+
+function applyPriceAdjustment(price, adjustment) {
+  if (!adjustment || price === null || price === undefined) return price;
+  const value = Number(adjustment.value) || 0;
+  if (!value) return price;
+  if (adjustment.unit === 'percent') {
+    const delta = price * (value / 100);
+    return Math.max(0, Math.round((adjustment.direction === 'decrease' ? price - delta : price + delta) * 100) / 100);
+  }
+  return Math.max(0, Math.round((adjustment.direction === 'decrease' ? price - value : price + value) * 100) / 100);
 }
 
 function normalizeWeekdays(input) {
@@ -344,6 +411,86 @@ function planRateCopy({
   return { operations, considered, skipped };
 }
 
+function copyKey(roomId, ratePlanId, date) {
+  return `${roomId}|${ratePlanId || ''}|${dateKey(date)}`;
+}
+
+function copyFieldValue(row, field, adjustment) {
+  if (!row) return undefined;
+  if (field === 'closed' || field === 'closedArrival' || field === 'closedDeparture') {
+    return row[field] === true ? true : undefined;
+  }
+  if (row[field] === null || row[field] === undefined) return undefined;
+  if (field === 'price') return applyPriceAdjustment(Number(row.price), adjustment);
+  return row[field];
+}
+
+function targetHasValue(row, field) {
+  if (!row) return false;
+  if (field === 'closed' || field === 'closedArrival' || field === 'closedDeparture') {
+    return row[field] === true;
+  }
+  return row[field] !== null && row[field] !== undefined;
+}
+
+/**
+ * Build the write plan for a room- or plan-level copy. Both boundaries use the
+ * same field precedence as the per-cell editor; booleans copy only when true
+ * so an open night never creates meaningless rows.
+ */
+function planAvailabilityCopy({
+  sourceRows,
+  targetRows,
+  targets,
+  sourceDates,
+  targetDates,
+  fields,
+  overwrite,
+  adjustment,
+}) {
+  const sourceByKey = new Map(sourceRows.map((row) => [copyKey(row.roomId, row.ratePlanId, row.date), row]));
+  const targetByKey = new Map(targetRows.map((row) => [copyKey(row.roomId, row.ratePlanId, row.date), row]));
+  const operations = [];
+  let considered = 0;
+  let skipped = 0;
+  const pairs = Math.min(sourceDates.length, targetDates.length);
+
+  for (const target of targets) {
+    for (let offset = 0; offset < pairs; offset += 1) {
+      const source = sourceByKey.get(copyKey(target.roomId, target.ratePlanId, sourceDates[offset]));
+      if (!source) continue;
+      const targetDate = targetDates[offset];
+      const existing = targetByKey.get(copyKey(target.roomId, target.ratePlanId, targetDate));
+
+      const data = {};
+      for (const field of fields) {
+        const value = copyFieldValue(source, field, adjustment);
+        if (value === undefined) continue;
+        if (!overwrite && targetHasValue(existing, field)) continue;
+        data[field] = value;
+      }
+
+      if (!Object.keys(data).length) {
+        if (fields.some((field) => copyFieldValue(source, field, adjustment) !== undefined)) {
+          considered += 1;
+          skipped += 1;
+        }
+        continue;
+      }
+
+      considered += 1;
+      operations.push({
+        roomId: target.roomId,
+        ratePlanId: target.ratePlanId,
+        date: targetDate,
+        data,
+      });
+    }
+  }
+
+  return { operations, considered, skipped };
+}
+
 /* ── Calendar ──────────────────────────────────────────────────────────── */
 
 exports.getCalendar = catchAsync(async (req, res) => {
@@ -355,6 +502,10 @@ exports.getCalendar = catchAsync(async (req, res) => {
   const roomId = req.query?.roomId || null;
   if (roomId && !rooms.some((room) => room.id === roomId)) {
     throw new AppError('Room not found on this property', 400);
+  }
+  const ratePlanId = req.query?.ratePlanId || null;
+  if (ratePlanId && !ratePlans.some((plan) => plan.id === ratePlanId)) {
+    throw new AppError('Rate plan not found on this property', 400);
   }
 
   const overrideWhere = {
@@ -382,15 +533,25 @@ exports.getCalendar = catchAsync(async (req, res) => {
   ]);
 
   const overrides = {};
+  const planOverrides = {};
   for (const row of overrideRows) {
     if (roomId && row.roomId !== roomId) continue;
+    if (ratePlanId && row.ratePlanId && row.ratePlanId !== ratePlanId) continue;
     if (!rooms.some((room) => room.id === row.roomId)) continue;
     const value = {};
     if (row.count !== null) value.count = row.count;
     if (row.closed) value.closed = true;
     if (row.price !== null) value.price = Number(row.price);
     if (row.minStay !== null) value.minStay = row.minStay;
-    overrides[`${row.roomId}|${dateKey(row.date)}`] = value;
+    if (row.maxStay !== null) value.maxStay = row.maxStay;
+    if (row.closedArrival) value.closedArrival = true;
+    if (row.closedDeparture) value.closedDeparture = true;
+
+    if (!row.ratePlanId) {
+      overrides[`${row.roomId}|${dateKey(row.date)}`] = value;
+    } else {
+      planOverrides[`${row.roomId}|${row.ratePlanId}|${dateKey(row.date)}`] = value;
+    }
   }
 
   const rules = ruleRows.filter(
@@ -410,6 +571,7 @@ exports.getCalendar = catchAsync(async (req, res) => {
       rooms: roomId ? rooms.filter((room) => room.id === roomId) : rooms,
       ratePlans: roomId ? ratePlans.filter((plan) => plan.roomId === roomId) : ratePlans,
       overrides,
+      planOverrides,
       rules: rules.map(serializeRestrictionRule),
       currency,
     },
@@ -421,17 +583,20 @@ exports.getCalendar = catchAsync(async (req, res) => {
 exports.bulkAvailability = catchAsync(async (req, res) => {
   const supplierId = supplierIdFor(req);
   const property = await findOwnedProperty(req.params.id, supplierId);
-  const { rooms } = propertyRooms(property);
-  const { action, roomIds, from, to } = req.body || {};
+  const { rooms, ratePlans } = propertyRooms(property);
+  const { action, from, to } = req.body || {};
 
   if (action !== 'close' && action !== 'open') {
     throw new AppError('Action must be close or open', 400);
   }
 
-  const uniqueRoomIds = validateRoomIds(roomIds || [], rooms);
+  const targets = resolveAvailabilityTargets(req.body, rooms, ratePlans);
   const range = parseRange(from, to, { maxDays: MAX_BULK_DAYS });
-  const cells = uniqueRoomIds.length * range.days;
+  const weekdays = parseWeekdayFilter(req.body?.weekdays);
+  const dates = filteredDates(range.from, range.to, weekdays);
+  if (!dates.length) throw new AppError('Choose at least one day of the week', 400);
 
+  const cells = targets.length * dates.length;
   if (cells > MAX_BULK_CELLS) {
     throw new AppError(
       `That is ${cells} room-nights; update ${MAX_BULK_CELLS} or fewer at a time`,
@@ -440,20 +605,15 @@ exports.bulkAvailability = catchAsync(async (req, res) => {
   }
 
   const affected = await prisma.$transaction(async (tx) => {
-    const where = {
-      propertyId: property.id,
-      roomId: { in: uniqueRoomIds },
-      date: { gte: range.from, lte: range.to },
-    };
-
     if (action === 'close') {
       const now = new Date();
       const rows = [];
-      for (const date of dateRange(range.from, range.to)) {
-        for (const roomId of uniqueRoomIds) {
+      for (const target of targets) {
+        for (const date of dates) {
           rows.push({
             propertyId: property.id,
-            roomId,
+            roomId: target.roomId,
+            ratePlanId: target.ratePlanId,
             date,
             closed: true,
             updatedAt: now,
@@ -461,29 +621,52 @@ exports.bulkAvailability = catchAsync(async (req, res) => {
         }
       }
       await tx.stayAvailabilityOverride.createMany({ data: rows, skipDuplicates: true });
-      await tx.stayAvailabilityOverride.updateMany({
-        where: { ...where, closed: false },
-        data: { closed: true },
-      });
+
+      for (const target of targets) {
+        await tx.stayAvailabilityOverride.updateMany({
+          where: {
+            propertyId: property.id,
+            roomId: target.roomId,
+            ratePlanId: target.ratePlanId,
+            date: { in: dates },
+            closed: false,
+          },
+          data: { closed: true },
+        });
+      }
       return cells;
     }
 
-    const updated = await tx.stayAvailabilityOverride.updateMany({
-      where,
-      data: { closed: false },
-    });
-    // Rows that only existed to mark the night closed carry no information
-    // once it is open again; removing them keeps the calendar payload small.
-    await tx.stayAvailabilityOverride.deleteMany({
-      where: {
-        ...where,
-        closed: false,
-        count: null,
-        price: null,
-        minStay: null,
-      },
-    });
-    return updated.count;
+    let updated = 0;
+    for (const target of targets) {
+      const where = {
+        propertyId: property.id,
+        roomId: target.roomId,
+        ratePlanId: target.ratePlanId,
+        date: { in: dates },
+      };
+      const result = await tx.stayAvailabilityOverride.updateMany({
+        where,
+        data: { closed: false },
+      });
+      updated += result.count;
+
+      // Rows that only existed to mark the night closed carry no information
+      // once it is open again; removing them keeps the calendar payload small.
+      await tx.stayAvailabilityOverride.deleteMany({
+        where: {
+          ...where,
+          closed: false,
+          count: null,
+          price: null,
+          minStay: null,
+          maxStay: null,
+          closedArrival: false,
+          closedDeparture: false,
+        },
+      });
+    }
+    return updated;
   });
 
   res.status(200).json({
@@ -492,9 +675,10 @@ exports.bulkAvailability = catchAsync(async (req, res) => {
       action,
       from: dateKey(range.from),
       to: dateKey(range.to),
-      roomIds: uniqueRoomIds,
-      rooms: uniqueRoomIds.length,
-      days: range.days,
+      targets,
+      roomIds: [...new Set(targets.map((target) => target.roomId))],
+      rooms: new Set(targets.map((target) => target.roomId)).size,
+      days: dates.length,
       affected,
     },
   });
@@ -505,17 +689,26 @@ exports.bulkAvailability = catchAsync(async (req, res) => {
 exports.copyAvailability = catchAsync(async (req, res) => {
   const supplierId = supplierIdFor(req);
   const property = await findOwnedProperty(req.params.id, supplierId);
-  const { rooms } = propertyRooms(property);
+  const { rooms, ratePlans } = propertyRooms(property);
   const body = req.body || {};
 
-  const uniqueRoomIds = validateRoomIds(body.roomIds || [], rooms);
+  const targets = resolveAvailabilityTargets(body, rooms, ratePlans);
   const source = parseRange(body.sourceFrom, body.sourceTo, { maxDays: MAX_COPY_DAYS });
   const targetStart = parseDateKey(body.targetStart);
   if (!targetStart) throw new AppError('Invalid target start date', 400);
 
-  const sourceDays = source.days;
-  const targetEnd = addDays(targetStart, sourceDays - 1);
-  const cells = uniqueRoomIds.length * sourceDays;
+  const targetEnd = body.targetTo
+    ? parseDateKey(body.targetTo)
+    : addDays(targetStart, source.days - 1);
+  if (!targetEnd) throw new AppError('Invalid target end date', 400);
+  if (targetEnd < targetStart) throw new AppError('Target end date cannot be before its start date', 400);
+
+  const weekdays = parseWeekdayFilter(body.weekdays);
+  const sourceDates = filteredDates(source.from, source.to, weekdays);
+  if (!sourceDates.length) throw new AppError('Choose at least one day of the week', 400);
+  const targetDates = dateRange(targetStart, targetEnd);
+
+  const cells = targets.length * sourceDates.length;
   if (cells > MAX_COPY_CELLS) {
     throw new AppError(
       `That is ${cells} room-nights; copy ${MAX_COPY_CELLS} or fewer at a time`,
@@ -529,48 +722,64 @@ exports.copyAvailability = catchAsync(async (req, res) => {
 
   const overwrite = Boolean(body.overwrite);
   const dryRun = Boolean(body.dryRun);
+  const adjustment = body.adjustment || null;
+
+  const targetWhere = targets.map((target) => ({
+    roomId: target.roomId,
+    ratePlanId: target.ratePlanId,
+  }));
 
   const [sourceRows, targetRows] = await Promise.all([
     prisma.stayAvailabilityOverride.findMany({
       where: {
         propertyId: property.id,
-        roomId: { in: uniqueRoomIds },
+        OR: targetWhere,
         date: { gte: source.from, lte: source.to },
       },
     }),
     prisma.stayAvailabilityOverride.findMany({
       where: {
         propertyId: property.id,
-        roomId: { in: uniqueRoomIds },
+        OR: targetWhere,
         date: { gte: targetStart, lte: targetEnd },
       },
     }),
   ]);
 
-  const plan = planRateCopy({
+  const plan = planAvailabilityCopy({
     sourceRows,
     targetRows,
-    roomIds: uniqueRoomIds,
-    sourceFrom: source.from,
-    sourceDays,
-    targetStart,
+    targets,
+    sourceDates,
+    targetDates,
     fields,
     overwrite,
+    adjustment,
   });
+
+  const roomIds = [...new Set(targets.map((target) => target.roomId))];
+  const sourceSummary = { from: dateKey(source.from), to: dateKey(source.to), days: sourceDates.length };
+  const targetSummary = {
+    from: dateKey(targetStart),
+    to: dateKey(targetEnd),
+    days: Math.min(sourceDates.length, targetDates.length),
+  };
 
   if (dryRun) {
     return res.status(200).json({
       status: 'success',
       data: {
         dryRun: true,
-        source: { from: dateKey(source.from), to: dateKey(source.to), days: sourceDays },
-        target: { from: dateKey(targetStart), to: dateKey(targetEnd), days: sourceDays },
-        roomIds: uniqueRoomIds,
+        source: sourceSummary,
+        target: targetSummary,
+        targets,
+        roomIds,
         fields,
         wouldCopy: plan.operations.length,
         wouldSkip: plan.skipped,
         preview: plan.operations.slice(0, 200).map((operation) => ({
           roomId: operation.roomId,
+          ...(operation.ratePlanId ? { ratePlanId: operation.ratePlanId } : {}),
           date: dateKey(operation.date),
           fields: operation.data,
         })),
@@ -583,15 +792,17 @@ exports.copyAvailability = catchAsync(async (req, res) => {
       for (const operation of plan.operations) {
         await tx.stayAvailabilityOverride.upsert({
           where: {
-            propertyId_roomId_date: {
+            propertyId_roomId_ratePlanId_date: {
               propertyId: property.id,
               roomId: operation.roomId,
+              ratePlanId: operation.ratePlanId,
               date: operation.date,
             },
           },
           create: {
             propertyId: property.id,
             roomId: operation.roomId,
+            ratePlanId: operation.ratePlanId,
             date: operation.date,
             ...operation.data,
           },
@@ -599,16 +810,17 @@ exports.copyAvailability = catchAsync(async (req, res) => {
         });
       }
     },
-    { timeout: 30000, maxWait: 10000 },
+    { timeout: 60000, maxWait: 10000 },
   );
 
   res.status(200).json({
     status: 'success',
     data: {
       dryRun: false,
-      source: { from: dateKey(source.from), to: dateKey(source.to), days: sourceDays },
-      target: { from: dateKey(targetStart), to: dateKey(targetEnd), days: sourceDays },
-      roomIds: uniqueRoomIds,
+      source: sourceSummary,
+      target: targetSummary,
+      targets,
+      roomIds,
       fields,
       copied: plan.operations.length,
       skipped: plan.skipped,
@@ -755,6 +967,8 @@ exports._private = {
   parseRange,
   inclusiveDays,
   planRateCopy,
+  planAvailabilityCopy,
+  resolveAvailabilityTargets,
   buildRestrictionRuleData,
   serializeRestrictionRule,
   buildValueAddData,

@@ -424,34 +424,36 @@ exports.getProperty = catchAsync(async (req, res) => {
 
 exports.updateProperty = catchAsync(async (req, res) => {
   const supplierId = supplierIdFor(req);
-  const existing = await findOwnedProperty(req.params.id, supplierId);
   const payload = sanitizePropertyPayload(req.body);
-  const currentData = objectOrEmpty(existing.data);
-  const nextData = { ...currentData, ...payload };
 
-  const name = Object.prototype.hasOwnProperty.call(payload, 'name')
-    ? (typeof payload.name === 'string' && payload.name.trim() ? payload.name.trim() : 'Untitled property')
-    : existing.name;
+  const row = await withLockedProperty(req.params.id, supplierId, async (tx, existing) => {
+    const currentData = objectOrEmpty(existing.data);
+    const nextData = { ...currentData, ...payload };
 
-  const type = Object.prototype.hasOwnProperty.call(payload, 'type')
-    ? (typeof payload.type === 'string' ? payload.type : null)
-    : existing.type;
+    const name = Object.prototype.hasOwnProperty.call(payload, 'name')
+      ? (typeof payload.name === 'string' && payload.name.trim() ? payload.name.trim() : 'Untitled property')
+      : existing.name;
 
-  const city = Object.prototype.hasOwnProperty.call(payload, 'city')
-    ? (typeof payload.city === 'string' ? payload.city : null)
-    : existing.city;
+    const type = Object.prototype.hasOwnProperty.call(payload, 'type')
+      ? (typeof payload.type === 'string' ? payload.type : null)
+      : existing.type;
 
-  const country = Object.prototype.hasOwnProperty.call(payload, 'country')
-    ? (typeof payload.country === 'string' ? payload.country : null)
-    : existing.country;
+    const city = Object.prototype.hasOwnProperty.call(payload, 'city')
+      ? (typeof payload.city === 'string' ? payload.city : null)
+      : existing.city;
 
-  const step = Object.prototype.hasOwnProperty.call(payload, 'step')
-    ? clampStep(payload.step, existing.step)
-    : existing.step;
+    const country = Object.prototype.hasOwnProperty.call(payload, 'country')
+      ? (typeof payload.country === 'string' ? payload.country : null)
+      : existing.country;
 
-  const row = await prisma.stayProperty.update({
-    where: { id: existing.id },
-    data: { name, type, city, country, step, data: nextData },
+    const step = Object.prototype.hasOwnProperty.call(payload, 'step')
+      ? clampStep(payload.step, existing.step)
+      : existing.step;
+
+    return tx.stayProperty.update({
+      where: { id: existing.id },
+      data: { name, type, city, country, step, data: nextData },
+    });
   });
 
   res.status(200).json({
@@ -667,6 +669,9 @@ exports.getAvailability = catchAsync(async (req, res) => {
   });
 
   const overrides = {};
+  const planOverrides = {};
+  const requestedPlanId = req.query?.ratePlanId || null;
+
   for (const row of rows) {
     if (!roomIds.has(row.roomId)) continue;
     const value = {};
@@ -674,13 +679,22 @@ exports.getAvailability = catchAsync(async (req, res) => {
     if (row.closed) value.closed = true;
     if (row.price !== null) value.price = Number(row.price);
     if (row.minStay !== null) value.minStay = row.minStay;
-    overrides[`${row.roomId}|${dateKey(row.date)}`] = value;
+    if (row.maxStay !== null) value.maxStay = row.maxStay;
+    if (row.closedArrival) value.closedArrival = true;
+    if (row.closedDeparture) value.closedDeparture = true;
+
+    if (!row.ratePlanId) {
+      overrides[`${row.roomId}|${dateKey(row.date)}`] = value;
+    } else if (!requestedPlanId || requestedPlanId === row.ratePlanId) {
+      planOverrides[`${row.roomId}|${row.ratePlanId}|${dateKey(row.date)}`] = value;
+    }
   }
 
   res.status(200).json({
     status: 'success',
     data: {
       overrides,
+      planOverrides,
       currency: typeof data.currency === 'string' && data.currency ? data.currency : 'GHS',
     },
   });
@@ -691,10 +705,27 @@ exports.setAvailabilityCell = catchAsync(async (req, res) => {
   const existing = await findOwnedProperty(req.params.id, supplierId);
   const data = objectOrEmpty(existing.data);
   const rooms = Array.isArray(data.rooms) ? data.rooms : [];
-  const { roomId, date, count, closed, price, minStay } = req.body || {};
+  const ratePlans = Array.isArray(data.ratePlans) ? data.ratePlans : [];
+  const {
+    roomId,
+    ratePlanId,
+    date,
+    count,
+    closed,
+    price,
+    minStay,
+    maxStay,
+    closedArrival,
+    closedDeparture,
+  } = req.body || {};
 
   if (!rooms.some((room) => room.id === roomId)) {
     throw new AppError('Room not found on this property', 400);
+  }
+
+  const planId = ratePlanId || '';
+  if (planId && !ratePlans.some((plan) => plan.id === planId && plan.roomId === roomId)) {
+    throw new AppError('Rate plan not found for this room', 400);
   }
 
   const parsedDate = parseDateKey(date);
@@ -705,18 +736,23 @@ exports.setAvailabilityCell = catchAsync(async (req, res) => {
   if (closed !== undefined) provided.closed = Boolean(closed);
   if (price !== undefined) provided.price = price;
   if (minStay !== undefined) provided.minStay = minStay;
+  if (maxStay !== undefined) provided.maxStay = maxStay;
+  if (closedArrival !== undefined) provided.closedArrival = Boolean(closedArrival);
+  if (closedDeparture !== undefined) provided.closedDeparture = Boolean(closedDeparture);
 
   await prisma.stayAvailabilityOverride.upsert({
     where: {
-      propertyId_roomId_date: {
+      propertyId_roomId_ratePlanId_date: {
         propertyId: existing.id,
         roomId,
+        ratePlanId: planId,
         date: parsedDate,
       },
     },
     create: {
       propertyId: existing.id,
       roomId,
+      ratePlanId: planId,
       date: parsedDate,
       ...provided,
     },
@@ -736,6 +772,7 @@ exports.clearAvailabilityCell = catchAsync(async (req, res) => {
     where: {
       propertyId: existing.id,
       roomId: req.query.roomId,
+      ratePlanId: req.query.ratePlanId || '',
       date: parsedDate,
     },
   });

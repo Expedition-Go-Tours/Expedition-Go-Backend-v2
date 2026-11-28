@@ -20,6 +20,13 @@ const OFFER_TYPES = new Set(['LIMITED_TIME', 'EARLY_BIRD', 'LAST_MINUTE']);
 const DISCOUNT_TYPES = new Set(['PERCENTAGE', 'FIXED_AMOUNT']);
 const CAPACITY_TYPES = new Set(['UNLIMITED', 'CAPPED']);
 const TIME_SLOT_MODES = new Set(['ALL_DAYS', 'SPECIFIC_WEEKDAYS']);
+const PROMOTION_KINDS = new Set([
+  'PROPERTY_DEAL',
+  'BASIC_DEAL',
+  'EARLY_BOOKER',
+  'LAST_MINUTE',
+  'LATE_ESCAPE',
+]);
 
 function optionalNumber(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -126,6 +133,21 @@ function buildOfferData(body, existing = null) {
     ? body.promoCode.trim()
     : null;
 
+  const promotionKind = body.promotionKind === undefined
+    ? (existing?.promotionKind ?? null)
+    : (body.promotionKind ? String(body.promotionKind).toUpperCase() : null);
+  if (promotionKind && !PROMOTION_KINDS.has(promotionKind)) {
+    throw new AppError('Invalid promotion kind', 400);
+  }
+
+  const rawPromotionConfig = body.promotionConfig === undefined
+    ? existing?.promotionConfig
+    : body.promotionConfig;
+  const promotionConfig =
+    rawPromotionConfig && typeof rawPromotionConfig === 'object' && !Array.isArray(rawPromotionConfig)
+      ? rawPromotionConfig
+      : {};
+
   return {
     name,
     offerType,
@@ -148,6 +170,8 @@ function buildOfferData(body, existing = null) {
     minSpendAmount: optionalNumber(body.minSpendAmount),
     maxRedemptionsPerCustomer: optionalInt(body.maxRedemptionsPerCustomer, 1),
     stackable: Boolean(body.stackable),
+    promotionKind,
+    promotionConfig,
   };
 }
 

@@ -273,6 +273,7 @@ router.delete('/offers/:id', requireTeamPermission('stays.offers'), validate(sch
 // Bookings + manual supplier creation
 router.get('/bookings', requireTeamPermission('stays.bookings'), validate(schemas.listQuery), bookings.listBookings);
 router.get('/bookings/:id', requireTeamPermission('stays.bookings'), validate(schemas.idParams), bookings.getBooking);
+router.post('/bookings/quote', requireTeamPermission('stays.bookings'), validate(schemas.createBookingSchema), bookings.quoteBooking);
 router.post('/bookings', requireTeamPermission('stays.bookings'), validate(schemas.createBookingSchema), bookings.createBooking);
 router.patch('/bookings/:id/status', requireTeamPermission('stays.bookings'), validate(schemas.bookingStatusSchema), bookings.updateBookingStatus);
 

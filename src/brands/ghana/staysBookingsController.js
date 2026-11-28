@@ -64,6 +64,180 @@ function parseGuests(value) {
   return Math.min(Math.trunc(number), 50);
 }
 
+/** Normalise the new adult/child payload while keeping `guests` backwards compatible. */
+function parseTravellers(body) {
+  const totalGuests = parseGuests(body?.guests);
+  const rawAges = Array.isArray(body?.childAges) ? body.childAges : [];
+  const requestedChildren = body?.children != null
+    ? Math.max(0, Math.trunc(Number(body.children) || 0))
+    : rawAges.length;
+  const childAges = Array.from({ length: requestedChildren }, (_, index) => {
+    const value = rawAges[index];
+    if (value === null || value === undefined || value === '') return null;
+    const age = Number(value);
+    return Number.isFinite(age) && age >= 0 && age <= 17 ? Math.trunc(age) : null;
+  });
+
+  const rawAdults = Number(body?.adults);
+  const adults = Number.isFinite(rawAdults) && rawAdults >= 1
+    ? Math.trunc(rawAdults)
+    : Math.max(1, totalGuests - childAges.length);
+
+  return {
+    adults,
+    childAges,
+    totalGuests: Math.max(1, adults + childAges.length),
+  };
+}
+
+function parseValueAddIds(body) {
+  if (!Array.isArray(body?.valueAddIds)) return [];
+  return [...new Set(body.valueAddIds.map((value) => String(value)).filter(Boolean))];
+}
+
+function roundMoney(value) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+function occupancyLimit(property, room, plan, travellers) {
+  const baseGuests = Math.max(1, positiveInt(plan?.baseGuests) || 1);
+  const roomLimit = (Number(room.adults) || 0) + (Number(room.children) || 0);
+  const propertyLimit = positiveInt(property?.maxGuests) || 0;
+  const planLimit = positiveInt(plan?.maxGuests) || 0;
+  const limit = Math.max(baseGuests, planLimit || roomLimit || propertyLimit || 10);
+  if (travellers.totalGuests > limit) {
+    throw new AppError(`This rate plan allows up to ${limit} guest${limit === 1 ? '' : 's'}`, 400);
+  }
+  return { baseGuests, limit };
+}
+
+function occupancyPricing({ base, plan, room, property, travellers, childGroups }) {
+  const { baseGuests } = occupancyLimit(property, room, plan, travellers);
+  let price = base;
+  let adjustment = 0;
+  const total = travellers.totalGuests;
+
+  if (total < baseGuests) {
+    const discounts = Array.isArray(plan?.occupancyDiscounts) ? plan.occupancyDiscounts : [];
+    const row = discounts.find(
+      (entry) => Number(entry?.occupancy) === total && entry?.enabled !== false,
+    );
+    const rawValue = row ? Number(row.value) || 0 : 0;
+    const unit = row?.unit === 'amount' ? 'amount' : 'percent';
+    const fallbackSingle = !row && total === 1 ? Number(plan?.singleGuestDiscount) || 0 : 0;
+
+    if (row && rawValue > 0) {
+      const delta = unit === 'amount' ? Math.min(price, rawValue) : price * (rawValue / 100);
+      price -= delta;
+      adjustment -= delta;
+    } else if (fallbackSingle > 0) {
+      const delta = Math.min(price, fallbackSingle);
+      price -= delta;
+      adjustment -= delta;
+    }
+  }
+
+  const extraAdults = Math.max(0, travellers.adults - baseGuests);
+  const childSlots = Math.max(0, baseGuests - travellers.adults);
+  const extraChildren = Math.max(0, travellers.childAges.length - childSlots);
+  const extraAdultCharge = extraAdults * (Number(plan?.extraAdult) || 0);
+  const extraChildCharge = childGroups.length ? 0 : extraChildren * (Number(plan?.extraChild) || 0);
+
+  price += extraAdultCharge + extraChildCharge;
+  adjustment += extraAdultCharge + extraChildCharge;
+
+  return { price: Math.max(0, price), adjustment };
+}
+
+function childRateCharges(property, plan, childAges, nightlyBase) {
+  const groups = Array.isArray(property?.childRateGroups) ? property.childRateGroups : [];
+  let perNight = 0;
+  let perStay = 0;
+
+  for (const age of childAges) {
+    const group = groups.find(
+      (entry) => Number(entry?.minAge) <= Number(age) && Number(entry?.maxAge) >= Number(age),
+    );
+    if (!group) {
+      perNight += Number(plan?.extraChild) || 0;
+      continue;
+    }
+    if (group.rateType === 'free') continue;
+    const value = Number(group.value) || 0;
+    if (group.rateType === 'percentage') {
+      perNight += nightlyBase * (value / 100);
+    } else if (String(group.unit || '').toLowerCase().includes('stay')) {
+      perStay += value;
+    } else {
+      perNight += value;
+    }
+  }
+
+  return { perNight, perStay };
+}
+
+function valueAddCharges(property, plan, valueAddIds, totalGuests) {
+  if (!valueAddIds.length) return { perNight: 0, once: 0 };
+  const adds = Array.isArray(property?.valueAdds) ? property.valueAdds : [];
+  const selected = valueAddIds.map((id) => adds.find((entry) => entry.id === id)).filter(Boolean);
+  if (selected.length !== valueAddIds.length) {
+    throw new AppError('One or more value adds are not available on this property', 400);
+  }
+
+  const allowed = Array.isArray(plan?.valueAddIds) && plan.valueAddIds.length
+    ? new Set(plan.valueAddIds)
+    : null;
+  if (allowed && selected.some((entry) => !allowed.has(entry.id))) {
+    throw new AppError('One or more value adds are not available on this rate plan', 400);
+  }
+
+  let perNight = 0;
+  let once = 0;
+  for (const add of selected) {
+    if (add.active === false || add.isActive === false) continue;
+    const price = Number(add.price) || 0;
+    const unit = String(add.unit || 'stay').toLowerCase();
+    if (unit.includes('night')) perNight += price;
+    else if (unit.includes('person') || unit.includes('guest')) once += price * totalGuests;
+    else once += price;
+  }
+
+  return { perNight, once };
+}
+
+function dynamicScopeApplies(scope, roomId, planId) {
+  if (!scope) return true;
+  const roomOk = scope.allRooms !== false
+    ? true
+    : Array.isArray(scope.roomIds) && scope.roomIds.includes(roomId);
+  const planOk = scope.allRatePlans !== false
+    ? true
+    : Boolean(planId) && Array.isArray(scope.ratePlanIds) && scope.ratePlanIds.includes(planId);
+  return roomOk && planOk;
+}
+
+function dynamicRuleActive(rule, today) {
+  if (!rule) return false;
+  if (rule.endMode === 'date' && rule.endDate) {
+    const end = parseDateKey(rule.endDate);
+    if (end && today > end) return false;
+  }
+  return true;
+}
+
+function applyPriceChange(price, change) {
+  if (!change || change.mode === 'none') return price;
+  const value = Number(change.value) || 0;
+  if (value <= 0) return price;
+  const delta = change.unit === 'amount' ? value : price * (value / 100);
+  return Math.max(0, change.mode === 'decrease' ? price - delta : price + delta);
+}
+
+function dynamicMinStay(rule) {
+  const value = positiveInt(rule?.minStay);
+  return value || 1;
+}
+
 function formatDisplayDate(value) {
   return new Date(`${value}T00:00:00.000Z`).toLocaleDateString('en-US', {
     month: 'short',
@@ -235,7 +409,7 @@ function booleanFlag(value) {
  * minimum and maximum across the plan, matching rules and per-date overrides
  * wins, so a rule can tighten a plan but never loosen it.
  */
-async function validateStayNights({
+async function priceStayNights({
   tx,
   property,
   room,
@@ -243,18 +417,48 @@ async function validateStayNights({
   checkIn,
   checkOut,
   nights,
+  travellers,
+  valueAddIds,
 }) {
+  const data = objectOrEmpty(property.data);
   const baseCapacity = Math.max(1, Number(room.count) || 1);
-  const baseNightly = plan ? Number(plan.price) : Number(room.price);
+  const baseNightly = Number(plan?.price ?? room.price) || 0;
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
 
-  const [overrides, overlapping, ruleRows] = await Promise.all([
+  const checkInKey = dateKey(checkIn);
+  const checkOutKey = dateKey(checkOut);
+  const childGroups = Array.isArray(data.childRateGroups) ? data.childRateGroups : [];
+  const dynamic = objectOrEmpty(data.dynamicRestrictions);
+  const unsoldRule = objectOrEmpty(dynamic.unsold);
+  const gapRule = objectOrEmpty(dynamic.gap);
+  const hasUnsold = Object.keys(unsoldRule).length > 0;
+  const hasGap = Object.keys(gapRule).length > 0;
+  const unsoldScope = hasUnsold
+    && dynamicRuleActive(unsoldRule, today)
+    && dynamicScopeApplies(unsoldRule.scope, room.id, plan?.id);
+  const gapScope = hasGap
+    && dynamicRuleActive(gapRule, today)
+    && dynamicScopeApplies(gapRule.scope, room.id, plan?.id);
+
+  const [overrides, overlapping, ruleRows, neighbourBefore, neighbourAfter] = await Promise.all([
     tx.stayAvailabilityOverride.findMany({
       where: {
         propertyId: property.id,
         roomId: room.id,
-        date: { gte: checkIn, lt: checkOut },
+        date: { gte: checkIn, lte: checkOut },
       },
-      select: { date: true, count: true, closed: true, price: true, minStay: true },
+      select: {
+        date: true,
+        ratePlanId: true,
+        count: true,
+        closed: true,
+        price: true,
+        minStay: true,
+        maxStay: true,
+        closedArrival: true,
+        closedDeparture: true,
+      },
     }),
     tx.stayBooking.findMany({
       where: {
@@ -264,7 +468,7 @@ async function validateStayNights({
         checkIn: { lt: checkOut },
         checkOut: { gt: checkIn },
       },
-      select: { checkIn: true, checkOut: true },
+      select: { checkIn: true, checkOut: true, ratePlanId: true },
     }),
     tx.stayRestrictionRule.findMany({
       where: {
@@ -287,25 +491,51 @@ async function validateStayNights({
         closedToDeparture: true,
       },
     }),
+    tx.stayBooking.findFirst({
+      where: {
+        propertyId: property.id,
+        roomId: room.id,
+        status: { in: ACTIVE_BOOKING_STATUSES },
+        checkOut: { lte: checkIn },
+      },
+      orderBy: { checkOut: 'desc' },
+      select: { checkOut: true },
+    }),
+    tx.stayBooking.findFirst({
+      where: {
+        propertyId: property.id,
+        roomId: room.id,
+        status: { in: ACTIVE_BOOKING_STATUSES },
+        checkIn: { gte: checkOut },
+      },
+      orderBy: { checkIn: 'asc' },
+      select: { checkIn: true },
+    }),
   ]);
+
+  const roomOverrideByDate = new Map();
+  const planOverrideByDate = new Map();
+  for (const row of overrides) {
+    if (!row.ratePlanId) roomOverrideByDate.set(dateKey(row.date), row);
+    else if (plan && row.ratePlanId === plan.id) planOverrideByDate.set(dateKey(row.date), row);
+  }
 
   const rules = ruleRows.filter((rule) => ruleAppliesToRoom(rule, room.id));
 
-  const checkInKey = dateKey(checkIn);
-  const checkOutKey = dateKey(checkOut);
-
-  if (booleanFlag(plan?.closedArrival)) {
-    throw new AppError(`This rate plan is closed to arrival on ${checkInKey}`, 400);
+  if (booleanFlag(plan?.closedArrival)
+    || roomOverrideByDate.get(checkInKey)?.closedArrival
+    || planOverrideByDate.get(checkInKey)?.closedArrival) {
+    throw new AppError(`Those dates are closed to arrival (${checkInKey})`, 400);
   }
-  if (booleanFlag(plan?.closedDeparture)) {
-    throw new AppError(`This rate plan is closed to departure on ${checkOutKey}`, 400);
+  if (booleanFlag(plan?.closedDeparture)
+    || roomOverrideByDate.get(checkOutKey)?.closedDeparture
+    || planOverrideByDate.get(checkOutKey)?.closedDeparture) {
+    throw new AppError(`Those dates are closed to departure (${checkOutKey})`, 400);
   }
 
   if (rules.some((rule) => rule.closedToArrival && ruleAppliesToDate(rule, checkIn))) {
     throw new AppError(`Those dates are closed to arrival (${checkInKey})`, 400);
   }
-  // Departure is not a night, so it is checked against the checkout date rather
-  // than the [checkIn, checkOut) loop below.
   if (rules.some((rule) => rule.closedToDeparture && ruleAppliesToDate(rule, checkOut))) {
     throw new AppError(`Those dates are closed to departure (${checkOutKey})`, 400);
   }
@@ -315,21 +545,50 @@ async function validateStayNights({
   let minStaySource = checkInKey;
   let maxStaySource = checkInKey;
 
-  const overrideByDate = new Map(overrides.map((row) => [dateKey(row.date), row]));
   const occupied = occupiedNights(overlapping);
+  const occupiedPlan = occupiedNights(
+    overlapping.filter((booking) => plan && booking.ratePlanId === plan.id),
+  );
+
+  const gapBaseMin = positiveInt(plan?.minStay) || 1;
+  let gapLength = 0;
+  if (neighbourBefore || neighbourAfter) {
+    const gapStart = neighbourBefore?.checkOut || checkIn;
+    const gapEnd = neighbourAfter?.checkIn || checkOut;
+    gapLength = nightsBetween(gapStart, gapEnd);
+  }
+  const gapPeriod = positiveInt(gapRule.applicablePeriodDays) || 60;
+  const gapDaysAhead = nightsBetween(today, checkIn);
+  const gapApplies = gapScope
+    && (neighbourBefore || neighbourAfter)
+    && gapLength > 0
+    && gapLength < gapBaseMin
+    && gapDaysAhead >= 0
+    && gapDaysAhead <= gapPeriod;
+
+  const childStay = childRateCharges(data, plan, travellers.childAges, baseNightly);
+  const adds = valueAddCharges(data, plan, valueAddIds, travellers.totalGuests);
 
   let total = 0;
+  let baseSubtotal = 0;
+  let dynamicSubtotal = 0;
+  let occupancySubtotal = 0;
+  let childSubtotal = 0;
+  const nightly = [];
 
   for (let index = 0; index < nights; index += 1) {
     const night = addDays(checkIn, index);
     const key = dateKey(night);
-    const override = overrideByDate.get(key);
+    const roomOverride = roomOverrideByDate.get(key);
+    const planOverride = planOverrideByDate.get(key);
     const matchingRules = rules.filter((rule) => ruleAppliesToDate(rule, night));
 
-    if (override?.closed) {
+    if (roomOverride?.closed) {
       throw new AppError(`Those dates are blocked for this room (${key} is closed)`, 400);
     }
-
+    if (planOverride?.closed) {
+      throw new AppError(`Those dates are blocked for this rate plan (${key} is closed)`, 400);
+    }
     if (matchingRules.some((rule) => rule.stopSell)) {
       throw new AppError(`Those dates are blocked for this room (${key} is closed to sale)`, 400);
     }
@@ -340,7 +599,6 @@ async function validateStayNights({
         requiredMin = ruleMin;
         minStaySource = key;
       }
-
       const ruleMax = positiveInt(rule.maxStay);
       if (ruleMax !== null && (requiredMax === null || ruleMax < requiredMax)) {
         requiredMax = ruleMax;
@@ -348,26 +606,94 @@ async function validateStayNights({
       }
     }
 
-    const overrideMin = positiveInt(override?.minStay);
-    if (overrideMin !== null && overrideMin > (requiredMin || 0)) {
+    const overrideMin = Math.max(
+      positiveInt(roomOverride?.minStay) || 0,
+      positiveInt(planOverride?.minStay) || 0,
+    );
+    if (overrideMin > (requiredMin || 0)) {
       requiredMin = overrideMin;
       minStaySource = key;
     }
+    for (const overrideMax of [positiveInt(roomOverride?.maxStay), positiveInt(planOverride?.maxStay)]) {
+      if (overrideMax !== null && (requiredMax === null || overrideMax < requiredMax)) {
+        requiredMax = overrideMax;
+        maxStaySource = key;
+      }
+    }
 
-    const capacity = override?.count != null ? Math.max(0, override.count) : baseCapacity;
+    const roomCapacity = roomOverride?.count != null
+      ? Math.max(0, Number(roomOverride.count))
+      : baseCapacity;
+    const planCapacity = planOverride?.count != null
+      ? Math.min(roomCapacity, Math.max(0, Number(planOverride.count)))
+      : roomCapacity;
     const alreadyBooked = occupied.get(key) || 0;
-    if (alreadyBooked + 1 > capacity) {
+    if (alreadyBooked + 1 > roomCapacity) {
       throw new AppError(`No rooms are available for ${key}`, 400);
     }
+    if (plan && (occupiedPlan.get(key) || 0) + 1 > planCapacity) {
+      throw new AppError(`No rooms are available on ${plan.name || 'this rate plan'} for ${key}`, 400);
+    }
 
-    // A per-date price wins over the rate plan, which wins over the room rate.
-    // `null`/absent means "no override", not "free".
-    const nightly =
-      override?.price != null ? Number(override.price) : baseNightly;
-    if (!Number.isFinite(nightly) || nightly < 0) {
+    const nightPrice = planOverride?.price != null
+      ? Number(planOverride.price)
+      : roomOverride?.price != null
+        ? Number(roomOverride.price)
+        : baseNightly;
+    if (!Number.isFinite(nightPrice) || nightPrice < 0) {
       throw new AppError(`A valid nightly price is required before taking a booking (${key})`, 400);
     }
-    total += nightly;
+    baseSubtotal += nightPrice;
+
+    let unsoldApplies = false;
+    if (unsoldScope && alreadyBooked < roomCapacity) {
+      const daysAhead = nightsBetween(today, night);
+      const period = positiveInt(unsoldRule.applicablePeriodDays) || 60;
+      const advance = positiveInt(unsoldRule.minAdvanceDays);
+      const advanceOk = !advance || nightsBetween(today, checkIn) >= advance;
+      if (daysAhead >= 0 && daysAhead <= period && advanceOk) {
+        unsoldApplies = true;
+        const dynamicMin = dynamicMinStay(unsoldRule);
+        requiredMin = requiredMin === null ? dynamicMin : Math.min(requiredMin, dynamicMin);
+        minStaySource = key;
+      }
+    }
+
+    if (gapApplies) {
+      const dynamicMin = dynamicMinStay(gapRule);
+      requiredMin = requiredMin === null ? dynamicMin : Math.min(requiredMin, dynamicMin);
+      minStaySource = key;
+    }
+
+    let priceAfterDynamic = nightPrice;
+    if (unsoldApplies) priceAfterDynamic = applyPriceChange(priceAfterDynamic, unsoldRule.priceChange);
+    if (gapApplies) priceAfterDynamic = applyPriceChange(priceAfterDynamic, gapRule.priceChange);
+    dynamicSubtotal += priceAfterDynamic - nightPrice;
+
+    const occupancy = occupancyPricing({
+      base: priceAfterDynamic,
+      plan,
+      room,
+      property,
+      travellers,
+      childGroups,
+    });
+    occupancySubtotal += occupancy.adjustment;
+
+    const child = childRateCharges(data, plan, travellers.childAges, priceAfterDynamic);
+    childSubtotal += child.perNight;
+
+    const nightlyTotal = occupancy.price + child.perNight + adds.perNight;
+    total += nightlyTotal;
+    nightly.push({
+      date: key,
+      base: roundMoney(nightPrice),
+      dynamic: roundMoney(priceAfterDynamic - nightPrice),
+      occupancy: roundMoney(occupancy.adjustment),
+      children: roundMoney(child.perNight),
+      valueAdds: roundMoney(adds.perNight),
+      total: roundMoney(nightlyTotal),
+    });
   }
 
   if (requiredMin !== null && nights < requiredMin) {
@@ -376,7 +702,6 @@ async function validateStayNights({
       400,
     );
   }
-
   if (requiredMax !== null && nights > requiredMax) {
     throw new AppError(
       `A maximum stay of ${requiredMax} night(s) applies on ${maxStaySource}`,
@@ -384,8 +709,93 @@ async function validateStayNights({
     );
   }
 
-  return Math.round(total * 100) / 100;
+  total += childStay.perStay + adds.once;
+  childSubtotal += childStay.perStay;
+  const valueAddSubtotal = adds.perNight * nights + adds.once;
+  const roundedTotal = roundMoney(total);
+
+  return {
+    total: roundedTotal,
+    currency: typeof data.currency === 'string' && data.currency ? data.currency : 'GHS',
+    breakdown: {
+      base: roundMoney(baseSubtotal),
+      dynamic: roundMoney(dynamicSubtotal),
+      occupancy: roundMoney(occupancySubtotal),
+      children: roundMoney(childSubtotal),
+      valueAdds: roundMoney(valueAddSubtotal),
+      total: roundedTotal,
+    },
+    nightly,
+    effectiveMinStay: requiredMin,
+    effectiveMaxStay: requiredMax,
+  };
 }
+
+/**
+ * Read-only price quote for the booking form. It shares `priceStayNights` with
+ * createBooking so the estimate a supplier sees is exactly what gets charged.
+ */
+exports.quoteBooking = catchAsync(async (req, res) => {
+  const supplierId = supplierIdFor(req);
+  const body = objectOrEmpty(req.body);
+  if (!body.propertyId) throw new AppError('Property is required', 400);
+  if (!body.roomId) throw new AppError('Room is required', 400);
+
+  const checkIn = parseDateKey(body.checkIn);
+  const checkOut = parseDateKey(body.checkOut);
+  if (!checkIn || !checkOut) throw new AppError('Valid check-in and check-out dates are required', 400);
+  const nights = nightsBetween(checkIn, checkOut);
+  if (nights <= 0) throw new AppError('Check-out must be after check-in', 400);
+
+  const property = await prisma.stayProperty.findFirst({
+    where: { id: body.propertyId, supplierId, status: { not: 'ARCHIVED' } },
+  });
+  if (!property) throw new AppError('Property not found', 404);
+
+  const data = objectOrEmpty(property.data);
+  const rooms = Array.isArray(data.rooms) ? data.rooms : [];
+  const room = rooms.find((row) => row.id === body.roomId);
+  if (!room) throw new AppError('Room is required', 400);
+
+  const plans = Array.isArray(data.ratePlans) ? data.ratePlans : [];
+  const plan = body.ratePlanId
+    ? plans.find((row) => row.id === body.ratePlanId && row.roomId === room.id)
+    : plans.find((row) => row.roomId === room.id) || null;
+  if (body.ratePlanId && !plan) throw new AppError('Rate plan not found for this room', 400);
+
+  const travellers = parseTravellers(body);
+  const valueAddIds = parseValueAddIds(body);
+  const pricing = await priceStayNights({
+    tx: prisma,
+    property,
+    room,
+    plan,
+    checkIn,
+    checkOut,
+    nights,
+    travellers,
+    valueAddIds,
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      quote: {
+        propertyId: property.id,
+        roomId: room.id,
+        roomName: room.name || room.kind || null,
+        ratePlanId: plan?.id || null,
+        ratePlanName: plan?.name || null,
+        checkIn: dateKey(checkIn),
+        checkOut: dateKey(checkOut),
+        nights,
+        travellers,
+        valueAddIds,
+        ...pricing,
+      },
+    },
+  });
+});
 
 exports.createBooking = catchAsync(async (req, res) => {
   const supplierId = supplierIdFor(req);
@@ -413,7 +823,9 @@ exports.createBooking = catchAsync(async (req, res) => {
     })
     : null;
 
-  const guests = parseGuests(body.guests);
+  const travellers = parseTravellers(body);
+  const valueAddIds = parseValueAddIds(body);
+  const guests = travellers.totalGuests;
 
   // Allocate the booking number BEFORE the inventory transaction.
   //
@@ -483,7 +895,7 @@ exports.createBooking = catchAsync(async (req, res) => {
           : plans.find((row) => row.roomId === room.id) || null;
         if (body.ratePlanId && !plan) throw new AppError('Rate plan not found for this room', 400);
 
-        const computedAmount = await validateStayNights({
+        const pricing = await priceStayNights({
           tx,
           property,
           room,
@@ -491,12 +903,14 @@ exports.createBooking = catchAsync(async (req, res) => {
           checkIn,
           checkOut,
           nights,
+          travellers,
+          valueAddIds,
         });
 
         const requestedAmount = Number(body.amount);
         const amount = Number.isFinite(requestedAmount) && requestedAmount > 0
           ? Math.round(requestedAmount * 100) / 100
-          : computedAmount;
+          : pricing.total;
 
         if (!(amount > 0)) {
           throw new AppError('A nightly price is required before taking a booking', 400);
@@ -737,4 +1151,10 @@ exports._private = {
   ruleAppliesToRoom,
   ruleAppliesToDate,
   positiveInt,
+  parseTravellers,
+  occupancyPricing,
+  childRateCharges,
+  valueAddCharges,
+  applyPriceChange,
+  priceStayNights,
 };

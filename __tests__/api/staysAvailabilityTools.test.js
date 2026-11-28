@@ -629,3 +629,228 @@ describeDb('Stays booking enforcement', () => {
     expect(res.body.message).toMatch(/minimum stay of 4 night/i);
   });
 });
+
+describeDb('Stays plan-level availability overrides', () => {
+  it('stores plan-specific fields without creating a room override', async () => {
+    await request(staysApp)
+      .put(url('/availability'))
+      .set(auth())
+      .send({
+        roomId: 'r1',
+        ratePlanId: 'plan-r1',
+        date: '2027-10-01',
+        price: 150,
+        maxStay: 3,
+        closedArrival: true,
+      })
+      .expect(200);
+
+    const res = await request(staysApp)
+      .get(url('/availability?from=2027-10-01&to=2027-10-01'))
+      .set(auth());
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.overrides['r1|2027-10-01']).toBeUndefined();
+    expect(res.body.data.planOverrides['r1|plan-r1|2027-10-01']).toEqual({
+      price: 150,
+      maxStay: 3,
+      closedArrival: true,
+    });
+
+    const calendar = await request(staysApp)
+      .get(url('/calendar?from=2027-10-01&to=2027-10-01&ratePlanId=plan-r1'))
+      .set(auth());
+    expect(calendar.body.data.planOverrides['r1|plan-r1|2027-10-01']).toEqual({
+      price: 150,
+      maxStay: 3,
+      closedArrival: true,
+    });
+  });
+
+  it('charges the plan override price and enforces plan capacity', async () => {
+    await request(staysApp)
+      .put(url('/availability'))
+      .set(auth())
+      .send({ roomId: 'r1', ratePlanId: 'plan-r1', date: '2027-10-11', price: 200 })
+      .expect(200);
+
+    const quote = await request(staysApp)
+      .post(`${STAYS}/bookings/quote`)
+      .set(auth())
+      .send({
+        propertyId,
+        roomId: 'r1',
+        ratePlanId: 'plan-r1',
+        checkIn: '2027-10-10',
+        checkOut: '2027-10-12',
+        guests: 2,
+      });
+
+    expect(quote.status).toBe(200);
+    expect(quote.body.data.quote.total).toBe(320);
+
+    await request(staysApp)
+      .put(url('/availability'))
+      .set(auth())
+      .send({ roomId: 'r1', ratePlanId: 'plan-r1', date: '2027-10-21', count: 0 })
+      .expect(200);
+
+    const blocked = await request(staysApp)
+      .post(`${STAYS}/bookings`)
+      .set(auth())
+      .send({
+        propertyId,
+        roomId: 'r1',
+        ratePlanId: 'plan-r1',
+        guestName: 'Plan Capacity',
+        checkIn: '2027-10-20',
+        checkOut: '2027-10-22',
+      });
+
+    expect(blocked.status).toBe(400);
+    expect(blocked.body.message).toMatch(/No rooms are available on .* for 2027-10-21/);
+  });
+
+  it('copies and bulk-closes plan-specific dates', async () => {
+    await request(staysApp)
+      .put(url('/availability'))
+      .set(auth())
+      .send({
+        roomId: 'r1',
+        ratePlanId: 'plan-r1',
+        date: '2027-11-01',
+        price: 175,
+        maxStay: 2,
+        closedArrival: true,
+      })
+      .expect(200);
+
+    const copy = await request(staysApp)
+      .post(url('/availability/copy'))
+      .set(auth())
+      .send({
+        targets: [{ roomId: 'r1', ratePlanId: 'plan-r1' }],
+        sourceFrom: '2027-11-01',
+        sourceTo: '2027-11-01',
+        targetStart: '2027-12-01',
+        fields: ['price', 'maxStay', 'closedArrival'],
+      });
+
+    expect(copy.status).toBe(200);
+    expect(copy.body.data.copied).toBe(1);
+
+    const copied = await request(staysApp)
+      .get(url('/availability?from=2027-12-01&to=2027-12-01'))
+      .set(auth());
+    expect(copied.body.data.planOverrides['r1|plan-r1|2027-12-01']).toEqual({
+      price: 175,
+      maxStay: 2,
+      closedArrival: true,
+    });
+
+    await request(staysApp)
+      .post(url('/availability/bulk'))
+      .set(auth())
+      .send({
+        action: 'close',
+        targets: [{ roomId: 'r1', ratePlanId: 'plan-r1' }],
+        from: '2027-12-10',
+        to: '2027-12-10',
+      })
+      .expect(200);
+
+    const closed = await request(staysApp)
+      .get(url('/availability?from=2027-12-10&to=2027-12-10'))
+      .set(auth());
+    expect(closed.body.data.overrides['r1|2027-12-10']).toBeUndefined();
+    expect(closed.body.data.planOverrides['r1|plan-r1|2027-12-10']).toEqual({ closed: true });
+  });
+});
+
+describeDb('Stays booking quote pricing', () => {
+  it('adds child rates and value adds to the nightly total', async () => {
+    const data = baseData();
+    data.rooms[0] = { ...data.rooms[0], adults: 2, children: 1 };
+    data.ratePlans[0] = {
+      ...data.ratePlans[0],
+      baseGuests: 2,
+      extraAdult: 30,
+      extraChild: 15,
+    };
+    data.childRateGroups = [
+      { id: 'children', label: 'Children', minAge: 3, maxAge: 12, rateType: 'fixed', value: 20, unit: 'night' },
+    ];
+    data.valueAdds = [
+      { id: 'add-1', name: 'Breakfast', price: 10, unit: 'night', active: true },
+    ];
+    await prisma.stayProperty.update({ where: { id: propertyId }, data: { data } });
+
+    const res = await request(staysApp)
+      .post(`${STAYS}/bookings/quote`)
+      .set(auth())
+      .send({
+        propertyId,
+        roomId: 'r1',
+        ratePlanId: 'plan-r1',
+        checkIn: '2027-12-10',
+        checkOut: '2027-12-12',
+        adults: 2,
+        children: 1,
+        childAges: [7],
+        valueAddIds: ['add-1'],
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.quote).toEqual(expect.objectContaining({
+      nights: 2,
+      currency: 'GHS',
+      total: 300,
+      breakdown: expect.objectContaining({
+        base: 240,
+        children: 40,
+        valueAdds: 20,
+        total: 300,
+      }),
+    }));
+  });
+});
+
+describeDb('Stays promotion offers', () => {
+  it('stores the promotion kind and config on an offer', async () => {
+    const created = await request(staysApp)
+      .post(`${STAYS}/offers`)
+      .set(auth())
+      .send({
+        name: 'Early Booker Deal',
+        offerType: 'EARLY_BIRD',
+        discountType: 'PERCENTAGE',
+        discountPercentage: 10,
+        startDate: '2027-01-01',
+        endDate: '2027-04-01',
+        promotionKind: 'EARLY_BOOKER',
+        promotionConfig: {
+          audience: 'EVERYONE',
+          bookWindow: { mode: 'MIN_DAYS', days: 30 },
+          lengthOfStay: { mode: 'MIN_NIGHTS', nights: 2 },
+        },
+        targets: [{ propertyId }],
+      });
+
+    expect(created.status).toBe(200);
+    expect(created.body.data.offers[0]).toEqual(expect.objectContaining({
+      name: 'Early Booker Deal',
+      promotionKind: 'EARLY_BOOKER',
+      promotionConfig: expect.objectContaining({
+        audience: 'EVERYONE',
+        bookWindow: { mode: 'MIN_DAYS', days: 30 },
+      }),
+    }));
+
+    const list = await request(staysApp).get(`${STAYS}/offers`).set(auth());
+    expect(list.body.data.offers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ promotionKind: 'EARLY_BOOKER' }),
+      ]),
+    );
+  });
+});
